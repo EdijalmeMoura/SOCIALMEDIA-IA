@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +28,8 @@ META_SCOPES = (
 )
 GRAPH_HOST = "https://graph.facebook.com"
 FACEBOOK_HOST = "https://www.facebook.com"
+INSTAGRAM_CONTAINER_MAX_CHECKS = 3
+INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS = 2
 
 
 class MetaIntegrationError(Exception):
@@ -90,7 +93,7 @@ def authorization_url(settings: MetaSettings, state: str):
     return f"{FACEBOOK_HOST}/{settings.graph_version}/dialog/oauth?{query}"
 
 
-def _request_json(method, path, settings, params=None, access_token=None, appsecret_proof=False):
+def _request_json(method, path, settings, params=None, access_token=None, appsecret_proof=False, timeout=20):
     params = dict(params or {})
     if access_token:
         params["access_token"] = access_token
@@ -105,7 +108,7 @@ def _request_json(method, path, settings, params=None, access_token=None, appsec
         body = urllib.parse.urlencode(params).encode("utf-8")
         request = urllib.request.Request(url, data=body, headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}, method=method.upper())
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
@@ -235,8 +238,30 @@ def publish_instagram_image(instagram_user_id, page_access_token, image_url, cap
     creation_id = container.get("id")
     if not creation_id:
         raise MetaIntegrationError("A Meta não retornou o ID do contêiner de imagem.")
+    container_id = str(creation_id)
+    ready = False
+    for check_number in range(INSTAGRAM_CONTAINER_MAX_CHECKS):
+        try:
+            container_status = _request_json("GET", urllib.parse.quote(container_id, safe=""), settings, {"fields": "status_code"}, page_access_token, appsecret_proof=True, timeout=5)
+        except MetaIntegrationError as exc:
+            raise MetaIntegrationError(f"Não foi possível verificar o processamento do contêiner {container_id}; a publicação ainda não foi iniciada. {exc}") from exc
+        status_code = str(container_status.get("status_code", "")).upper()
+        if status_code == "FINISHED":
+            ready = True
+            break
+        if status_code == "PUBLISHED":
+            raise MetaIntegrationError(f"O contêiner {container_id} já aparece como publicado, mas não há ID de mídia confirmado. Confira o Instagram antes de qualquer nova tentativa.", uncertain=True)
+        if status_code in {"ERROR", "EXPIRED"}:
+            detail = str(container_status.get("status", ""))[:180]
+            raise MetaIntegrationError(f"A Meta marcou o contêiner {container_id} como {status_code}. {detail} A publicação não foi iniciada.")
+        if status_code != "IN_PROGRESS":
+            raise MetaIntegrationError(f"A Meta retornou o estado inesperado '{status_code or 'vazio'}' para o contêiner {container_id}; a publicação não foi iniciada.")
+        if check_number + 1 < INSTAGRAM_CONTAINER_MAX_CHECKS:
+            time.sleep(INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS)
+    if not ready:
+        raise MetaIntegrationError(f"O contêiner {container_id} continuou processando após {INSTAGRAM_CONTAINER_MAX_CHECKS} verificações; a publicação não foi iniciada. Tente novamente mais tarde.")
     published = _request_json("POST", f"{urllib.parse.quote(str(instagram_user_id), safe='')}/media_publish", settings, {
-        "creation_id": str(creation_id),
+        "creation_id": container_id,
     }, page_access_token, appsecret_proof=True)
     if not published.get("id"):
         raise MetaIntegrationError("O resultado da publicação no Instagram é incerto. Confira a conta antes de tentar novamente.", uncertain=True)
