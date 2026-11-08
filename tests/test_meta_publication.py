@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlparse
 
+from PIL import Image
+
 from cryptography.fernet import Fernet
 
 TEST_ROOT = tempfile.TemporaryDirectory()
@@ -52,7 +54,7 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
     def make_due_schedule(self, network="Instagram", with_image=True):
         image_name = "approved-art.png" if with_image else None
         if image_name:
-            (app_module.UPLOAD_DIR / image_name).write_bytes(b"test-png-bytes")
+            Image.new("RGB", (1080, 1080), color=(240, 240, 240)).save(app_module.UPLOAD_DIR / image_name, format="PNG")
         snapshot = {
             "type": "creative" if with_image else "planned",
             "title": "Publicação aprovada Aurora",
@@ -81,7 +83,12 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
             self.assertIn("published=", response.location)
             publish.assert_called_once()
             self.assertEqual(publish.call_args.args[0], "ig-user-95")
-            self.assertIn("https://agency.example.test/meta/media/approved-art.png?", publish.call_args.args[2])
+            image_url = publish.call_args.args[2]
+            self.assertIn("https://agency.example.test/meta/media/meta_instagram_", image_url)
+            self.assertTrue(image_url.split("?", 1)[0].endswith(".jpg"))
+            temporary_image = Path(urlparse(image_url).path).name
+            self.assertFalse((app_module.UPLOAD_DIR / temporary_image).exists())
+            self.assertTrue((app_module.UPLOAD_DIR / "approved-art.png").exists())
             duplicate = self.client.post(f"/schedule/{schedule_id}/publish", data={"csrf_token": self.csrf(), "connection_id": str(connection_id)})
             self.assertIn("tentativa+ativa", duplicate.location)
             self.assertEqual(publish.call_count, 1)
@@ -94,6 +101,33 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
             self.assertEqual(attempt["status"], "published")
             self.assertEqual(attempt["remote_publication_id"], "ig-publication-123")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM notifications WHERE recipient_type='agency' AND title='Publicação confirmada pela Meta'").fetchone()[0], 1)
+
+    def test_instagram_export_creates_temporary_jpeg_and_preserves_approved_source(self):
+        source_path = app_module.UPLOAD_DIR / "wide-approved.png"
+        Image.new("RGB", (2000, 1050), color=(230, 220, 210)).save(source_path, format="PNG")
+        temporary_name = app_module.prepare_instagram_public_image(source_path)
+        try:
+            with Image.open(app_module.UPLOAD_DIR / temporary_name) as converted:
+                self.assertEqual(converted.format, "JPEG")
+                self.assertLessEqual(converted.width, 1440)
+                self.assertGreaterEqual(converted.width, 320)
+                self.assertGreaterEqual(converted.width / converted.height, 0.8)
+                self.assertLessEqual(converted.width / converted.height, 1.91)
+            self.assertTrue(source_path.exists())
+        finally:
+            app_module.remove_temporary_meta_image(temporary_name)
+
+    def test_instagram_feed_rejects_story_ratio_without_sending_or_creating_attempt(self):
+        schedule_id, connection_id = self.make_due_schedule()
+        Image.new("RGB", (1080, 1920), color=(240, 240, 240)).save(app_module.UPLOAD_DIR / "approved-art.png", format="PNG")
+        with patch.dict(os.environ, self.meta_env, clear=False), patch.object(app_module, "publish_instagram_image") as publish:
+            page = self.client.get("/schedule")
+            self.assertIn(b"Stories 9:16", page.data)
+            response = self.client.post(f"/schedule/{schedule_id}/publish", data={"csrf_token": self.csrf(), "connection_id": str(connection_id)})
+            self.assertIn("propor%C3%A7%C3%A3o", response.location)
+            publish.assert_not_called()
+        with app_module.app.app_context():
+            self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()[0], 0)
 
     def test_facebook_text_post_uses_selected_page_and_timeout_blocks_blind_retry(self):
         schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)

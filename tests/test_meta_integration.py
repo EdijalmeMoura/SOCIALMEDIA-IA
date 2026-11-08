@@ -179,7 +179,7 @@ class MetaIntegrationTests(unittest.TestCase):
 
     def test_publish_helpers_send_documented_graph_requests_without_leaking_tokens_in_urls(self):
         settings = meta_integration.load_meta_settings(self.meta_env)
-        image_url = "https://social.example.test/meta/media/art.png?expires=123&signature=abc"
+        image_url = "https://social.example.test/meta/media/art.jpg?expires=123&signature=abc"
         with patch("meta_integration.urllib.request.urlopen", side_effect=[FakeResponse({"id": "container-1"}), FakeResponse({"id": "container-1", "status_code": "FINISHED"}), FakeResponse({"id": "ig-publication-9"})]) as open_url:
             result = meta_integration.publish_instagram_image("ig-user-4", "page-token-secret", image_url, "Legenda #arte", settings)
         self.assertEqual(result, "ig-publication-9")
@@ -213,24 +213,31 @@ class MetaIntegrationTests(unittest.TestCase):
         text_body = urllib.parse.parse_qs(open_url.call_args.args[0].data.decode())
         self.assertRegex(text_body["appsecret_proof"][0], r"^[a-f0-9]{64}$")
 
+    def test_instagram_rejects_non_jpeg_url_before_graph_call(self):
+        settings = meta_integration.load_meta_settings(self.meta_env)
+        with patch("meta_integration.urllib.request.urlopen") as open_url:
+            with self.assertRaisesRegex(meta_integration.MetaIntegrationError, "exige uma URL de arquivo JPEG"):
+                meta_integration.publish_instagram_image("ig-user-4", "page-token", "https://agency.example.test/art.png", "caption", settings)
+        open_url.assert_not_called()
+
     def test_instagram_waits_for_container_readiness_and_never_publishes_failed_container(self):
         settings = meta_integration.load_meta_settings(self.meta_env)
         with patch("meta_integration.urllib.request.urlopen", side_effect=[FakeResponse({"id": "container-8"}), FakeResponse({"status_code": "IN_PROGRESS"}), FakeResponse({"status_code": "FINISHED"}), FakeResponse({"id": "instagram-media-8"})]) as open_url, patch("meta_integration.time.sleep") as sleep:
-            result = meta_integration.publish_instagram_image("ig-user-4", "page-token", "https://agency.example.test/art.png", "caption", settings)
+            result = meta_integration.publish_instagram_image("ig-user-4", "page-token", "https://agency.example.test/art.jpg", "caption", settings)
         self.assertEqual(result, "instagram-media-8")
         self.assertEqual(open_url.call_count, 4)
         self.assertEqual(open_url.call_args_list[1].kwargs["timeout"], 5)
         sleep.assert_called_once_with(meta_integration.INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS)
         with patch("meta_integration.urllib.request.urlopen", side_effect=[FakeResponse({"id": "container-error"}), FakeResponse({"status_code": "ERROR", "status": "Invalid image"})]) as open_url:
             with self.assertRaises(meta_integration.MetaIntegrationError) as caught:
-                meta_integration.publish_instagram_image("ig-user-4", "page-token", "https://agency.example.test/art.png", "caption", settings)
+                meta_integration.publish_instagram_image("ig-user-4", "page-token", "https://agency.example.test/art.jpg", "caption", settings)
         self.assertFalse(caught.exception.uncertain)
         self.assertIn("publicação não foi iniciada", str(caught.exception).lower())
         self.assertEqual(open_url.call_count, 2)
         pending = [FakeResponse({"id": "container-pending"})] + [FakeResponse({"status_code": "IN_PROGRESS"})] * meta_integration.INSTAGRAM_CONTAINER_MAX_CHECKS
         with patch("meta_integration.urllib.request.urlopen", side_effect=pending) as open_url, patch("meta_integration.time.sleep") as sleep:
             with self.assertRaises(meta_integration.MetaIntegrationError) as pending_error:
-                meta_integration.publish_instagram_image("ig-user-4", "page-token", "https://agency.example.test/art.png", "caption", settings)
+                meta_integration.publish_instagram_image("ig-user-4", "page-token", "https://agency.example.test/art.jpg", "caption", settings)
         self.assertFalse(pending_error.exception.uncertain)
         self.assertIn("a publicação não foi iniciada", str(pending_error.exception).lower())
         self.assertEqual(open_url.call_count, 1 + meta_integration.INSTAGRAM_CONTAINER_MAX_CHECKS)

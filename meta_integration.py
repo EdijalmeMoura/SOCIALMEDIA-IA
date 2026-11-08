@@ -223,14 +223,16 @@ def check_page_connection(page_id, page_access_token, settings):
     return {"page_id": str(result["id"]), "page_name": str(result.get("name", ""))[:200]}
 
 
-def _validate_public_image_url(image_url):
+def _validate_public_image_url(image_url, allowed_extensions=None):
     parsed = urlparse(image_url or "")
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
         raise MetaIntegrationError("A imagem precisa ter uma URL HTTPS pública acessível aos servidores da Meta.")
+    if allowed_extensions and not any(parsed.path.lower().endswith(extension) for extension in allowed_extensions):
+        raise MetaIntegrationError("O endpoint de imagem do Instagram exige uma URL de arquivo JPEG.")
 
 
 def publish_instagram_image(instagram_user_id, page_access_token, image_url, caption, settings):
-    _validate_public_image_url(image_url)
+    _validate_public_image_url(image_url, allowed_extensions={".jpg", ".jpeg"})
     container = _request_json("POST", f"{urllib.parse.quote(str(instagram_user_id), safe='')}/media", settings, {
         "image_url": image_url,
         "caption": (caption or "")[:2200],

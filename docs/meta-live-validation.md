@@ -23,7 +23,7 @@ Este roteiro deve ser executado no deploy público que hospedará a aplicação,
 
 - Usar primeiro um conteúdo de teste de baixo risco em uma Página/conta controlada pela equipe. Não usar conteúdo de cliente sem autorização.
 - Preparar a aprovação normal do portal do cliente e um horário que já tenha vencido; a aplicação só oferece o envio manual para conteúdo aprovado e vencido.
-- Para Facebook, iniciar com texto. Para foto no Facebook ou imagem no Instagram, exportar a arte e confirmar que `META_PUBLIC_BASE_URL` é alcançável publicamente. Instagram exige imagem exportada e conta profissional vinculada.
+- Para Facebook, iniciar com texto. Para foto no Facebook ou imagem no Instagram, exportar a arte e confirmar que `META_PUBLIC_BASE_URL` é alcançável publicamente. Instagram exige imagem exportada e conta profissional vinculada. O envio de feed valida proporção 4:5 a 1,91:1 e converte a exportação para JPEG temporário; arquivos de Stories 9:16 precisam de ajuste e nova aprovação, pois não são enviados como feed.
 - Selecionar a Página/conta correta e clicar explicitamente em **Publicar via Meta**. Esta ação envia o conteúdo real; revisar texto, conta e arte antes de confirmar.
 - Conferir o post diretamente na Meta e comparar o ID remoto exibido pela aplicação. Registrar data, rede, conta de teste e resultado para a validação do deploy.
 - Se o resultado ficar **incerto**, não clicar para publicar de novo. Conferir a conta Meta primeiro; a reconciliação manual exige `owner`/`admin` e anotação, e uma publicação confirmada manualmente permanece separada das confirmações recebidas pela API.

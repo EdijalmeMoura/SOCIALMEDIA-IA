@@ -717,7 +717,7 @@ def normalize_creative_image(image_bytes, creative_id, width, height):
             filename = f"studio-{creative_id}-{secrets.token_hex(12)}.png"
             image.save(UPLOAD_DIR / filename, format="PNG", optimize=True)
             return filename
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+    except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombError):
         raise ValueError("O arquivo não contém uma imagem válida.") from None
 
 
@@ -1317,6 +1317,64 @@ def portal_approval_media(approval_id, filename):
     return response
 
 
+def instagram_export_issue(image_path):
+    try:
+        with Image.open(image_path) as image:
+            image_format = image.format
+            width, height = image.size
+            image.verify()
+    except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombError):
+        return "Não foi possível ler a arte exportada como imagem válida."
+    if image_format not in {"PNG", "JPEG"}:
+        return "O envio de imagem ao Instagram exige uma arte PNG ou JPEG válida."
+    if width <= 0 or height <= 0:
+        return "As dimensões da arte exportada são inválidas."
+    ratio = width / height
+    if ratio < 0.8 or ratio > 1.91:
+        return "Este envio usa uma publicação de feed do Instagram, que exige proporção entre 4:5 e 1,91:1. Stories 9:16 e banners precisam ser ajustados e aprovados novamente."
+    return None
+
+
+def prepare_instagram_public_image(source_path):
+    issue = instagram_export_issue(source_path)
+    if issue:
+        raise MetaIntegrationError(issue)
+    filename = "meta_instagram_" + secrets.token_hex(12) + ".jpg"
+    destination = UPLOAD_DIR / filename
+    complete = False
+    try:
+        with Image.open(source_path) as source:
+            image = ImageOps.exif_transpose(source)
+            width, height = image.size
+            target_width = max(320, min(1440, width))
+            target_height = max(1, round(height * target_width / width))
+            if (target_width, target_height) != image.size:
+                image = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                rgba = image.convert("RGBA")
+                flattened = Image.new("RGB", rgba.size, "white")
+                flattened.paste(rgba, mask=rgba.getchannel("A"))
+                image = flattened
+            else:
+                image = image.convert("RGB")
+            for quality in (92, 84, 76):
+                image.save(destination, format="JPEG", quality=quality, optimize=True, progressive=True)
+                if destination.stat().st_size <= 8 * 1024 * 1024:
+                    complete = True
+                    return filename
+            raise MetaIntegrationError("A versão JPEG da arte excede 8 MB, limite desta publicação no Instagram.")
+    except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise MetaIntegrationError("Não foi possível preparar uma versão JPEG segura da arte para o Instagram.") from exc
+    finally:
+        if not complete:
+            destination.unlink(missing_ok=True)
+
+
+def remove_temporary_meta_image(filename):
+    if filename and re.fullmatch(r"meta_instagram_[a-f0-9]{24}\.jpg", filename):
+        (UPLOAD_DIR / filename).unlink(missing_ok=True)
+
+
 def scheduled_publication_for_tenant(schedule_id):
     return get_db().execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,a.status AS approval_status,c.company_name,c.trade_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status,(SELECT ma.remote_publication_id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_remote_id,(SELECT ma.error_message FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_error FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.id=? AND sp.company_id=?", (schedule_id, g.user["company_id"])).fetchone()
 
@@ -1380,6 +1438,7 @@ def schedule_page():
             item["is_due"] = False
         snapshot = json.loads(item["snapshot_json"])
         item["has_export"] = bool(snapshot.get("export_path") and (UPLOAD_DIR / snapshot["export_path"]).is_file())
+        item["instagram_image_issue"] = instagram_export_issue(UPLOAD_DIR / snapshot["export_path"]) if item["network"] == "Instagram" and item["has_export"] else None
         item["meta_published"] = item["meta_status"] == "published"
         item["meta_busy"] = item["meta_status"] in {"publishing", "published", "unknown"}
         try:
@@ -1485,21 +1544,32 @@ def schedule_publish_now(schedule_id):
         caption = "\n\n".join(value for value in [snapshot.get("caption", "").strip(), snapshot.get("hashtags", "").strip()] if value)
         image_filename = None
     image_url = None
+    temporary_media_filename = None
     if schedule["network"] == "Instagram" and not image_filename:
         return redirect(url_for("schedule_page", error="O Instagram exige uma arte exportada; publique uma criação visual aprovada."))
     if image_filename:
-        if secure_filename(image_filename) != image_filename or not (UPLOAD_DIR / image_filename).is_file():
+        original_image_path = UPLOAD_DIR / image_filename
+        if secure_filename(image_filename) != image_filename or not original_image_path.is_file():
             return redirect(url_for("schedule_page", error="O arquivo exportado desta aprovação não está disponível."))
-        try:
-            image_url = create_meta_image_url(image_filename)
-        except MetaIntegrationError as exc:
-            if schedule["network"] == "Facebook" and snapshot["type"] == "planned":
-                image_url = None
-            else:
+        if schedule["network"] == "Instagram":
+            try:
+                temporary_media_filename = prepare_instagram_public_image(original_image_path)
+                image_url = create_meta_image_url(temporary_media_filename)
+            except MetaIntegrationError as exc:
+                remove_temporary_meta_image(temporary_media_filename)
                 return redirect(url_for("schedule_page", error=str(exc)))
+        else:
+            try:
+                image_url = create_meta_image_url(image_filename)
+            except MetaIntegrationError as exc:
+                if snapshot["type"] == "planned":
+                    image_url = None
+                else:
+                    return redirect(url_for("schedule_page", error=str(exc)))
     try:
         page_token = decrypt_token(connection["page_access_token_encrypted"], settings)
     except MetaIntegrationError as exc:
+        remove_temporary_meta_image(temporary_media_filename)
         return redirect(url_for("schedule_page", error=str(exc)))
     db = get_db()
     try:
@@ -1507,6 +1577,7 @@ def schedule_publish_now(schedule_id):
         db.commit()
     except sqlite3.IntegrityError:
         db.rollback()
+        remove_temporary_meta_image(temporary_media_filename)
         return redirect(url_for("schedule_page", error="Já existe uma tentativa em andamento ou uma publicação concluída para este horário."))
     try:
         if schedule["network"] == "Instagram":
@@ -1527,6 +1598,8 @@ def schedule_publish_now(schedule_id):
         notify_agency(db, g.user["company_id"], "Resultado da publicação incerto", message, url_for("schedule_page"))
         db.commit()
         return redirect(url_for("schedule_page", error=message))
+    finally:
+        remove_temporary_meta_image(temporary_media_filename)
     db.execute("UPDATE meta_publication_attempts SET status='published',remote_publication_id=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=?", (clean(remote_id, 255), attempt_id, g.user["company_id"]))
     notify_agency(db, g.user["company_id"], "Publicação confirmada pela Meta", f"{schedule['approval_title']} · {schedule['network']} · ID {clean(remote_id, 180)}", url_for("schedule_page"))
     db.commit()
