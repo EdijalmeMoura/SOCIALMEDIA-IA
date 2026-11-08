@@ -176,6 +176,21 @@ def fetch_pages(user_token, settings):
     return normalized
 
 
+def fetch_permissions(user_token, settings):
+    payload = _request_json("GET", "me/permissions", settings, {"fields": "permission,status"}, user_token, appsecret_proof=True)
+    rows = payload.get("data", [])
+    if not isinstance(rows, list):
+        raise MetaIntegrationError("O Meta não retornou uma lista de permissões válida.")
+    permissions = {}
+    requested = set(META_SCOPES)
+    for row in rows:
+        if not isinstance(row, dict) or row.get("permission") not in requested:
+            continue
+        status = str(row.get("status", "unknown")).lower()
+        permissions[str(row["permission"])] = status if status in {"granted", "declined"} else "unknown"
+    return permissions
+
+
 def check_page_connection(page_id, page_access_token, settings):
     result = _request_json("GET", str(page_id), settings, {"fields": "id,name"}, page_access_token, appsecret_proof=True)
     if str(result.get("id", "")) != str(page_id):

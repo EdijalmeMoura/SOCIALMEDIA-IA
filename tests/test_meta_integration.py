@@ -96,12 +96,13 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertTrue(started.location.startswith("https://www.facebook.com/v22.0/dialog/oauth?"))
             with self.client.session_transaction() as session:
                 state = session["meta_oauth_state"]
-            with patch.object(app_module, "exchange_code", return_value={"access_token": "short-user-token"}) as short_exchange, patch.object(app_module, "exchange_long_lived_token", return_value={"access_token": "long-user-token", "expires_in": 5184000}) as long_exchange, patch.object(app_module, "fetch_pages", return_value=[{"page_id": "page-7", "page_name": "Página Aurora", "page_access_token": "page-access-token", "instagram_user_id": "ig-9", "instagram_username": "aurora"}]) as pages_fetch:
+            with patch.object(app_module, "exchange_code", return_value={"access_token": "short-user-token"}) as short_exchange, patch.object(app_module, "exchange_long_lived_token", return_value={"access_token": "long-user-token", "expires_in": 5184000}) as long_exchange, patch.object(app_module, "fetch_pages", return_value=[{"page_id": "page-7", "page_name": "Página Aurora", "page_access_token": "page-access-token", "instagram_user_id": "ig-9", "instagram_username": "aurora"}]) as pages_fetch, patch.object(app_module, "fetch_permissions", return_value={"pages_manage_posts": "granted", "instagram_content_publish": "declined"}) as permissions_fetch:
                 callback = self.client.get("/integrations/meta/callback", query_string={"state": state, "code": "oauth-code"})
             self.assertIn("connected=1", callback.location)
             short_exchange.assert_called_once()
             long_exchange.assert_called_once()
             pages_fetch.assert_called_once_with("long-user-token", meta_integration.load_meta_settings())
+            permissions_fetch.assert_called_once_with("long-user-token", meta_integration.load_meta_settings())
             with app_module.app.app_context():
                 db = app_module.get_db()
                 stored = db.execute("SELECT * FROM meta_page_connections WHERE company_id=(SELECT company_id FROM users WHERE email='meta-admin@example.com')").fetchone()
@@ -109,20 +110,39 @@ class MetaIntegrationTests(unittest.TestCase):
                 self.assertNotIn("page-access-token", stored["page_access_token_encrypted"])
                 self.assertEqual(meta_integration.decrypt_token(stored["page_access_token_encrypted"], meta_integration.load_meta_settings()), "page-access-token")
                 connection_id = stored["id"]
+                permissions = {row["permission"]: row["status"] for row in db.execute("SELECT permission,status FROM meta_connection_permissions WHERE connection_id=?", (connection_id,)).fetchall()}
+                self.assertEqual(permissions["pages_manage_posts"], "granted")
+                self.assertEqual(permissions["instagram_content_publish"], "declined")
+                self.assertEqual(permissions["pages_show_list"], "unknown")
             page = self.client.get("/integrations/meta")
             self.assertEqual(page.status_code, 200)
             self.assertIn(b"@aurora", page.data)
+            self.assertIn(b"Publicar no Facebook", page.data)
+            self.assertIn(b"Publicar no Instagram", page.data)
+            self.assertIn(b"recusada", page.data)
             self.assertNotIn(b"page-access-token", page.data)
             with patch.object(app_module, "check_page_connection", return_value={"page_id": "page-7", "page_name": "Página Aurora"}) as check_page:
                 checked = self.client.post(f"/integrations/meta/{connection_id}/check", data={"csrf_token": self.csrf()})
             self.assertIn("connection_check=ok", checked.location)
             check_page.assert_called_once_with("page-7", "page-access-token", meta_integration.load_meta_settings())
             page = self.client.get("/integrations/meta")
-            self.assertIn(b"Conex\xc3\xa3o confirmada", page.data)
+            self.assertIn(b"Leitura Graph confirmada", page.data)
             deleted = self.client.post(f"/integrations/meta/{connection_id}/disconnect", data={"csrf_token": self.csrf()})
             self.assertIn("disconnected=1", deleted.location)
             with app_module.app.app_context():
                 self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_page_connections").fetchone()[0], 0)
+
+    def test_permission_discovery_normalizes_only_requested_meta_scopes(self):
+        settings = meta_integration.load_meta_settings(self.meta_env)
+        payload = {"data": [{"permission": "pages_manage_posts", "status": "granted"}, {"permission": "instagram_content_publish", "status": "declined"}, {"permission": "unrequested_scope", "status": "granted"}, {"permission": "pages_show_list", "status": "future-status"}]}
+        with patch("meta_integration.urllib.request.urlopen", return_value=FakeResponse(payload)) as open_url:
+            permissions = meta_integration.fetch_permissions("user-token", settings)
+        self.assertEqual(permissions["pages_manage_posts"], "granted")
+        self.assertEqual(permissions["instagram_content_publish"], "declined")
+        self.assertEqual(permissions["pages_show_list"], "unknown")
+        self.assertNotIn("unrequested_scope", permissions)
+        self.assertIn("/me/permissions?", open_url.call_args.args[0].full_url)
+        self.assertIn("appsecret_proof=", open_url.call_args.args[0].full_url)
 
     def test_page_connection_check_queries_meta_and_rejects_a_mismatched_page(self):
         settings = meta_integration.load_meta_settings(self.meta_env)

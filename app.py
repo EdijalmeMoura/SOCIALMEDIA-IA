@@ -23,7 +23,7 @@ from flask import Flask, abort, g, jsonify, make_response, redirect, render_temp
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
-from meta_integration import MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image
+from meta_integration import META_SCOPES, MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, fetch_permissions, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SOCIALMEDIA_DATA", BASE_DIR / "instance"))
@@ -258,6 +258,16 @@ CREATE TABLE IF NOT EXISTS meta_page_connections (
  UNIQUE(company_id,page_id)
 );
 CREATE INDEX IF NOT EXISTS idx_meta_connections_tenant ON meta_page_connections(company_id,page_name);
+CREATE TABLE IF NOT EXISTS meta_connection_permissions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ connection_id INTEGER NOT NULL REFERENCES meta_page_connections(id) ON DELETE CASCADE,
+ permission TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('granted','declined','unknown')),
+ checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(connection_id,permission)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_permissions_tenant ON meta_connection_permissions(company_id,connection_id);
 CREATE TABLE IF NOT EXISTS meta_connection_checks (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -1378,7 +1388,7 @@ def schedule_page():
             item["local_input"] = ""
         item["events"] = db.execute("SELECT se.*,u.name AS actor_name FROM schedule_events se LEFT JOIN users u ON u.id=se.actor_user_id WHERE se.scheduled_publication_id=? AND se.company_id=? ORDER BY se.id DESC LIMIT 5", (item["id"], g.user["company_id"])).fetchall()
         schedule_rows.append(item)
-    connections = db.execute("SELECT id,page_id,page_name,instagram_user_id,instagram_username FROM meta_page_connections WHERE company_id=? ORDER BY page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    connections = db.execute("SELECT pc.id,pc.page_id,pc.page_name,pc.instagram_user_id,pc.instagram_username,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='pages_manage_posts') AS facebook_publish_permission,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='instagram_basic') AS instagram_basic_permission,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='instagram_content_publish') AS instagram_publish_permission FROM meta_page_connections pc WHERE pc.company_id=? ORDER BY pc.page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
     try:
         load_meta_settings()
         meta_configured = True
@@ -1461,6 +1471,11 @@ def schedule_publish_now(schedule_id):
         return redirect(url_for("schedule_page", error="Escolha uma Página Meta conectada a esta agência."))
     if schedule["network"] == "Instagram" and not connection["instagram_user_id"]:
         return redirect(url_for("schedule_page", error="A Página selecionada não possui uma conta profissional do Instagram vinculada."))
+    required_permissions = ["pages_manage_posts"] if schedule["network"] == "Facebook" else ["instagram_basic", "instagram_content_publish"]
+    saved_permissions = {row["permission"]: row["status"] for row in get_db().execute("SELECT permission,status FROM meta_connection_permissions WHERE company_id=? AND connection_id=?", (g.user["company_id"], connection_id)).fetchall()}
+    denied_permissions = [permission for permission in required_permissions if saved_permissions.get(permission) == "declined"]
+    if denied_permissions:
+        return redirect(url_for("schedule_page", error="A autorização Meta recusou " + ", ".join(denied_permissions) + ". Reconecte a Página e conceda as permissões exigidas para publicação."))
     snapshot = json.loads(schedule["snapshot_json"])
     if snapshot["type"] == "creative":
         content = snapshot.get("content", {})
@@ -1732,7 +1747,13 @@ def meta_settings_page():
         configured = False
         graph_version = None
         settings_error = str(exc)
-    connections = get_db().execute("SELECT pc.id,pc.page_id,pc.page_name,pc.instagram_user_id,pc.instagram_username,pc.token_expires_at,pc.connected_at,(SELECT mc.status FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_status,(SELECT mc.details FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_details,(SELECT mc.checked_at FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_checked_at FROM meta_page_connections pc WHERE pc.company_id=? ORDER BY pc.page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    db = get_db()
+    connections = db.execute("SELECT pc.id,pc.page_id,pc.page_name,pc.instagram_user_id,pc.instagram_username,pc.token_expires_at,pc.connected_at,(SELECT mc.status FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_status,(SELECT mc.details FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_details,(SELECT mc.checked_at FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_checked_at FROM meta_page_connections pc WHERE pc.company_id=? ORDER BY pc.page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    permission_rows = db.execute("SELECT connection_id,permission,status,checked_at FROM meta_connection_permissions WHERE company_id=? ORDER BY permission", (g.user["company_id"],)).fetchall()
+    permission_map = {}
+    for permission in permission_rows:
+        permission_map.setdefault(permission["connection_id"], []).append(dict(permission))
+    connections = [dict(connection, permissions=permission_map.get(connection["id"], [])) for connection in connections]
     return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, connections=connections, error=request.args.get("error"), connected=request.args.get("connected"))
 
 
@@ -1748,7 +1769,7 @@ def meta_connection_test(connection_id):
         page_token = decrypt_token(connection["page_access_token_encrypted"], settings)
         checked = check_page_connection(connection["page_id"], page_token, settings)
         status = "ok"
-        details = "Conexão Graph confirmada para " + (checked["page_name"] or connection["page_name"])
+        details = "Leitura Graph confirmada para " + (checked["page_name"] or connection["page_name"]) + ". Isso não testa permissões de publicação."
     except MetaIntegrationError as exc:
         status = "failed"
         details = clean(str(exc), 500)
@@ -1791,11 +1812,18 @@ def meta_oauth_callback():
         pages = fetch_pages(user_token, settings)
         if not pages:
             raise MetaIntegrationError("Nenhuma Página do Facebook foi encontrada. Confira as permissões, o acesso à Página e a conta profissional do Instagram vinculada.")
+        try:
+            permissions = fetch_permissions(user_token, settings)
+        except MetaIntegrationError:
+            permissions = {}
         expires_in = long_token.get("expires_in")
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))).isoformat(timespec="seconds") if str(expires_in or "").isdigit() else None
         db = get_db()
         for page in pages:
             db.execute("INSERT INTO meta_page_connections(company_id,connected_by,page_id,page_name,instagram_user_id,instagram_username,page_access_token_encrypted,token_expires_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(company_id,page_id) DO UPDATE SET connected_by=excluded.connected_by,page_name=excluded.page_name,instagram_user_id=excluded.instagram_user_id,instagram_username=excluded.instagram_username,page_access_token_encrypted=excluded.page_access_token_encrypted,token_expires_at=excluded.token_expires_at,updated_at=CURRENT_TIMESTAMP", (g.user["company_id"], g.user["id"], page["page_id"], page["page_name"], page["instagram_user_id"], page["instagram_username"], encrypt_token(page["page_access_token"], settings), expires_at))
+            connection_id = db.execute("SELECT id FROM meta_page_connections WHERE company_id=? AND page_id=?", (g.user["company_id"], page["page_id"])).fetchone()["id"]
+            for permission in META_SCOPES:
+                db.execute("INSERT INTO meta_connection_permissions(company_id,connection_id,permission,status) VALUES(?,?,?,?) ON CONFLICT(connection_id,permission) DO UPDATE SET status=excluded.status,checked_at=CURRENT_TIMESTAMP", (g.user["company_id"], connection_id, permission, permissions.get(permission, "unknown")))
         db.commit()
     except (MetaIntegrationError, TypeError, ValueError) as exc:
         get_db().rollback()

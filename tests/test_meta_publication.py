@@ -169,6 +169,20 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
             self.assertEqual(forged.status_code, 404)
         self.assertEqual(self.client.get("/meta/media/../../README.md").status_code, 404)
 
+    def test_known_declined_meta_publish_scope_blocks_send_and_explains_reconnect(self):
+        schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)
+        with app_module.app.app_context():
+            app_module.get_db().execute("INSERT INTO meta_connection_permissions(company_id,connection_id,permission,status) VALUES(?,?,?,?)", (self.company_id, connection_id, "pages_manage_posts", "declined"))
+            app_module.get_db().commit()
+        with patch.dict(os.environ, self.meta_env, clear=False), patch.object(app_module, "publish_facebook_text") as publish:
+            page = self.client.get("/schedule")
+            self.assertIn(b"A Meta recusou uma permiss\xc3\xa3o de publica\xc3\xa7\xc3\xa3o", page.data)
+            response = self.client.post(f"/schedule/{schedule_id}/publish", data={"csrf_token": self.csrf(), "connection_id": str(connection_id)})
+            self.assertIn("pages_manage_posts", response.location)
+            publish.assert_not_called()
+        with app_module.app.app_context():
+            self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()[0], 0)
+
     def test_future_schedule_is_not_sent_to_graph_api(self):
         schedule_id, connection_id = self.make_due_schedule()
         with app_module.app.app_context():
