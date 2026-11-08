@@ -1,6 +1,6 @@
 # SocialMedia IA
 
-Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 06** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA, estúdio de criação, preview de feed, aprovação do cliente e agenda interna.
+Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 07** estão implementadas: workspaces isolados, clientes e identidade de marca, planejamento editorial com IA, estúdio de criação, preview de feed, aprovação do cliente, agenda interna e relatórios operacionais.
 
 ## Requisitos
 
@@ -32,7 +32,7 @@ Abra `http://localhost:5000`. O primeiro acesso começa pela criação de uma co
 python -m unittest discover -s tests -v
 ```
 
-Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação, aprovações e a fila interna de horários com fuso e auditoria.
+Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação, aprovações, agenda interna com fuso/auditoria e relatórios com exportação CSV.
 
 ## Etapa 01 implementada
 
@@ -85,8 +85,6 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 - Agência e cliente visualizam comentários, referências e histórico de status por ciclo. Solicitações de alteração permitem um novo ciclo preservando o anterior.
 - Nenhuma aprovação publica conteúdo. Contas são criadas manualmente e a agência compartilha a senha temporária por canal seguro; não há envio de convites ou notificações por e-mail nesta entrega.
 
-## Limites desta entrega
-
 ## Etapa 06 implementada
 
 - Fila interna de horários para conteúdo aprovado pelo cliente, com rede e fuso horário IANA; horário convertido e salvo em UTC.
@@ -94,4 +92,13 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 - Reagendamento e cancelamento preservam eventos de auditoria. Um conteúdo não pode ter dois horários ativos para a mesma rede.
 - A agenda é somente operacional: não há serviço em segundo plano, conexão com contas sociais, envio automático, status de publicação ou promessa de postagem.
 
-Integrações Meta/publicação automática, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção altera apenas o estado interno; a agenda não publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+## Etapa 07 implementada
+
+- Relatórios filtráveis por período (até 366 dias) e cliente, com dados isolados por agência.
+- Resumo de planejamento, artes criadas/exportadas, aprovações e horários internos, além de quebras por rede e status.
+- Exportação CSV com proteção contra fórmulas maliciosas em planilhas; datas de registro são identificadas como UTC.
+- Os números são exclusivamente operacionais. Não inferem alcance, impressões, curtidas, cliques ou desempenho de redes sociais desconectadas.
+
+## Limites desta entrega
+
+Integrações Meta, publicação automática em redes sociais, métricas de desempenho externo e billing ainda não foram implementados. Encaminhar um planejamento para produção altera apenas o estado interno; a agenda não publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.

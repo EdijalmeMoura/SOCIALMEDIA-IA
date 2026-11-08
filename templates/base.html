@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f7fb"><title>{% block title %}SocialMedia IA{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='planner.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='feed.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='approvals.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='schedule.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='planner.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='feed.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='approvals.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='schedule.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='reports.css') }}">
 </head>
 <body class="{% if not g.user %}auth-body{% endif %}">
 {% if g.user %}
@@ -20,6 +20,7 @@
       <a class="nav-link {% if request.endpoint == 'feed_page' %}active{% endif %}" href="{{ url_for('feed_page') }}"><span class="nav-icon">▦</span>Feed preview</a>
       <a class="nav-link {% if request.endpoint in ['approvals_page','approval_detail'] %}active{% endif %}" href="{{ url_for('approvals_page') }}"><span class="nav-icon">✓</span>Aprovações</a>
       <a class="nav-link {% if request.endpoint in ['schedule_page','schedule_reschedule','schedule_cancel'] %}active{% endif %}" href="{{ url_for('schedule_page') }}"><span class="nav-icon">◷</span>Agenda interna</a>
+      <a class="nav-link {% if request.endpoint in ['reports_page','reports_export'] %}active{% endif %}" href="{{ url_for('reports_page') }}"><span class="nav-icon">▤</span>Relatórios</a>
     </nav>
     <div class="sidebar-bottom"><div class="nav-label">PREFERÊNCIAS</div><a class="nav-link {% if request.endpoint == 'team_page' %}active{% endif %}" href="{{ url_for('team_page') }}"><span class="nav-icon">⚙</span>Equipe & permissões</a><div class="sidebar-help"><div class="help-orb">✦</div><b>Seu espaço criativo</b><p>O núcleo de clientes está pronto para organizar sua agência.</p><a href="{{ url_for('clients_page') }}">Explorar clientes <span>→</span></a></div><div class="user-card"><div class="avatar">{{ g.user['name'][0]|upper }}</div><div class="user-info"><b>{{ g.user['name'] }}</b><small>{{ g.user['role']|capitalize }}</small></div><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button" title="Sair" aria-label="Sair">↗</button></form></div></div>
   </aside>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hmac
 import io
 import json
@@ -16,7 +17,7 @@ from functools import wraps
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -1324,6 +1325,121 @@ def schedule_cancel(schedule_id):
     return redirect(url_for("schedule_page", cancelled=schedule_id))
 
 
+def parse_report_filters():
+    today = datetime.now(timezone.utc).date()
+    default_start = today.replace(day=1).isoformat()
+    default_end = today.isoformat()
+    start_value = clean(request.args.get("start_date"), 10) or default_start
+    end_value = clean(request.args.get("end_date"), 10) or default_end
+    try:
+        start_date = datetime.strptime(start_value, "%Y-%m-%d").date()
+        end_date = datetime.strptime(end_value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("Escolha datas válidas para o período.")
+    if end_date < start_date:
+        raise ValueError("A data final precisa ser igual ou posterior à data inicial.")
+    if (end_date - start_date).days > 365:
+        raise ValueError("O período máximo do relatório é de 366 dias.")
+    client_value = clean(request.args.get("client_id"), 12)
+    client_id = None
+    if client_value:
+        try:
+            client_id = int(client_value)
+        except ValueError:
+            raise ValueError("Escolha um cliente válido.")
+        if not client_for_tenant(client_id):
+            abort(404)
+    return start_date.isoformat(), end_date.isoformat(), client_id
+
+
+def build_operational_report(start_date, end_date, client_id):
+    company_id = g.user["company_id"]
+    client_clause = f" AND {{}}.client_id=?" if client_id is not None else ""
+    params = [company_id, start_date, end_date] + ([client_id] if client_id is not None else [])
+    db = get_db()
+    posts = db.execute("SELECT p.id,p.client_id,p.theme,p.network,p.status,p.created_at,c.trade_name,c.company_name FROM posts p JOIN clients c ON c.id=p.client_id AND c.company_id=p.company_id WHERE p.company_id=? AND date(p.created_at) BETWEEN ? AND ?" + client_clause.format("p") + " ORDER BY p.created_at DESC,p.id DESC", params).fetchall()
+    creatives = db.execute("SELECT cp.id,cp.client_id,cp.subject,cp.status,cp.export_path,cp.created_at,c.trade_name,c.company_name FROM creative_posts cp JOIN clients c ON c.id=cp.client_id AND c.company_id=cp.company_id WHERE cp.company_id=? AND date(cp.created_at) BETWEEN ? AND ?" + client_clause.format("cp") + " ORDER BY cp.created_at DESC,cp.id DESC", params).fetchall()
+    approvals = db.execute("SELECT a.id,a.client_id,a.title,a.source_type,a.snapshot_json,a.status,a.submitted_at,c.trade_name,c.company_name FROM approvals a JOIN clients c ON c.id=a.client_id AND c.company_id=a.company_id WHERE a.company_id=? AND date(a.submitted_at) BETWEEN ? AND ?" + client_clause.format("a") + " ORDER BY a.submitted_at DESC,a.id DESC", params).fetchall()
+    schedules = db.execute("SELECT sp.id,sp.client_id,sp.approval_id,sp.network,sp.scheduled_at_utc,sp.timezone,sp.status,a.title,c.trade_name,c.company_name FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? AND date(sp.scheduled_at_utc) BETWEEN ? AND ?" + client_clause.format("sp") + " ORDER BY sp.scheduled_at_utc DESC,sp.id DESC", params).fetchall()
+    events = db.execute("SELECT e.new_status,COUNT(*) AS count FROM approval_events e JOIN approvals a ON a.id=e.approval_id AND a.company_id=e.company_id WHERE e.company_id=? AND date(e.created_at) BETWEEN ? AND ? AND e.new_status IN ('approved','changes_requested','rejected')" + (" AND a.client_id=?" if client_id is not None else "") + " GROUP BY e.new_status", params).fetchall()
+    from collections import Counter
+    approval_statuses = Counter(row["status"] for row in approvals)
+    decision_events = Counter({row["new_status"]: row["count"] for row in events})
+    post_networks = Counter(row["network"] for row in posts)
+    schedule_networks = Counter(row["network"] for row in schedules)
+    schedule_statuses = Counter(row["status"] for row in schedules)
+    exported_creatives = sum(1 for row in creatives if row["export_path"])
+    activity = []
+    for row in posts:
+        activity.append({"date": row["created_at"], "client": row["trade_name"] or row["company_name"], "category": "Planejamento", "title": row["theme"], "network": row["network"], "status": "Em produção" if row["status"] == "in_production" else "Planejada"})
+    for row in creatives:
+        activity.append({"date": row["created_at"], "client": row["trade_name"] or row["company_name"], "category": "Arte", "title": row["subject"], "network": "—", "status": "Exportada" if row["export_path"] else "Rascunho"})
+    for row in approvals:
+        snapshot = json.loads(row["snapshot_json"])
+        activity.append({"date": row["submitted_at"], "client": row["trade_name"] or row["company_name"], "category": "Aprovação", "title": row["title"], "network": snapshot.get("network", "—"), "status": {"pending":"Aguardando cliente","approved":"Aprovado","changes_requested":"Alterações solicitadas","rejected":"Rejeitado"}.get(row["status"], row["status"])})
+    for row in schedules:
+        activity.append({"date": row["scheduled_at_utc"], "client": row["trade_name"] or row["company_name"], "category": "Agenda interna", "title": row["title"], "network": row["network"], "status": "Na agenda" if row["status"] == "scheduled" else "Cancelado"})
+    activity.sort(key=lambda item: item["date"].replace("T", " "), reverse=True)
+    metrics = {"planned_posts": len(posts), "creatives": len(creatives), "exported_creatives": exported_creatives, "approvals": len(approvals), "approval_pending": approval_statuses["pending"], "approval_approved": approval_statuses["approved"], "approval_changes": approval_statuses["changes_requested"], "approval_rejected": approval_statuses["rejected"], "approved_events": decision_events["approved"], "changes_events": decision_events["changes_requested"], "rejected_events": decision_events["rejected"], "schedules": len(schedules), "schedules_active": schedule_statuses["scheduled"], "schedules_cancelled": schedule_statuses["cancelled"]}
+    network_rows = [{"network": network, "posts": post_networks[network], "schedules": schedule_networks[network]} for network in SCHEDULE_NETWORKS if post_networks[network] or schedule_networks[network]]
+    return {"metrics": metrics, "activity": activity[:300], "network_rows": network_rows, "activity_count": len(activity)}
+
+
+def spreadsheet_safe(value):
+    value = "" if value is None else str(value)
+    if value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
+@app.get("/reports")
+@login_required
+def reports_page():
+    clients = get_db().execute("SELECT id,company_name,trade_name FROM clients WHERE company_id=? ORDER BY company_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    error = None
+    try:
+        start_date, end_date, client_id = parse_report_filters()
+    except ValueError as exc:
+        error = str(exc)
+        today = datetime.now(timezone.utc).date()
+        start_date, end_date, client_id = today.replace(day=1).isoformat(), today.isoformat(), None
+    report = build_operational_report(start_date, end_date, client_id)
+    selected = next((client for client in clients if client["id"] == client_id), None)
+    return render_template("reports.html", clients=clients, selected=selected, start_date=start_date, end_date=end_date, report=report, error=error)
+
+
+@app.get("/reports/export.csv")
+@login_required
+def reports_export():
+    try:
+        start_date, end_date, client_id = parse_report_filters()
+    except ValueError:
+        abort(400)
+    report = build_operational_report(start_date, end_date, client_id)
+    client_name = "Todos os clientes"
+    if client_id is not None:
+        client = client_for_tenant(client_id)
+        client_name = client["trade_name"] or client["company_name"]
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Relatório operacional SocialMedia IA"])
+    writer.writerow(["Período (UTC)", start_date, end_date])
+    writer.writerow(["Cliente", spreadsheet_safe(client_name)])
+    writer.writerow([])
+    writer.writerow(["Indicador", "Quantidade"])
+    for label, key in [("Posts planejados", "planned_posts"), ("Artes criadas", "creatives"), ("Artes exportadas", "exported_creatives"), ("Aprovações enviadas", "approvals"), ("Aprovações pendentes", "approval_pending"), ("Aprovadas", "approval_approved"), ("Alterações solicitadas", "approval_changes"), ("Rejeitadas", "approval_rejected"), ("Horários na agenda", "schedules"), ("Agendamentos ativos", "schedules_active"), ("Agendamentos cancelados", "schedules_cancelled")]:
+        writer.writerow([label, report["metrics"][key]])
+    writer.writerow([])
+    writer.writerow(["Categoria", "Cliente", "Conteúdo", "Rede", "Data registrada (UTC)", "Status interno"])
+    for row in report["activity"]:
+        writer.writerow([spreadsheet_safe(row["category"]), spreadsheet_safe(row["client"]), spreadsheet_safe(row["title"]), spreadsheet_safe(row["network"]), spreadsheet_safe(row["date"]), spreadsheet_safe(row["status"])])
+    response = make_response("\ufeff" + output.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = f"attachment; filename=relatorio-socialmedia-{start_date}-a-{end_date}.csv"
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 @app.get("/feed")
 @login_required
 def feed_page():
@@ -1886,7 +2002,7 @@ def team_page():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "module": "stage-06", "database": "sqlite"}
+    return {"status": "ok", "module": "stage-07", "database": "sqlite"}
 
 
 @app.errorhandler(403)
