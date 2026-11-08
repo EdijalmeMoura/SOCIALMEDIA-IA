@@ -267,6 +267,16 @@ CREATE TABLE IF NOT EXISTS meta_token_expiry_notices (
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
  UNIQUE(connection_id,token_expires_at,notice_type)
 );
+CREATE TABLE IF NOT EXISTS meta_public_media_checks (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ base_url TEXT NOT NULL DEFAULT '',
+ status TEXT NOT NULL CHECK(status IN ('ok','failed')),
+ details TEXT NOT NULL DEFAULT '',
+ checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_public_media_checks_latest ON meta_public_media_checks(company_id,checked_at DESC);
 CREATE TABLE IF NOT EXISTS meta_connection_permissions (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -1853,6 +1863,23 @@ def create_meta_image_url(filename):
     return f"{base_url}/meta/media/{urllib.parse.quote(filename, safe='')}?expires={expires}&signature={signature}"
 
 
+class _RejectMetaMediaRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def verify_meta_public_media_probe(image_url, expected_bytes):
+    parsed = urllib.parse.urlsplit(image_url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    request_probe = urllib.request.Request(image_url, headers={"Accept": "image/jpeg"}, method="GET")
+    opener = urllib.request.build_opener(_RejectMetaMediaRedirects())
+    with opener.open(request_probe, timeout=8) as response:
+        if response.status != 200 or response.geturl() != image_url or response.headers.get_content_type() != "image/jpeg":
+            return False
+        return response.read(len(expected_bytes) + 1) == expected_bytes
+
+
 @app.get("/meta/media/<path:filename>")
 def meta_public_media(filename):
     if secure_filename(filename) != filename or Path(filename).suffix.lower() not in {".png", ".jpg", ".jpeg"}:
@@ -1908,18 +1935,55 @@ def meta_settings_page():
     last_facebook_publication = db.execute("SELECT remote_publication_id,created_at FROM meta_publication_attempts WHERE company_id=? AND network='Facebook' AND status='published' ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
     last_instagram_publication = db.execute("SELECT remote_publication_id,created_at FROM meta_publication_attempts WHERE company_id=? AND network='Instagram' AND status='published' ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
     try:
-        public_media_url_ready = bool(meta_public_base_url())
+        public_media_base_url = meta_public_base_url()
+        public_media_url_ready = True
     except MetaIntegrationError:
+        public_media_base_url = ""
         public_media_url_ready = False
+    last_public_media_check = db.execute("SELECT base_url,status,details,checked_at FROM meta_public_media_checks WHERE company_id=? ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
     session_secret = str(app.config.get("SECRET_KEY") or "")
     session_security_ready = bool(app.config.get("SESSION_COOKIE_SECURE")) and len(session_secret) >= 32 and session_secret != "dev-only-change-this-secret-before-deploying"
-    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, session_security_ready=session_security_ready, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
+    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, public_media_base_url=public_media_base_url, session_security_ready=session_security_ready, last_public_media_check=last_public_media_check, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
 
 
 @app.get("/integrations/meta/validation-guide")
 @roles_required("owner", "admin")
 def meta_validation_guide():
     return send_from_directory(BASE_DIR / "docs", "meta-live-validation.md", mimetype="text/markdown", as_attachment=False)
+
+
+@app.post("/integrations/meta/public-media-check")
+@roles_required("owner", "admin")
+def meta_public_media_check():
+    db = get_db()
+    base_url = ""
+    status = "failed"
+    details = "O servidor não conseguiu buscar a imagem de teste na origem configurada. Confira HTTPS, DNS, proxy e acesso externo."
+    filename = None
+    try:
+        base_url = meta_public_base_url()
+        filename = f"meta_instagram_{secrets.token_hex(12)}.jpg"
+        image_path = UPLOAD_DIR / filename
+        with image_path.open("xb") as image_file:
+            Image.new("RGB", (320, 320), color=(37, 57, 92)).save(image_file, format="JPEG", quality=88)
+        expected_bytes = image_path.read_bytes()
+        signed_url = create_meta_image_url(filename)
+        if verify_meta_public_media_probe(signed_url, expected_bytes):
+            status = "ok"
+            details = "O servidor da aplicação buscou o JPEG assinado esperado. Isso não comprova que os servidores da Meta consigam acessá-lo."
+    except MetaIntegrationError as exc:
+        details = clean(str(exc), 500)
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+        pass
+    finally:
+        if filename:
+            try:
+                (UPLOAD_DIR / filename).unlink(missing_ok=True)
+            except OSError:
+                pass
+    db.execute("INSERT INTO meta_public_media_checks(company_id,checked_by,base_url,status,details) VALUES(?,?,?,?,?)", (g.user["company_id"], g.user["id"], base_url, status, clean(details, 500)))
+    db.commit()
+    return redirect(url_for("meta_settings_page", media_check=status))
 
 
 @app.post("/integrations/meta/<int:connection_id>/check")

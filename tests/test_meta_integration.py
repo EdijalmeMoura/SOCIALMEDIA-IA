@@ -2,6 +2,7 @@ import os
 import re
 import tempfile
 import unittest
+from email.message import Message
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +17,28 @@ os.environ.setdefault("SOCIALMEDIA_DATA", TEST_ROOT.name)
 os.environ.setdefault("SOCIALMEDIA_DB", str(Path(TEST_ROOT.name) / "bootstrap.db"))
 import app as app_module  # noqa: E402
 import meta_integration  # noqa: E402
+
+
+class FakeProbeResponse:
+    status = 200
+
+    def __init__(self, image_url, payload):
+        self.image_url = image_url
+        self.payload = payload
+        self.headers = Message()
+        self.headers.add_header("Content-Type", "image/jpeg")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def geturl(self):
+        return self.image_url
+
+    def read(self, size=-1):
+        return self.payload[:size] if size >= 0 else self.payload
 
 
 class FakeResponse:
@@ -193,6 +216,45 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertIn("disconnected=1", deleted.location)
             with app_module.app.app_context():
                 self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_page_connections").fetchone()[0], 0)
+
+    def test_public_media_probe_requires_exact_jpeg_from_same_url(self):
+        image_url = "https://agency.example.test/meta/media/probe.jpg?signature=test"
+        class ProbeOpener:
+            def __init__(self, response):
+                self.response = response
+                self.request = None
+                self.timeout = None
+
+            def open(self, request, timeout):
+                self.request, self.timeout = request, timeout
+                return self.response
+
+        opener = ProbeOpener(FakeProbeResponse(image_url, b"jpeg-bytes"))
+        with patch.object(app_module.urllib.request, "build_opener", return_value=opener) as build_opener:
+            self.assertTrue(app_module.verify_meta_public_media_probe(image_url, b"jpeg-bytes"))
+        self.assertEqual(opener.timeout, 8)
+        self.assertEqual(opener.request.method, "GET")
+        self.assertIsInstance(build_opener.call_args.args[0], app_module._RejectMetaMediaRedirects)
+        wrong_body = ProbeOpener(FakeProbeResponse(image_url, b"different"))
+        with patch.object(app_module.urllib.request, "build_opener", return_value=wrong_body):
+            self.assertFalse(app_module.verify_meta_public_media_probe(image_url, b"jpeg-bytes"))
+
+    def test_public_media_check_records_server_probe_and_removes_temporary_image(self):
+        with patch.dict(os.environ, self.meta_env, clear=False), patch.object(app_module, "verify_meta_public_media_probe", return_value=True) as probe:
+            response = self.client.post("/integrations/meta/public-media-check", data={"csrf_token": self.csrf()})
+        self.assertIn("media_check=ok", response.location)
+        image_url, image_bytes = probe.call_args.args
+        filename = Path(urlparse(image_url).path).name
+        self.assertTrue(image_bytes.startswith(bytes([0xff, 0xd8])))
+        self.assertFalse((app_module.UPLOAD_DIR / filename).exists())
+        with app_module.app.app_context():
+            check = app_module.get_db().execute("SELECT status,details FROM meta_public_media_checks ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertEqual(check["status"], "ok")
+            self.assertIn("não comprova que os servidores da Meta", check["details"])
+        with patch.dict(os.environ, self.meta_env, clear=False):
+            page = self.client.get(response.location)
+        self.assertIn(b"Servidor buscou o JPEG", page.data)
+        self.assertIn(b"Isso n\xc3\xa3o comprova acesso pelos servidores da Meta", page.data)
 
     def test_permission_discovery_normalizes_only_requested_meta_scopes(self):
         settings = meta_integration.load_meta_settings(self.meta_env)
