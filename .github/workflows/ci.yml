@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate Python, JavaScript, and container entrypoint syntax
+        run: |
+          python -m py_compile app.py meta_integration.py tests/*.py
+          node --check static/app.js
+          sh -n docker-entrypoint.sh
+
+      - name: Run test suite
+        run: python -m unittest discover -s tests -v
+
+      - name: Build Docker image
+        run: docker build --tag socialmedia-ia:ci .
