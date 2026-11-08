@@ -11,9 +11,10 @@ import sqlite3
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -203,6 +204,33 @@ CREATE TABLE IF NOT EXISTS comments (
  CHECK((author_type='agency' AND author_user_id IS NOT NULL AND author_portal_user_id IS NULL) OR (author_type='client' AND author_portal_user_id IS NOT NULL AND author_user_id IS NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_comments_approval ON comments(approval_id,created_at);
+CREATE TABLE IF NOT EXISTS scheduled_publications (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+ approval_id INTEGER NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+ scheduled_by INTEGER NOT NULL REFERENCES users(id),
+ network TEXT NOT NULL CHECK(network IN ('Instagram','Facebook','TikTok','LinkedIn')),
+ scheduled_at_utc TEXT NOT NULL,
+ timezone TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'scheduled' CHECK(status IN ('scheduled','cancelled')),
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_publications_tenant ON scheduled_publications(company_id,status,scheduled_at_utc);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_publications_active_channel ON scheduled_publications(approval_id,network) WHERE status='scheduled';
+CREATE TABLE IF NOT EXISTS schedule_events (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ scheduled_publication_id INTEGER NOT NULL REFERENCES scheduled_publications(id) ON DELETE CASCADE,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ event_type TEXT NOT NULL CHECK(event_type IN ('scheduled','rescheduled','cancelled')),
+ scheduled_at_utc TEXT NOT NULL,
+ timezone TEXT NOT NULL,
+ note TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_events_item ON schedule_events(scheduled_publication_id,created_at);
 """
 
 
@@ -357,6 +385,32 @@ class PlannerAIError(Exception):
 
 
 PLANNER_NETWORKS = {"Instagram", "Facebook", "TikTok", "LinkedIn"}
+SCHEDULE_NETWORKS = ("Instagram", "Facebook", "TikTok", "LinkedIn")
+DEFAULT_SCHEDULE_TIMEZONE = "America/Recife"
+
+
+def parse_schedule_time(local_value, timezone_name):
+    try:
+        zone = ZoneInfo(timezone_name)
+        local_time = datetime.strptime(local_value, "%Y-%m-%dT%H:%M")
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        raise ValueError("Informe data, hora e fuso horário válidos.")
+    aware = local_time.replace(tzinfo=zone, fold=0)
+    if aware.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None) != local_time:
+        raise ValueError("Este horário local não existe devido à mudança de fuso. Escolha outro horário.")
+    utc_time = aware.astimezone(timezone.utc)
+    if utc_time < datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise ValueError("Agende pelo menos 5 minutos à frente do horário atual.")
+    return utc_time.isoformat(timespec="seconds"), zone.key
+
+
+def scheduled_local_label(utc_value, timezone_name):
+    try:
+        zone = ZoneInfo(timezone_name)
+        return datetime.fromisoformat(utc_value).astimezone(zone).strftime("%d/%m/%Y às %H:%M")
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        return utc_value
+
 POST_FIELDS = ("theme", "strategic_objective", "content_type", "main_text", "caption", "hashtags", "cta", "visual_brief", "image_suggestion")
 CREATIVE_FORMATS = {
     "square": {"label": "Post quadrado", "width": 1080, "height": 1080, "image_size": "1024x1024"},
@@ -729,11 +783,12 @@ def dashboard():
     feed_count = db.execute("SELECT COUNT(*) FROM feed_items WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     approval_pending_count = db.execute("SELECT COUNT(*) FROM approvals WHERE company_id=? AND status='pending'", (g.user["company_id"],)).fetchone()[0]
     approval_total_count = db.execute("SELECT COUNT(*) FROM approvals WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
+    scheduled_count = db.execute("SELECT COUNT(*) FROM scheduled_publications WHERE company_id=? AND status='scheduled'", (g.user["company_id"],)).fetchone()[0]
     today = datetime.now(timezone.utc)
     weekdays = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
     months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
     date_label = f"{weekdays[today.weekday()]}, {today.day:02d} de {months[today.month - 1]}"
-    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count, feed_count=feed_count, approval_pending_count=approval_pending_count, approval_total_count=approval_total_count)
+    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count, feed_count=feed_count, approval_pending_count=approval_pending_count, approval_total_count=approval_total_count, scheduled_count=scheduled_count)
 
 
 @app.get("/clients")
@@ -1166,6 +1221,107 @@ def portal_approval_media(approval_id, filename):
     response = send_from_directory(UPLOAD_DIR, filename, max_age=0)
     response.headers["Cache-Control"] = "private, no-store"
     return response
+
+
+def scheduled_publication_for_tenant(schedule_id):
+    return get_db().execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,c.company_name,c.trade_name FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.id=? AND sp.company_id=?", (schedule_id, g.user["company_id"])).fetchone()
+
+
+@app.route("/schedule", methods=["GET", "POST"])
+@login_required
+def schedule_page():
+    db = get_db()
+    if request.method == "POST":
+        if g.user["role"] not in {"owner", "admin", "editor"}:
+            abort(403)
+        try:
+            approval_id = int(request.form.get("approval_id", ""))
+        except (TypeError, ValueError):
+            return redirect(url_for("schedule_page", error="Escolha um conteúdo aprovado."))
+        approval = approval_for_agency(approval_id)
+        if not approval or approval["status"] != "approved":
+            return redirect(url_for("schedule_page", error="Somente conteúdos aprovados pelo cliente podem entrar na fila."))
+        network = clean(request.form.get("network"), 30)
+        snapshot = json.loads(approval["snapshot_json"])
+        if network not in SCHEDULE_NETWORKS:
+            return redirect(url_for("schedule_page", error="Escolha uma rede social válida."))
+        if snapshot["type"] == "planned" and network != snapshot["network"]:
+            return redirect(url_for("schedule_page", error="A publicação planejada deve permanecer na rede aprovada."))
+        try:
+            scheduled_at_utc, zone_name = parse_schedule_time(request.form.get("scheduled_local"), clean(request.form.get("timezone"), 80))
+        except ValueError as exc:
+            return redirect(url_for("schedule_page", error=str(exc)))
+        try:
+            cursor = db.execute("INSERT INTO scheduled_publications(company_id,client_id,approval_id,scheduled_by,network,scheduled_at_utc,timezone) VALUES(?,?,?,?,?,?,?)", (g.user["company_id"], approval["client_id"], approval_id, g.user["id"], network, scheduled_at_utc, zone_name))
+            schedule_id = cursor.lastrowid
+            db.execute("INSERT INTO schedule_events(scheduled_publication_id,company_id,actor_user_id,event_type,scheduled_at_utc,timezone,note) VALUES(?,?,?,'scheduled',?,?,?)", (schedule_id, g.user["company_id"], g.user["id"], scheduled_at_utc, zone_name, "Agendamento interno criado"))
+            db.commit()
+        except sqlite3.IntegrityError:
+            db.rollback()
+            return redirect(url_for("schedule_page", error="Este conteúdo já está agendado para essa rede. Cancele o horário anterior para substituí-lo."))
+        return redirect(url_for("schedule_page", created=schedule_id))
+    clients = db.execute("SELECT id,company_name,trade_name FROM clients WHERE company_id=? ORDER BY company_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    try:
+        selected_id = int(request.args.get("client_id", clients[0]["id"] if clients else ""))
+    except (TypeError, ValueError):
+        selected_id = clients[0]["id"] if clients else None
+    selected = db.execute("SELECT * FROM clients WHERE id=? AND company_id=?", (selected_id, g.user["company_id"])).fetchone() if selected_id else None
+    approval_rows = db.execute("SELECT a.id,a.client_id,a.title,a.source_type,a.snapshot_json,a.submitted_at,c.company_name,c.trade_name FROM approvals a JOIN clients c ON c.id=a.client_id AND c.company_id=a.company_id WHERE a.company_id=? AND a.status='approved' AND (? IS NULL OR a.client_id=?) ORDER BY a.resolved_at DESC,a.id DESC LIMIT 100", (g.user["company_id"], selected_id, selected_id)).fetchall()
+    approvals = []
+    for row in approval_rows:
+        item = dict(row)
+        item["snapshot"] = json.loads(item["snapshot_json"])
+        item["network"] = item["snapshot"].get("network", "")
+        approvals.append(item)
+    schedules = db.execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,c.company_name,c.trade_name FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? ORDER BY CASE sp.status WHEN 'scheduled' THEN 0 ELSE 1 END,sp.scheduled_at_utc,sp.id DESC LIMIT 100", (g.user["company_id"],)).fetchall()
+    schedule_rows = []
+    for row in schedules:
+        item = dict(row)
+        item["local_label"] = scheduled_local_label(item["scheduled_at_utc"], item["timezone"])
+        try:
+            item["local_input"] = datetime.fromisoformat(item["scheduled_at_utc"]).astimezone(ZoneInfo(item["timezone"])).strftime("%Y-%m-%dT%H:%M")
+        except (ValueError, ZoneInfoNotFoundError):
+            item["local_input"] = ""
+        item["events"] = db.execute("SELECT se.*,u.name AS actor_name FROM schedule_events se LEFT JOIN users u ON u.id=se.actor_user_id WHERE se.scheduled_publication_id=? AND se.company_id=? ORDER BY se.id DESC LIMIT 5", (item["id"], g.user["company_id"])).fetchall()
+        schedule_rows.append(item)
+    local_default = (datetime.now(ZoneInfo(DEFAULT_SCHEDULE_TIMEZONE)) + timedelta(days=1)).replace(second=0, microsecond=0)
+    return render_template("schedule.html", clients=clients, selected=selected, approvals=approvals, schedules=schedule_rows, networks=SCHEDULE_NETWORKS, default_timezone=DEFAULT_SCHEDULE_TIMEZONE, default_datetime=local_default.strftime("%Y-%m-%dT%H:%M"), error=request.args.get("error"), created=request.args.get("created"))
+
+
+@app.post("/schedule/<int:schedule_id>/reschedule")
+@roles_required("owner", "admin", "editor")
+def schedule_reschedule(schedule_id):
+    schedule = scheduled_publication_for_tenant(schedule_id)
+    if not schedule or schedule["status"] != "scheduled":
+        abort(404)
+    try:
+        scheduled_at_utc, zone_name = parse_schedule_time(request.form.get("scheduled_local"), clean(request.form.get("timezone"), 80))
+    except ValueError as exc:
+        return redirect(url_for("schedule_page", error=str(exc)))
+    db = get_db()
+    updated = db.execute("UPDATE scheduled_publications SET scheduled_at_utc=?,timezone=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND status='scheduled'", (scheduled_at_utc, zone_name, schedule_id, g.user["company_id"]))
+    if updated.rowcount != 1:
+        db.rollback()
+        abort(409)
+    db.execute("INSERT INTO schedule_events(scheduled_publication_id,company_id,actor_user_id,event_type,scheduled_at_utc,timezone,note) VALUES(?,?,?,'rescheduled',?,?,?)", (schedule_id, g.user["company_id"], g.user["id"], scheduled_at_utc, zone_name, "Horário anterior: " + scheduled_local_label(schedule["scheduled_at_utc"], schedule["timezone"])))
+    db.commit()
+    return redirect(url_for("schedule_page", updated=schedule_id))
+
+
+@app.post("/schedule/<int:schedule_id>/cancel")
+@roles_required("owner", "admin", "editor")
+def schedule_cancel(schedule_id):
+    schedule = scheduled_publication_for_tenant(schedule_id)
+    if not schedule or schedule["status"] != "scheduled":
+        abort(404)
+    db = get_db()
+    updated = db.execute("UPDATE scheduled_publications SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND status='scheduled'", (schedule_id, g.user["company_id"]))
+    if updated.rowcount != 1:
+        db.rollback()
+        abort(409)
+    db.execute("INSERT INTO schedule_events(scheduled_publication_id,company_id,actor_user_id,event_type,scheduled_at_utc,timezone,note) VALUES(?,?,?,'cancelled',?,?,?)", (schedule_id, g.user["company_id"], g.user["id"], schedule["scheduled_at_utc"], schedule["timezone"], "Agendamento interno cancelado"))
+    db.commit()
+    return redirect(url_for("schedule_page", cancelled=schedule_id))
 
 
 @app.get("/feed")
@@ -1730,7 +1886,7 @@ def team_page():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "module": "stage-05", "database": "sqlite"}
+    return {"status": "ok", "module": "stage-06", "database": "sqlite"}
 
 
 @app.errorhandler(403)

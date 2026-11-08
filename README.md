@@ -1,6 +1,6 @@
 # SocialMedia IA
 
-Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 05** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA, estúdio de criação, preview de feed e aprovação do cliente.
+Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 06** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA, estúdio de criação, preview de feed, aprovação do cliente e agenda interna.
 
 ## Requisitos
 
@@ -32,7 +32,7 @@ Abra `http://localhost:5000`. O primeiro acesso começa pela criação de uma co
 python -m unittest discover -s tests -v
 ```
 
-Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação e os fluxos de aprovação, comentários, anexos e histórico.
+Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação, aprovações e a fila interna de horários com fuso e auditoria.
 
 ## Etapa 01 implementada
 
@@ -87,4 +87,11 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 
 ## Limites desta entrega
 
-Publicação/agendamento em redes sociais, integrações Meta/pagamentos, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção apenas altera o estado interno e **não** publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+## Etapa 06 implementada
+
+- Fila interna de horários para conteúdo aprovado pelo cliente, com rede e fuso horário IANA; horário convertido e salvo em UTC.
+- Somente ciclos aprovados podem ser agendados. Publicações editoriais mantêm a rede que foi aprovada; artes aprovadas podem ser organizadas para as redes suportadas no planejamento.
+- Reagendamento e cancelamento preservam eventos de auditoria. Um conteúdo não pode ter dois horários ativos para a mesma rede.
+- A agenda é somente operacional: não há serviço em segundo plano, conexão com contas sociais, envio automático, status de publicação ou promessa de postagem.
+
+Integrações Meta/publicação automática, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção altera apenas o estado interno; a agenda não publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.

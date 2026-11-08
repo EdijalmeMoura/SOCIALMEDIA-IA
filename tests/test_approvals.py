@@ -4,7 +4,9 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 TEST_ROOT = tempfile.TemporaryDirectory()
 os.environ.setdefault("SOCIALMEDIA_DATA", TEST_ROOT.name)
@@ -12,7 +14,7 @@ os.environ.setdefault("SOCIALMEDIA_DB", str(Path(TEST_ROOT.name) / "bootstrap.db
 import app as app_module  # noqa: E402
 
 
-class SocialMediaStageFiveTests(unittest.TestCase):
+class SocialMediaApprovalFlowTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         app_module.DB_PATH = Path(self.temp.name) / "socialmedia.db"
@@ -157,6 +159,63 @@ class SocialMediaStageFiveTests(unittest.TestCase):
         self.assertEqual(media_response.status_code, 200)
         self.assertIn("no-store", media_response.headers.get("Cache-Control", ""))
         media_response.close()
+
+    def test_internal_schedule_requires_approval_and_preserves_timezone_audit(self):
+        self.create_approval()
+        with app_module.app.app_context():
+            approval_id = app_module.get_db().execute("SELECT id FROM approvals").fetchone()[0]
+        local_time = (datetime.now(ZoneInfo("America/Recife")) + timedelta(days=2)).replace(second=0, microsecond=0)
+        schedule_form = {"csrf_token": self.csrf(), "approval_id": str(approval_id), "network": "Instagram", "scheduled_local": local_time.strftime("%Y-%m-%dT%H:%M"), "timezone": "America/Recife"}
+        response = self.client.post("/schedule", data=schedule_form)
+        self.assertIn("Somente+conte%C3%BAdos", response.location)
+        self.portal_login()
+        self.client.post(f"/portal/approvals/{approval_id}/respond", data={"csrf_token": self.csrf(), "status": "approved", "body": "Aprovado para organizar."})
+        self.agency_login()
+        page = self.client.get("/schedule")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"sem publica\xc3\xa7\xc3\xa3o autom\xc3\xa1tica", page.data.lower())
+        schedule_form["csrf_token"] = self.csrf()
+        response = self.client.post("/schedule", data=schedule_form)
+        self.assertIn("created=", response.location)
+        with app_module.app.app_context():
+            db = app_module.get_db()
+            schedule = db.execute("SELECT * FROM scheduled_publications WHERE approval_id=?", (approval_id,)).fetchone()
+            expected_utc = local_time.replace(tzinfo=ZoneInfo("America/Recife")).astimezone(timezone.utc).isoformat(timespec="seconds")
+            self.assertEqual(schedule["scheduled_at_utc"], expected_utc)
+            self.assertEqual(schedule["timezone"], "America/Recife")
+            self.assertEqual(schedule["status"], "scheduled")
+            schedule_id = schedule["id"]
+        duplicate = self.client.post("/schedule", data=schedule_form)
+        self.assertIn("j%C3%A1+est%C3%A1+agendado", duplicate.location)
+        new_time = (datetime.now(timezone.utc) + timedelta(days=4)).replace(second=0, microsecond=0)
+        response = self.client.post(f"/schedule/{schedule_id}/reschedule", data={"csrf_token": self.csrf(), "scheduled_local": new_time.strftime("%Y-%m-%dT%H:%M"), "timezone": "UTC"})
+        self.assertIn("updated=", response.location)
+        response = self.client.post(f"/schedule/{schedule_id}/cancel", data={"csrf_token": self.csrf()})
+        self.assertIn("cancelled=", response.location)
+        with app_module.app.app_context():
+            db = app_module.get_db()
+            self.assertEqual(db.execute("SELECT status FROM scheduled_publications WHERE id=?", (schedule_id,)).fetchone()[0], "cancelled")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM schedule_events WHERE scheduled_publication_id=?", (schedule_id,)).fetchone()[0], 3)
+        final_page = self.client.get("/schedule")
+        self.assertEqual(final_page.status_code, 200)
+        self.assertIn(b"Cancelado", final_page.data)
+        self.assertIn(b"Hor\xc3\xa1rio alterado", final_page.data)
+
+    def test_schedule_rejects_invalid_timezone_and_past_datetime(self):
+        self.create_approval()
+        with app_module.app.app_context():
+            approval_id = app_module.get_db().execute("SELECT id FROM approvals").fetchone()[0]
+        self.portal_login()
+        self.client.post(f"/portal/approvals/{approval_id}/respond", data={"csrf_token": self.csrf(), "status": "approved"})
+        self.agency_login()
+        form = {"csrf_token": self.csrf(), "approval_id": str(approval_id), "network": "Instagram", "scheduled_local": "2020-01-01T10:00", "timezone": "Moon/Base"}
+        invalid = self.client.post("/schedule", data=form)
+        self.assertIn("fuso+hor%C3%A1rio", invalid.location)
+        form["timezone"] = "UTC"
+        past = self.client.post("/schedule", data=form)
+        self.assertIn("5+minutos", past.location)
+        with app_module.app.app_context():
+            self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM scheduled_publications").fetchone()[0], 0)
 
     def test_draft_art_cannot_be_sent_as_final_approval(self):
         with app_module.app.app_context():
