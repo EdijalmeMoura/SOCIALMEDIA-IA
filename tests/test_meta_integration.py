@@ -89,6 +89,26 @@ class MetaIntegrationTests(unittest.TestCase):
         self.assertIn("appsecret_proof=", request.full_url)
         self.assertNotIn(settings.app_secret, request.full_url)
 
+    def test_page_discovery_follows_cursors_and_deduplicates_pages(self):
+        settings = meta_integration.load_meta_settings(self.meta_env)
+        first = {"data": [{"id": "page-1", "name": "Uma", "access_token": "token-1"}, {"id": "page-2", "name": "Duas", "access_token": "token-2"}], "paging": {"next": "https://graph.facebook.com/next", "cursors": {"after": "cursor-page-1"}}}
+        second = {"data": [{"id": "page-2", "name": "Duas duplicada", "access_token": "token-2-new"}, {"id": "page-3", "name": "Três", "access_token": "token-3"}]}
+        with patch("meta_integration.urllib.request.urlopen", side_effect=[FakeResponse(first), FakeResponse(second)]) as open_url:
+            pages = meta_integration.fetch_pages("user-token", settings)
+        self.assertEqual([page["page_id"] for page in pages], ["page-1", "page-2", "page-3"])
+        self.assertEqual(pages[1]["page_name"], "Duas")
+        self.assertEqual(open_url.call_count, 2)
+        second_query = parse_qs(urlparse(open_url.call_args_list[1].args[0].full_url).query)
+        self.assertEqual(second_query["after"], ["cursor-page-1"])
+        self.assertEqual(second_query["limit"], ["100"])
+
+    def test_page_discovery_rejects_repeated_pagination_cursor(self):
+        settings = meta_integration.load_meta_settings(self.meta_env)
+        repeated = {"data": [], "paging": {"next": "https://graph.facebook.com/next", "cursors": {"after": "same-cursor"}}}
+        with patch("meta_integration.urllib.request.urlopen", side_effect=[FakeResponse(repeated), FakeResponse(repeated)]):
+            with self.assertRaisesRegex(meta_integration.MetaIntegrationError, "cursor de paginação ausente ou repetido"):
+                meta_integration.fetch_pages("user-token", settings)
+
     def test_oauth_callback_stores_only_encrypted_page_token_and_disconnects(self):
         with patch.dict(os.environ, self.meta_env, clear=False):
             started = self.client.post("/integrations/meta/connect", data={"csrf_token": self.csrf()})

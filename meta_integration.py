@@ -155,24 +155,46 @@ def exchange_long_lived_token(short_token, settings):
 
 def fetch_pages(user_token, settings):
     fields = "id,name,access_token,instagram_business_account{id,username}"
-    payload = _request_json("GET", "me/accounts", settings, {"fields": fields, "limit": "100"}, user_token, appsecret_proof=True)
-    pages = payload.get("data", [])
-    if not isinstance(pages, list):
-        raise MetaIntegrationError("O Meta não retornou uma lista de páginas válida.")
     normalized = []
-    for page in pages:
-        if not isinstance(page, dict) or not page.get("id") or not page.get("name") or not page.get("access_token"):
-            continue
-        instagram = page.get("instagram_business_account") or {}
-        if not isinstance(instagram, dict):
-            instagram = {}
-        normalized.append({
-            "page_id": str(page["id"]),
-            "page_name": str(page["name"])[:200],
-            "page_access_token": str(page["access_token"]),
-            "instagram_user_id": str(instagram.get("id", "")) or None,
-            "instagram_username": str(instagram.get("username", ""))[:120] or None,
-        })
+    seen_pages = set()
+    seen_cursors = set()
+    after = None
+    for _ in range(20):
+        params = {"fields": fields, "limit": "100"}
+        if after:
+            params["after"] = after
+        payload = _request_json("GET", "me/accounts", settings, params, user_token, appsecret_proof=True)
+        pages = payload.get("data", [])
+        if not isinstance(pages, list):
+            raise MetaIntegrationError("O Meta não retornou uma lista de páginas válida.")
+        for page in pages:
+            if not isinstance(page, dict) or not page.get("id") or not page.get("name") or not page.get("access_token"):
+                continue
+            page_id = str(page["id"])
+            if page_id in seen_pages:
+                continue
+            seen_pages.add(page_id)
+            instagram = page.get("instagram_business_account") or {}
+            if not isinstance(instagram, dict):
+                instagram = {}
+            normalized.append({
+                "page_id": page_id,
+                "page_name": str(page["name"])[:200],
+                "page_access_token": str(page["access_token"]),
+                "instagram_user_id": str(instagram.get("id", "")) or None,
+                "instagram_username": str(instagram.get("username", ""))[:120] or None,
+            })
+        paging = payload.get("paging") or {}
+        if not isinstance(paging, dict) or not paging.get("next"):
+            break
+        cursors = paging.get("cursors") or {}
+        next_after = cursors.get("after") if isinstance(cursors, dict) else None
+        if not next_after or str(next_after) in seen_cursors:
+            raise MetaIntegrationError("O Meta retornou um cursor de paginação ausente ou repetido; a lista de Páginas ficou incompleta.")
+        after = str(next_after)
+        seen_cursors.add(after)
+    else:
+        raise MetaIntegrationError("A lista do Meta excedeu o limite seguro de 2.000 Páginas; refine o acesso do usuário e tente novamente.")
     return normalized
 
 
