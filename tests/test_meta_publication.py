@@ -96,6 +96,10 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
             page = self.client.get("/schedule")
             self.assertEqual(page.status_code, 200)
             self.assertIn(b"Publicado via Meta", page.data)
+            meta_page = self.client.get("/integrations/meta")
+            self.assertIn(b"Instagram \xc2\xb7 publica\xc3\xa7\xc3\xa3o real", meta_page.data)
+            self.assertIn(b"Confirmada pela API", meta_page.data)
+            self.assertIn(b"ig-publication-123", meta_page.data)
         with app_module.app.app_context():
             db = app_module.get_db()
             attempt = db.execute("SELECT * FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()
