@@ -1,6 +1,6 @@
 # SocialMedia IA
 
-Núcleo incremental do SaaS para agências de social media. As **Etapas 01, 02 e 03** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA e estúdio de criação.
+Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 04** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA, estúdio de criação e preview de feed.
 
 ## Requisitos
 
@@ -68,6 +68,14 @@ Para habilitar: inicie o servidor com `OPENAI_API_KEY` configurada no ambiente. 
 - Arquivos privados e isolados por agência; geração registrada em `ai_generations`; limite local de 12 chamadas de IA por usuário por minuto.
 
 Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usam a mesma chave e `OPENAI_IMAGE_MODEL` (padrão `gpt-image-1`). Os dados da marca/assunto necessários à criação e o prompt da imagem são enviados ao provedor configurado. A rede do servidor deve permitir acesso a `api.openai.com`. O arquivo final só existe após exportação no editor.
+
+## Etapa 04 implementada
+
+- Feed preview individual por cliente, com grade de três colunas, identidade visual e seleção entre os clientes da agência.
+- Inclusão de artes exportadas/rascunhos do estúdio e ideias do planejamento; reordenação por arrastar e salvar ordem no banco.
+- Pré-visualização individual de legenda, rede, briefing e data recomendada; remoção do feed não exclui a arte ou post original.
+- Isolamento multi-tenant e controle de permissões para reorganizar e administrar a prévia.
+- Conteúdos sem arte final são marcados como rascunho/ideia sem arte. Datas são recomendações; nenhum status simula publicação ou agendamento.
 
 ## Limites desta entrega
 

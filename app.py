@@ -136,6 +136,19 @@ CREATE TABLE IF NOT EXISTS post_versions (
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_post_versions_creative ON post_versions(creative_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS feed_items (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+ creative_id INTEGER REFERENCES creative_posts(id) ON DELETE CASCADE,
+ planned_post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+ position INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK((creative_id IS NOT NULL AND planned_post_id IS NULL) OR (creative_id IS NULL AND planned_post_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_feed_client_position ON feed_items(company_id, client_id, position);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_creative_unique ON feed_items(company_id, client_id, creative_id) WHERE creative_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_planned_unique ON feed_items(company_id, client_id, planned_post_id) WHERE planned_post_id IS NOT NULL;
 """
 
 
@@ -643,11 +656,12 @@ def dashboard():
     ai_count = db.execute("SELECT COUNT(*) FROM ai_generations WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     plan_count = db.execute("SELECT COUNT(*) FROM content_calendar WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     studio_count = db.execute("SELECT COUNT(*) FROM creative_posts WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
+    feed_count = db.execute("SELECT COUNT(*) FROM feed_items WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     today = datetime.now(timezone.utc)
     weekdays = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
     months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
     date_label = f"{weekdays[today.weekday()]}, {today.day:02d} de {months[today.month - 1]}"
-    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count)
+    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count, feed_count=feed_count)
 
 
 @app.get("/clients")
@@ -785,6 +799,100 @@ def uploaded_file(filename):
     if not permitted:
         abort(404)
     return send_from_directory(UPLOAD_DIR, filename, max_age=3600)
+
+
+@app.get("/feed")
+@login_required
+def feed_page():
+    db = get_db()
+    clients = db.execute("SELECT id,company_name,trade_name,segment,instagram FROM clients WHERE company_id=? AND status='active' ORDER BY company_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    if not clients:
+        return render_template("feed.html", clients=[], selected=None, branding={}, items=[], available_creatives=[], available_posts=[])
+    try:
+        selected_id = int(request.args.get("client_id", clients[0]["id"]))
+    except (TypeError, ValueError):
+        selected_id = clients[0]["id"]
+    selected = db.execute("SELECT * FROM clients WHERE id=? AND company_id=? AND status='active'", (selected_id, g.user["company_id"])).fetchone()
+    if not selected:
+        selected = clients[0]
+        selected_id = selected["id"]
+    branding = db.execute("SELECT * FROM client_branding WHERE client_id=?", (selected_id,)).fetchone()
+    branding = dict(branding) if branding else {}
+    rows = db.execute("SELECT fi.id AS feed_id,fi.position,fi.creative_id,fi.planned_post_id,cp.subject,cp.format_key,cp.status AS creative_status,cp.image_path,cp.export_path,cp.content_json,p.theme,p.publication_date,p.network,p.status AS post_status,p.caption,p.hashtags,p.content_type,p.visual_brief,p.calendar_id,cc.title AS plan_title FROM feed_items fi LEFT JOIN creative_posts cp ON cp.id=fi.creative_id AND cp.company_id=fi.company_id LEFT JOIN posts p ON p.id=fi.planned_post_id AND p.company_id=fi.company_id LEFT JOIN content_calendar cc ON cc.id=p.calendar_id AND cc.company_id=fi.company_id WHERE fi.company_id=? AND fi.client_id=? ORDER BY fi.position,fi.id", (g.user["company_id"], selected_id)).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        if item["creative_id"]:
+            content = json.loads(item["content_json"])
+            item.update(item_type="creative", title=item["subject"], caption=content.get("caption", ""), hashtags=content.get("hashtags", ""), network="Arte", publish_date=None, visual_brief=content.get("visual_brief", ""), status_label="Arte exportada" if item["export_path"] else ("Rascunho · imagem pronta" if item["image_path"] else "Rascunho · sem imagem"), media_path=item["export_path"] or item["image_path"], is_exported=bool(item["export_path"]))
+            item["image_url"] = url_for("studio_file", filename=item["media_path"]) if item["media_path"] else None
+        else:
+            item.update(item_type="planned", title=item["theme"], publish_date=item["publication_date"], status_label="Planejada · sem arte", media_path=None, image_url=None, is_exported=False)
+        items.append(item)
+    available_creatives = db.execute("SELECT cp.id,cp.subject,cp.format_key,cp.status,cp.created_at FROM creative_posts cp WHERE cp.company_id=? AND cp.client_id=? AND NOT EXISTS (SELECT 1 FROM feed_items fi WHERE fi.company_id=cp.company_id AND fi.client_id=cp.client_id AND fi.creative_id=cp.id) ORDER BY cp.created_at DESC", (g.user["company_id"], selected_id)).fetchall()
+    available_posts = db.execute("SELECT p.id,p.theme,p.publication_date,p.network,p.content_type,cc.title AS plan_title FROM posts p JOIN content_calendar cc ON cc.id=p.calendar_id AND cc.company_id=p.company_id WHERE p.company_id=? AND p.client_id=? AND NOT EXISTS (SELECT 1 FROM feed_items fi WHERE fi.company_id=p.company_id AND fi.client_id=p.client_id AND fi.planned_post_id=p.id) ORDER BY p.publication_date,p.id", (g.user["company_id"], selected_id)).fetchall()
+    return render_template("feed.html", clients=clients, selected=selected, branding=branding or {}, items=items, available_creatives=available_creatives, available_posts=available_posts)
+
+
+@app.post("/feed/<int:client_id>/add/creative/<int:creative_id>")
+@roles_required("owner", "admin", "editor")
+def feed_add_creative(client_id, creative_id):
+    creative = get_db().execute("SELECT id,client_id FROM creative_posts WHERE id=? AND company_id=?", (creative_id, g.user["company_id"])).fetchone()
+    if not client_for_tenant(client_id) or not creative or creative["client_id"] != client_id:
+        abort(404)
+    db = get_db()
+    position = db.execute("SELECT COALESCE(MAX(position),0)+1 FROM feed_items WHERE company_id=? AND client_id=?", (g.user["company_id"], client_id)).fetchone()[0]
+    try:
+        db.execute("INSERT INTO feed_items(company_id,client_id,creative_id,position) VALUES(?,?,?,?)", (g.user["company_id"], client_id, creative_id, position))
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+    return redirect(url_for("feed_page", client_id=client_id) + "#feed-grid")
+
+
+@app.post("/feed/<int:client_id>/add/post/<int:post_id>")
+@roles_required("owner", "admin", "editor")
+def feed_add_planned_post(client_id, post_id):
+    post = get_db().execute("SELECT id,client_id FROM posts WHERE id=? AND company_id=?", (post_id, g.user["company_id"])).fetchone()
+    if not client_for_tenant(client_id) or not post or post["client_id"] != client_id:
+        abort(404)
+    db = get_db()
+    position = db.execute("SELECT COALESCE(MAX(position),0)+1 FROM feed_items WHERE company_id=? AND client_id=?", (g.user["company_id"], client_id)).fetchone()[0]
+    try:
+        db.execute("INSERT INTO feed_items(company_id,client_id,planned_post_id,position) VALUES(?,?,?,?)", (g.user["company_id"], client_id, post_id, position))
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+    return redirect(url_for("feed_page", client_id=client_id) + "#feed-grid")
+
+
+@app.post("/feed/<int:client_id>/remove/<int:feed_id>")
+@roles_required("owner", "admin", "editor")
+def feed_remove_item(client_id, feed_id):
+    if not client_for_tenant(client_id):
+        abort(404)
+    db = get_db()
+    db.execute("DELETE FROM feed_items WHERE id=? AND client_id=? AND company_id=?", (feed_id, client_id, g.user["company_id"]))
+    db.commit()
+    return redirect(url_for("feed_page", client_id=client_id) + "#feed-grid")
+
+
+@app.post("/feed/<int:client_id>/reorder")
+@roles_required("owner", "admin", "editor")
+def feed_reorder(client_id):
+    if not client_for_tenant(client_id):
+        abort(404)
+    data = request.get_json(silent=True) or {}
+    order = data.get("order")
+    if not isinstance(order, list) or len(order) > 500 or any(not isinstance(item, int) for item in order) or len(set(order)) != len(order):
+        return jsonify(error="A ordem enviada é inválida."), 400
+    db = get_db()
+    current = [row[0] for row in db.execute("SELECT id FROM feed_items WHERE company_id=? AND client_id=? ORDER BY position,id", (g.user["company_id"], client_id)).fetchall()]
+    if set(current) != set(order):
+        return jsonify(error="A lista do feed mudou. Atualize a página antes de reorganizar."), 409
+    db.executemany("UPDATE feed_items SET position=? WHERE id=? AND company_id=? AND client_id=?", [(index, item, g.user["company_id"], client_id) for index, item in enumerate(order, 1)])
+    db.commit()
+    return jsonify(status="ok", message="Ordem do feed salva.")
 
 
 @app.get("/studio")
@@ -1255,7 +1363,7 @@ def team_page():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "module": "stage-03", "database": "sqlite"}
+    return {"status": "ok", "module": "stage-04", "database": "sqlite"}
 
 
 @app.errorhandler(403)

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f6f7fb"><title>{% block title %}SocialMedia IA{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='planner.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='planner.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='feed.css') }}">
 </head>
 <body class="{% if not g.user %}auth-body{% endif %}">
 {% if g.user %}
@@ -17,6 +17,7 @@
       <a class="nav-link {% if request.endpoint in ['clients_page','client_new','client_detail'] %}active{% endif %}" href="{{ url_for('clients_page') }}"><span class="nav-icon">♧</span>Clientes <span class="nav-count">{{ g.client_count }}</span></a>
       <a class="nav-link {% if request.endpoint in ['planner_page','planner_generate','planner_detail','planner_post_edit'] %}active{% endif %}" href="{{ url_for('planner_page') }}"><span class="nav-icon">▦</span>Planejamento IA</a>
       <a class="nav-link {% if request.endpoint in ['studio_page','studio_generate','studio_editor','studio_save','studio_generate_image','studio_upload_image'] %}active{% endif %}" href="{{ url_for('studio_page') }}"><span class="nav-icon">✦</span>Estúdio IA</a>
+      <a class="nav-link {% if request.endpoint == 'feed_page' %}active{% endif %}" href="{{ url_for('feed_page') }}"><span class="nav-icon">▦</span>Feed preview</a>
       <div class="nav-link muted-link" title="Disponível na próxima etapa"><span class="nav-icon">▤</span>Aprovações <span class="soon">ETAPA 05</span></div>
     </nav>
     <div class="sidebar-bottom"><div class="nav-label">PREFERÊNCIAS</div><a class="nav-link {% if request.endpoint == 'team_page' %}active{% endif %}" href="{{ url_for('team_page') }}"><span class="nav-icon">⚙</span>Equipe & permissões</a><div class="sidebar-help"><div class="help-orb">✦</div><b>Seu espaço criativo</b><p>O núcleo de clientes está pronto para organizar sua agência.</p><a href="{{ url_for('clients_page') }}">Explorar clientes <span>→</span></a></div><div class="user-card"><div class="avatar">{{ g.user['name'][0]|upper }}</div><div class="user-info"><b>{{ g.user['name'] }}</b><small>{{ g.user['role']|capitalize }}</small></div><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button" title="Sair" aria-label="Sair">↗</button></form></div></div>
