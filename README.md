@@ -1,6 +1,6 @@
 # SocialMedia IA
 
-Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 04** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA, estúdio de criação e preview de feed.
+Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 05** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA, estúdio de criação, preview de feed e aprovação do cliente.
 
 ## Requisitos
 
@@ -32,7 +32,7 @@ Abra `http://localhost:5000`. O primeiro acesso começa pela criação de uma co
 python -m unittest discover -s tests -v
 ```
 
-Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads e exportação.
+Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação e os fluxos de aprovação, comentários, anexos e histórico.
 
 ## Etapa 01 implementada
 
@@ -77,6 +77,14 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 - Isolamento multi-tenant e controle de permissões para reorganizar e administrar a prévia.
 - Conteúdos sem arte final são marcados como rascunho/ideia sem arte. Datas são recomendações; nenhum status simula publicação ou agendamento.
 
+## Etapa 05 implementada
+
+- Contas de portal separadas das contas da agência; cada acesso de cliente fica vinculado a uma única marca e tem hash de senha e ativação/desativação pelo workspace.
+- Envio de artes exportadas ou publicações planejadas para revisão; a solicitação armazena um snapshot imutável do conteúdo, abre ciclo numerado e bloqueia duplicidade enquanto estiver pendente.
+- Portal privado para o cliente revisar, aprovar, rejeitar ou pedir alterações com comentário e referência anexada (PNG/JPG/WEBP até 8 MB).
+- Agência e cliente visualizam comentários, referências e histórico de status por ciclo. Solicitações de alteração permitem um novo ciclo preservando o anterior.
+- Nenhuma aprovação publica conteúdo. Contas são criadas manualmente e a agência compartilha a senha temporária por canal seguro; não há envio de convites ou notificações por e-mail nesta entrega.
+
 ## Limites desta entrega
 
-Feed preview, aprovação do cliente, publicação/agendamento em redes sociais, integrações Meta/pagamentos, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção apenas altera o estado interno e **não** publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+Publicação/agendamento em redes sociais, integrações Meta/pagamentos, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção apenas altera o estado interno e **não** publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.

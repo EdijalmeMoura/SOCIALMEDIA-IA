@@ -3,7 +3,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   menu?.addEventListener('click',()=>document.getElementById('sidebar')?.classList.toggle('open'));
   document.addEventListener('click',event=>{const sidebar=document.getElementById('sidebar');if(sidebar?.classList.contains('open')&&!sidebar.contains(event.target)&&!menu?.contains(event.target))sidebar.classList.remove('open')});
   document.querySelectorAll('[data-password-toggle]').forEach(button=>button.addEventListener('click',()=>{const input=button.parentElement.querySelector('input');input.type=input.type==='password'?'text':'password'}));
-  document.querySelectorAll('[data-confirm]').forEach(form=>form.addEventListener('submit',event=>{if(!window.confirm(form.dataset.confirm))event.preventDefault()}));
+  document.querySelectorAll('form[data-confirm]').forEach(form=>form.addEventListener('submit',event=>{if(!window.confirm(form.dataset.confirm))event.preventDefault()}));
+  document.querySelectorAll('button[data-confirm]').forEach(button=>button.addEventListener('click',event=>{if(!window.confirm(button.dataset.confirm)){event.preventDefault();event.stopImmediatePropagation()}}));
+  document.querySelectorAll('.portal-response-form').forEach(form=>form.addEventListener('submit',event=>{if(event.submitter?.value==='changes_requested'){const body=form.querySelector('[name="body"]')?.value.trim();const file=form.querySelector('[name="file"]')?.files?.length;if(!body&&!file){event.preventDefault();window.alert('Descreva as alterações necessárias ou anexe uma referência.')}}}));
   document.querySelectorAll('[data-submit-form]').forEach(button=>button.addEventListener('click',()=>document.getElementById(button.dataset.submitForm)?.requestSubmit()));
   const plannerClient=document.getElementById('plannerClient');
   const clientContext=document.getElementById('clientContext');

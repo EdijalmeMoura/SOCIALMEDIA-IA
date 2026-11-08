@@ -149,6 +149,60 @@ CREATE TABLE IF NOT EXISTS feed_items (
 CREATE INDEX IF NOT EXISTS idx_feed_client_position ON feed_items(company_id, client_id, position);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_creative_unique ON feed_items(company_id, client_id, creative_id) WHERE creative_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_planned_unique ON feed_items(company_id, client_id, planned_post_id) WHERE planned_post_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS client_portal_users (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE UNIQUE, password_hash TEXT NOT NULL,
+ is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_portal_users_client ON client_portal_users(company_id, client_id, is_active);
+CREATE TABLE IF NOT EXISTS approvals (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+ created_by INTEGER NOT NULL REFERENCES users(id),
+ source_type TEXT NOT NULL CHECK(source_type IN ('creative','planned')),
+ creative_id INTEGER, planned_post_id INTEGER, cycle_number INTEGER NOT NULL DEFAULT 1,
+ title TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','changes_requested','rejected')),
+ submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ resolved_at TEXT,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK((source_type='creative' AND creative_id IS NOT NULL AND planned_post_id IS NULL) OR (source_type='planned' AND creative_id IS NULL AND planned_post_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_tenant ON approvals(company_id, status, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_approvals_client ON approvals(client_id, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_approvals_creative ON approvals(company_id,creative_id,cycle_number);
+CREATE INDEX IF NOT EXISTS idx_approvals_planned ON approvals(company_id,planned_post_id,cycle_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_pending_creative ON approvals(company_id,client_id,creative_id) WHERE status='pending' AND creative_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_pending_planned ON approvals(company_id,client_id,planned_post_id) WHERE status='pending' AND planned_post_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_creative_cycle ON approvals(company_id,client_id,creative_id,cycle_number) WHERE creative_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_planned_cycle ON approvals(company_id,client_id,planned_post_id,cycle_number) WHERE planned_post_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS approval_events (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ approval_id INTEGER NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ actor_type TEXT NOT NULL CHECK(actor_type IN ('agency','client')),
+ actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ actor_portal_user_id INTEGER REFERENCES client_portal_users(id) ON DELETE SET NULL,
+ previous_status TEXT, new_status TEXT NOT NULL,
+ note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_approval_events_approval ON approval_events(approval_id,created_at);
+CREATE TABLE IF NOT EXISTS comments (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ approval_id INTEGER NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ author_type TEXT NOT NULL CHECK(author_type IN ('agency','client')),
+ author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ author_portal_user_id INTEGER REFERENCES client_portal_users(id) ON DELETE SET NULL,
+ body TEXT NOT NULL DEFAULT '', attachment_path TEXT, attachment_name TEXT,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK((author_type='agency' AND author_user_id IS NOT NULL AND author_portal_user_id IS NULL) OR (author_type='client' AND author_portal_user_id IS NOT NULL AND author_user_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_comments_approval ON comments(approval_id,created_at);
 """
 
 
@@ -203,6 +257,13 @@ def security_and_csrf():
             g.client_count = get_db().execute("SELECT COUNT(*) FROM clients WHERE company_id=?", (user["company_id"],)).fetchone()[0]
         else:
             session.clear()
+    if "portal_user_id" in session and "user_id" not in session:
+        portal_user = get_db().execute("SELECT * FROM client_portal_users WHERE id=? AND is_active=1", (session["portal_user_id"],)).fetchone()
+        if portal_user:
+            g.portal_user = portal_user
+            g.portal_client = get_db().execute("SELECT * FROM clients WHERE id=? AND company_id=?", (portal_user["client_id"], portal_user["company_id"])).fetchone()
+        else:
+            session.clear()
 
 
 @app.after_request
@@ -221,6 +282,15 @@ def login_required(fn):
             if request.path.startswith("/api/"):
                 return jsonify(error="Faça login para continuar."), 401
             return redirect(url_for("login", next=request.path))
+        return fn(*args, **kwargs)
+    return wrapped
+
+
+def portal_required(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        if not getattr(g, "portal_user", None):
+            return redirect(url_for("portal_login", next=request.path))
         return fn(*args, **kwargs)
     return wrapped
 
@@ -575,7 +645,7 @@ def save_ai_usage(client_id, feature, usage, model):
 
 @app.route("/")
 def index():
-    return redirect(url_for("dashboard") if getattr(g, "user", None) else url_for("login"))
+    return redirect(url_for("portal_approvals") if getattr(g, "portal_user", None) else (url_for("dashboard") if getattr(g, "user", None) else url_for("login")))
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -657,11 +727,13 @@ def dashboard():
     plan_count = db.execute("SELECT COUNT(*) FROM content_calendar WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     studio_count = db.execute("SELECT COUNT(*) FROM creative_posts WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     feed_count = db.execute("SELECT COUNT(*) FROM feed_items WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
+    approval_pending_count = db.execute("SELECT COUNT(*) FROM approvals WHERE company_id=? AND status='pending'", (g.user["company_id"],)).fetchone()[0]
+    approval_total_count = db.execute("SELECT COUNT(*) FROM approvals WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     today = datetime.now(timezone.utc)
     weekdays = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
     months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
     date_label = f"{weekdays[today.weekday()]}, {today.day:02d} de {months[today.month - 1]}"
-    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count, feed_count=feed_count)
+    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count, feed_count=feed_count, approval_pending_count=approval_pending_count, approval_total_count=approval_total_count)
 
 
 @app.get("/clients")
@@ -799,6 +871,301 @@ def uploaded_file(filename):
     if not permitted:
         abort(404)
     return send_from_directory(UPLOAD_DIR, filename, max_age=3600)
+
+
+def approval_for_agency(approval_id):
+    return get_db().execute("SELECT a.*,c.company_name,c.trade_name,c.segment FROM approvals a JOIN clients c ON c.id=a.client_id WHERE a.id=? AND a.company_id=?", (approval_id, g.user["company_id"])).fetchone()
+
+
+def approval_for_portal(approval_id):
+    return get_db().execute("SELECT a.*,c.company_name,c.trade_name,c.segment FROM approvals a JOIN clients c ON c.id=a.client_id WHERE a.id=? AND a.company_id=? AND a.client_id=?", (approval_id, g.portal_user["company_id"], g.portal_user["client_id"])).fetchone()
+
+
+def approval_snapshot(source_type, source):
+    if source_type == "creative":
+        content = json.loads(source["content_json"])
+        return {"type": "creative", "title": source["subject"], "format": CREATIVE_FORMATS.get(source["format_key"], {}).get("label", source["format_key"]), "width": source["canvas_width"], "height": source["canvas_height"], "content": content, "background_color": source["background_color"], "image_path": source["image_path"], "export_path": source["export_path"]}
+    return {"type": "planned", "title": source["theme"], "network": source["network"], "publication_date": source["publication_date"], "content_type": source["content_type"], "strategic_objective": source["strategic_objective"], "main_text": source["main_text"], "caption": source["caption"], "hashtags": source["hashtags"], "cta": source["cta"], "visual_brief": source["visual_brief"], "image_suggestion": source["image_suggestion"], "plan_title": source["plan_title"]}
+
+
+def approval_comments(approval_id):
+    return get_db().execute("SELECT cm.*,u.name AS agency_name,pu.name AS client_name FROM comments cm LEFT JOIN users u ON u.id=cm.author_user_id LEFT JOIN client_portal_users pu ON pu.id=cm.author_portal_user_id WHERE cm.approval_id=? ORDER BY cm.id", (approval_id,)).fetchall()
+
+
+def approval_events_for(approval_id):
+    return get_db().execute("SELECT e.*,u.name AS agency_name,pu.name AS client_name FROM approval_events e LEFT JOIN users u ON u.id=e.actor_user_id LEFT JOIN client_portal_users pu ON pu.id=e.actor_portal_user_id WHERE e.approval_id=? ORDER BY e.id", (approval_id,)).fetchall()
+
+
+def store_approval_comment(db, approval_id, company_id, actor_type, body, portal_user_id=None, user_id=None, attachment=None):
+    filename, original = attachment if attachment else (None, None)
+    db.execute("INSERT INTO comments(approval_id,company_id,author_type,author_user_id,author_portal_user_id,body,attachment_path,attachment_name) VALUES(?,?,?,?,?,?,?,?)", (approval_id, company_id, actor_type, user_id, portal_user_id, body, filename, original))
+
+
+@app.route("/approvals", methods=["GET", "POST"])
+@login_required
+def approvals_page():
+    db = get_db()
+    clients = db.execute("SELECT id,company_name,trade_name FROM clients WHERE company_id=? ORDER BY company_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    if request.method == "POST":
+        if g.user["role"] not in {"owner", "admin", "editor"}:
+            abort(403)
+        try:
+            client_id = int(request.form.get("client_id", ""))
+            source_type, source_id_text = clean(request.form.get("source"), 40).split(":", 1)
+            source_id = int(source_id_text)
+            if not client_for_tenant(client_id):
+                raise ValueError
+            if source_type == "creative":
+                source = db.execute("SELECT * FROM creative_posts WHERE id=? AND company_id=? AND client_id=? AND status='exported' AND export_path IS NOT NULL", (source_id, g.user["company_id"], client_id)).fetchone()
+            elif source_type == "planned":
+                source = db.execute("SELECT p.*,cc.title AS plan_title FROM posts p JOIN content_calendar cc ON cc.id=p.calendar_id AND cc.company_id=p.company_id WHERE p.id=? AND p.company_id=? AND p.client_id=?", (source_id, g.user["company_id"], client_id)).fetchone()
+            else:
+                source = None
+            if not source:
+                raise ValueError
+        except (ValueError, TypeError):
+            return redirect(url_for("approvals_page", error="Selecione um cliente e conteúdo válidos."))
+        existing = db.execute("SELECT id FROM approvals WHERE company_id=? AND client_id=? AND source_type=? AND ((creative_id=? AND ? IS NOT NULL) OR (planned_post_id=? AND ? IS NOT NULL)) AND status='pending' LIMIT 1", (g.user["company_id"], client_id, source_type, source_id if source_type == "creative" else None, source_id if source_type == "creative" else None, source_id if source_type == "planned" else None, source_id if source_type == "planned" else None)).fetchone()
+        if existing:
+            return redirect(url_for("approvals_page", error="Este conteúdo já está aguardando aprovação."))
+        max_cycle = db.execute("SELECT COALESCE(MAX(cycle_number),0)+1 FROM approvals WHERE company_id=? AND client_id=? AND source_type=? AND ((creative_id=? AND ? IS NOT NULL) OR (planned_post_id=? AND ? IS NOT NULL))", (g.user["company_id"], client_id, source_type, source_id if source_type == "creative" else None, source_id if source_type == "creative" else None, source_id if source_type == "planned" else None, source_id if source_type == "planned" else None)).fetchone()[0]
+        snapshot = approval_snapshot(source_type, source)
+        title = snapshot["title"]
+        try:
+            cursor = db.execute("INSERT INTO approvals(company_id,client_id,created_by,source_type,creative_id,planned_post_id,cycle_number,title,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?)", (g.user["company_id"], client_id, g.user["id"], source_type, source_id if source_type == "creative" else None, source_id if source_type == "planned" else None, max_cycle, title, json.dumps(snapshot, ensure_ascii=False)))
+            approval_id = cursor.lastrowid
+            db.execute("INSERT INTO approval_events(approval_id,company_id,actor_type,actor_user_id,previous_status,new_status,note) VALUES(?,?, 'agency',?,NULL,'pending','Enviado para aprovação')", (approval_id, g.user["company_id"], g.user["id"]))
+            note = clean(request.form.get("message"), 2000)
+            if note:
+                store_approval_comment(db, approval_id, g.user["company_id"], "agency", note, user_id=g.user["id"])
+            db.commit()
+        except sqlite3.IntegrityError:
+            db.rollback()
+            return redirect(url_for("approvals_page", error="Este conteúdo já está aguardando aprovação."))
+        return redirect(url_for("approval_detail", approval_id=approval_id) + "?sent=1")
+    clients = list(clients)
+    try:
+        selected_id = int(request.args.get("client_id", clients[0]["id"] if clients else ""))
+    except (TypeError, ValueError):
+        selected_id = clients[0]["id"] if clients else None
+    selected = db.execute("SELECT * FROM clients WHERE id=? AND company_id=?", (selected_id, g.user["company_id"])).fetchone() if selected_id else None
+    available_creatives, available_posts = [], []
+    if selected:
+        available_creatives = db.execute("SELECT cp.id,cp.subject,cp.format_key,cp.status FROM creative_posts cp WHERE cp.company_id=? AND cp.client_id=? AND cp.status='exported' AND cp.export_path IS NOT NULL AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.company_id=cp.company_id AND a.client_id=cp.client_id AND a.creative_id=cp.id AND a.status='pending') ORDER BY cp.updated_at DESC", (g.user["company_id"], selected_id)).fetchall()
+        available_posts = db.execute("SELECT p.id,p.theme,p.network,p.publication_date FROM posts p WHERE p.company_id=? AND p.client_id=? AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.company_id=p.company_id AND a.client_id=p.client_id AND a.planned_post_id=p.id AND a.status='pending') ORDER BY p.publication_date,p.id", (g.user["company_id"], selected_id)).fetchall()
+    approvals = db.execute("SELECT a.*,c.company_name,c.trade_name FROM approvals a JOIN clients c ON c.id=a.client_id WHERE a.company_id=? ORDER BY CASE a.status WHEN 'pending' THEN 0 ELSE 1 END,a.submitted_at DESC,a.id DESC LIMIT 100", (g.user["company_id"],)).fetchall()
+    portal_users = db.execute("SELECT pu.*,c.company_name,c.trade_name FROM client_portal_users pu JOIN clients c ON c.id=pu.client_id WHERE pu.company_id=? ORDER BY c.company_name,pu.name", (g.user["company_id"],)).fetchall()
+    return render_template("approvals.html", clients=clients, selected=selected, available_creatives=available_creatives, available_posts=available_posts, approvals=approvals, portal_users=portal_users, error=request.args.get("error"), sent=request.args.get("sent"))
+
+
+@app.post("/approvals/portal-users")
+@roles_required("owner", "admin")
+def create_portal_user():
+    name = clean(request.form.get("name"), 100)
+    email = clean(request.form.get("email"), 160).lower()
+    password = request.form.get("password", "")
+    try:
+        client_id = int(request.form.get("client_id", ""))
+    except (ValueError, TypeError):
+        client_id = None
+    if not client_id or not client_for_tenant(client_id):
+        return redirect(url_for("approvals_page", error="Selecione um cliente válido para a conta."))
+    if not name or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(password) < 8:
+        return redirect(url_for("approvals_page", error="Informe nome, e-mail válido e senha temporária com ao menos 8 caracteres."))
+    try:
+        get_db().execute("INSERT INTO client_portal_users(company_id,client_id,name,email,password_hash) VALUES(?,?,?,?,?)", (g.user["company_id"], client_id, name, email, generate_password_hash(password)))
+        get_db().commit()
+    except sqlite3.IntegrityError:
+        get_db().rollback()
+        return redirect(url_for("approvals_page", error="Este e-mail já possui acesso ao portal."))
+    return redirect(url_for("approvals_page") + "?portal=created")
+
+
+@app.post("/approvals/portal-users/<int:portal_user_id>/toggle")
+@roles_required("owner", "admin")
+def toggle_portal_user(portal_user_id):
+    db = get_db()
+    user = db.execute("SELECT * FROM client_portal_users WHERE id=? AND company_id=?", (portal_user_id, g.user["company_id"])).fetchone()
+    if not user:
+        abort(404)
+    db.execute("UPDATE client_portal_users SET is_active=? WHERE id=? AND company_id=?", (0 if user["is_active"] else 1, portal_user_id, g.user["company_id"]))
+    db.commit()
+    return redirect(url_for("approvals_page") + "?portal=updated")
+
+
+@app.get("/approvals/<int:approval_id>")
+@login_required
+def approval_detail(approval_id):
+    approval = approval_for_agency(approval_id)
+    if not approval:
+        abort(404)
+    snapshot = json.loads(approval["snapshot_json"])
+    media_path = snapshot.get("export_path") or snapshot.get("image_path")
+    media_url = url_for("approval_media", approval_id=approval_id, filename=media_path) if media_path else None
+    return render_template("approval_detail.html", approval=approval, snapshot=snapshot, media_url=media_url, comments=approval_comments(approval_id), events=approval_events_for(approval_id), error=request.args.get("error"), sent=request.args.get("sent"))
+
+
+@app.post("/approvals/<int:approval_id>/comment")
+@roles_required("owner", "admin", "editor")
+def agency_approval_comment(approval_id):
+    approval = approval_for_agency(approval_id)
+    if not approval:
+        abort(404)
+    body = clean(request.form.get("body"), 3000)
+    attachment = None
+    try:
+        result = upload_file(request.files.get("file"), approval["client_id"], "approval")
+        attachment = result
+    except ValueError as exc:
+        return redirect(url_for("approval_detail", approval_id=approval_id, error=str(exc)))
+    if not body and not attachment:
+        return redirect(url_for("approval_detail", approval_id=approval_id, error="Escreva um comentário ou anexe uma referência."))
+    db = get_db()
+    store_approval_comment(db, approval_id, g.user["company_id"], "agency", body, user_id=g.user["id"], attachment=attachment)
+    db.commit()
+    return redirect(url_for("approval_detail", approval_id=approval_id) + "#history")
+
+
+@app.get("/approvals/<int:approval_id>/media/<path:filename>")
+@login_required
+def approval_media(approval_id, filename):
+    approval = approval_for_agency(approval_id)
+    if not approval:
+        abort(404)
+    snapshot = json.loads(approval["snapshot_json"])
+    paths = {snapshot.get("image_path"), snapshot.get("export_path")}
+    attachment = get_db().execute("SELECT 1 FROM comments WHERE approval_id=? AND company_id=? AND attachment_path=?", (approval_id, g.user["company_id"], filename)).fetchone()
+    if filename not in paths and not attachment:
+        abort(404)
+    response = send_from_directory(UPLOAD_DIR, filename, max_age=0)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+PORTAL_LOGIN_ATTEMPTS = {}
+
+
+@app.route("/portal/login", methods=["GET", "POST"])
+def portal_login():
+    if getattr(g, "portal_user", None):
+        return redirect(url_for("portal_approvals"))
+    error = None
+    if request.method == "POST":
+        email = clean(request.form.get("email"), 160).lower()
+        bucket = request.remote_addr or "unknown"
+        attempts, since = PORTAL_LOGIN_ATTEMPTS.get(bucket, (0, time.time()))
+        if time.time() - since > 300:
+            attempts, since = 0, time.time()
+        if attempts >= 10:
+            error = "Muitas tentativas. Aguarde alguns minutos e tente novamente."
+        else:
+            user = get_db().execute("SELECT * FROM client_portal_users WHERE email=? AND is_active=1", (email,)).fetchone()
+            if user and check_password_hash(user["password_hash"], request.form.get("password", "")):
+                PORTAL_LOGIN_ATTEMPTS.pop(bucket, None)
+                session.clear()
+                session["portal_user_id"] = user["id"]
+                csrf_token()
+                return redirect(url_for("portal_approvals"))
+            PORTAL_LOGIN_ATTEMPTS[bucket] = (attempts + 1, since)
+            error = "E-mail ou senha incorretos."
+    return render_template("portal_login.html", error=error)
+
+
+@app.post("/portal/logout")
+@portal_required
+def portal_logout():
+    session.clear()
+    return redirect(url_for("portal_login"))
+
+
+@app.get("/portal/approvals")
+@portal_required
+def portal_approvals():
+    approvals = get_db().execute("SELECT * FROM approvals WHERE company_id=? AND client_id=? ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,submitted_at DESC,id DESC", (g.portal_user["company_id"], g.portal_user["client_id"])).fetchall()
+    return render_template("portal_approvals.html", approvals=approvals, portal_user=g.portal_user, client=g.portal_client)
+
+
+@app.get("/portal/approvals/<int:approval_id>")
+@portal_required
+def portal_approval_detail(approval_id):
+    approval = approval_for_portal(approval_id)
+    if not approval:
+        abort(404)
+    snapshot = json.loads(approval["snapshot_json"])
+    media_path = snapshot.get("export_path") or snapshot.get("image_path")
+    media_url = url_for("portal_approval_media", approval_id=approval_id, filename=media_path) if media_path else None
+    return render_template("portal_approval_detail.html", approval=approval, snapshot=snapshot, media_url=media_url, comments=approval_comments(approval_id), events=approval_events_for(approval_id), portal_user=g.portal_user, client=g.portal_client)
+
+
+@app.post("/portal/approvals/<int:approval_id>/respond")
+@portal_required
+def portal_approval_respond(approval_id):
+    approval = approval_for_portal(approval_id)
+    if not approval:
+        abort(404)
+    if approval["status"] != "pending":
+        abort(409)
+    status = clean(request.form.get("status"), 30)
+    if status not in {"approved", "changes_requested", "rejected"}:
+        abort(400)
+    body = clean(request.form.get("body"), 3000)
+    attachment = None
+    try:
+        result = upload_file(request.files.get("file"), approval["client_id"], "approval")
+        attachment = result
+    except ValueError as exc:
+        abort(400, str(exc))
+    if status == "changes_requested" and not body and not attachment:
+        abort(400, "Descreva as alterações necessárias ou anexe uma referência.")
+    db = get_db()
+    updated = db.execute("UPDATE approvals SET status=?,resolved_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND client_id=? AND status='pending'", (status, approval_id, g.portal_user["company_id"], g.portal_user["client_id"]))
+    if updated.rowcount != 1:
+        db.rollback()
+        if attachment:
+            (UPLOAD_DIR / attachment[0]).unlink(missing_ok=True)
+        abort(409)
+    db.execute("INSERT INTO approval_events(approval_id,company_id,actor_type,actor_portal_user_id,previous_status,new_status,note) VALUES(?,?, 'client',?,'pending',?,?)", (approval_id, g.portal_user["company_id"], g.portal_user["id"], status, body[:1000]))
+    if body or attachment:
+        store_approval_comment(db, approval_id, g.portal_user["company_id"], "client", body, portal_user_id=g.portal_user["id"], attachment=attachment)
+    db.commit()
+    return redirect(url_for("portal_approval_detail", approval_id=approval_id) + "?responded=1")
+
+
+@app.post("/portal/approvals/<int:approval_id>/comment")
+@portal_required
+def portal_approval_comment(approval_id):
+    approval = approval_for_portal(approval_id)
+    if not approval:
+        abort(404)
+    body = clean(request.form.get("body"), 3000)
+    attachment = None
+    try:
+        result = upload_file(request.files.get("file"), approval["client_id"], "approval")
+        attachment = result
+    except ValueError as exc:
+        abort(400, str(exc))
+    if not body and not attachment:
+        abort(400, "Escreva um comentário ou anexe uma referência.")
+    db = get_db()
+    store_approval_comment(db, approval_id, g.portal_user["company_id"], "client", body, portal_user_id=g.portal_user["id"], attachment=attachment)
+    db.commit()
+    return redirect(url_for("portal_approval_detail", approval_id=approval_id) + "#history")
+
+
+@app.get("/portal/approvals/<int:approval_id>/media/<path:filename>")
+@portal_required
+def portal_approval_media(approval_id, filename):
+    approval = approval_for_portal(approval_id)
+    if not approval:
+        abort(404)
+    snapshot = json.loads(approval["snapshot_json"])
+    allowed = {snapshot.get("image_path"), snapshot.get("export_path")}
+    attachment = get_db().execute("SELECT 1 FROM comments WHERE approval_id=? AND company_id=? AND attachment_path=?", (approval_id, g.portal_user["company_id"], filename)).fetchone()
+    if filename not in allowed and not attachment:
+        abort(404)
+    response = send_from_directory(UPLOAD_DIR, filename, max_age=0)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.get("/feed")
@@ -1363,7 +1730,7 @@ def team_page():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "module": "stage-04", "database": "sqlite"}
+    return {"status": "ok", "module": "stage-05", "database": "sqlite"}
 
 
 @app.errorhandler(403)
