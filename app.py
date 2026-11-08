@@ -283,6 +283,17 @@ CREATE TABLE IF NOT EXISTS meta_publication_attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_meta_publications_schedule ON meta_publication_attempts(company_id,schedule_id,created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_publications_single_active ON meta_publication_attempts(schedule_id) WHERE status IN ('publishing','published','unknown');
+CREATE TABLE IF NOT EXISTS meta_publication_reconciliations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ attempt_id INTEGER NOT NULL UNIQUE REFERENCES meta_publication_attempts(id) ON DELETE CASCADE,
+ reconciled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ outcome TEXT NOT NULL CHECK(outcome IN ('confirmed_published','confirmed_not_published')),
+ remote_publication_id TEXT,
+ note TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_reconciliations_tenant ON meta_publication_reconciliations(company_id,created_at DESC);
 """
 
 
@@ -1348,7 +1359,7 @@ def schedule_page():
         approvals.append(item)
     db.execute("UPDATE meta_publication_attempts SET status='unknown',error_message='A tentativa ficou sem resposta do servidor. Confira a conta Meta antes de qualquer nova tentativa.',updated_at=CURRENT_TIMESTAMP WHERE company_id=? AND status='publishing' AND datetime(created_at)<datetime('now','-10 minutes')", (g.user["company_id"],))
     db.commit()
-    schedules = db.execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,a.status AS approval_status,c.company_name,c.trade_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status,(SELECT ma.remote_publication_id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_remote_id,(SELECT ma.error_message FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_error FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? ORDER BY CASE sp.status WHEN 'scheduled' THEN 0 ELSE 1 END,sp.scheduled_at_utc,sp.id DESC LIMIT 100", (g.user["company_id"],)).fetchall()
+    schedules = db.execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,a.status AS approval_status,c.company_name,c.trade_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status,(SELECT ma.remote_publication_id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_remote_id,(SELECT ma.error_message FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_error,(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_attempt_id,(SELECT mr.outcome FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution,(SELECT mr.remote_publication_id FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution_remote_id,(SELECT mr.note FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution_note FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? ORDER BY CASE sp.status WHEN 'scheduled' THEN 0 ELSE 1 END,sp.scheduled_at_utc,sp.id DESC LIMIT 100", (g.user["company_id"],)).fetchall()
     schedule_rows = []
     for row in schedules:
         item = dict(row)
@@ -1377,9 +1388,9 @@ def schedule_page():
         meta_public_url_ready = bool(meta_public_base_url())
     except MetaIntegrationError:
         meta_public_url_ready = False
-    active_schedule_count = sum(1 for item in schedule_rows if item["status"] == "scheduled" and not item["meta_published"])
+    active_schedule_count = sum(1 for item in schedule_rows if item["status"] == "scheduled" and not item["meta_published"] and item["meta_resolution"] != "confirmed_published")
     local_default = (datetime.now(ZoneInfo(DEFAULT_SCHEDULE_TIMEZONE)) + timedelta(days=1)).replace(second=0, microsecond=0)
-    return render_template("schedule.html", clients=clients, selected=selected, approvals=approvals, schedules=schedule_rows, active_schedule_count=active_schedule_count, networks=SCHEDULE_NETWORKS, meta_connections=connections, meta_configured=meta_configured, meta_public_url_ready=meta_public_url_ready, default_timezone=DEFAULT_SCHEDULE_TIMEZONE, default_datetime=local_default.strftime("%Y-%m-%dT%H:%M"), error=request.args.get("error"), created=request.args.get("created"), published=request.args.get("published"))
+    return render_template("schedule.html", clients=clients, selected=selected, approvals=approvals, schedules=schedule_rows, active_schedule_count=active_schedule_count, networks=SCHEDULE_NETWORKS, meta_connections=connections, meta_configured=meta_configured, meta_public_url_ready=meta_public_url_ready, default_timezone=DEFAULT_SCHEDULE_TIMEZONE, default_datetime=local_default.strftime("%Y-%m-%dT%H:%M"), error=request.args.get("error"), created=request.args.get("created"), published=request.args.get("published"), reconciled=request.args.get("reconciled"))
 
 
 @app.post("/schedule/<int:schedule_id>/reschedule")
@@ -1507,6 +1518,45 @@ def schedule_publish_now(schedule_id):
     return redirect(url_for("schedule_page", published=schedule_id))
 
 
+@app.post("/schedule/meta-attempt/<int:attempt_id>/reconcile")
+@roles_required("owner", "admin")
+def schedule_reconcile_meta_attempt(attempt_id):
+    outcome = clean(request.form.get("outcome"), 40)
+    note = clean(request.form.get("note"), 500)
+    remote_id = clean(request.form.get("remote_publication_id"), 255)
+    if outcome not in {"confirmed_published", "confirmed_not_published"}:
+        return redirect(url_for("schedule_page", error="Escolha se a publicação foi encontrada ou não foi encontrada na conta Meta."))
+    if len(note) < 12:
+        return redirect(url_for("schedule_page", error="Registre uma observação de pelo menos 12 caracteres sobre a conferência manual."))
+    if outcome == "confirmed_published" and not remote_id:
+        return redirect(url_for("schedule_page", error="Informe o ID real da publicação mostrado na Meta."))
+    if outcome == "confirmed_not_published" and remote_id:
+        return redirect(url_for("schedule_page", error="Não informe um ID de publicação quando a conferência apontou que nada foi publicado."))
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    attempt = db.execute("SELECT ma.id,ma.schedule_id,ma.status,sp.status AS schedule_status FROM meta_publication_attempts ma JOIN scheduled_publications sp ON sp.id=ma.schedule_id AND sp.company_id=ma.company_id WHERE ma.id=? AND ma.company_id=?", (attempt_id, g.user["company_id"])).fetchone()
+    if not attempt:
+        db.rollback()
+        abort(404)
+    if attempt["status"] != "unknown" or db.execute("SELECT 1 FROM meta_publication_reconciliations WHERE attempt_id=? AND company_id=?", (attempt_id, g.user["company_id"])).fetchone():
+        db.rollback()
+        abort(409)
+    if outcome == "confirmed_not_published":
+        updated = db.execute("UPDATE meta_publication_attempts SET status='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND status='unknown'", ("Equipe confirmou manualmente que não houve publicação: " + note, attempt_id, g.user["company_id"]))
+        if updated.rowcount != 1:
+            db.rollback()
+            abort(409)
+    try:
+        db.execute("INSERT INTO meta_publication_reconciliations(company_id,attempt_id,reconciled_by,outcome,remote_publication_id,note) VALUES(?,?,?,?,?,?)", (g.user["company_id"], attempt_id, g.user["id"], outcome, remote_id or None, note))
+        title = "Publicação conferida manualmente" if outcome == "confirmed_published" else "Tentativa Meta conferida: não publicada"
+        notify_agency(db, g.user["company_id"], title, note, url_for("schedule_page"))
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        abort(409)
+    return redirect(url_for("schedule_page", reconciled=outcome))
+
+
 def parse_report_filters():
     today = datetime.now(timezone.utc).date()
     default_start = today.replace(day=1).isoformat()
@@ -1542,14 +1592,16 @@ def build_operational_report(start_date, end_date, client_id):
     posts = db.execute("SELECT p.id,p.client_id,p.theme,p.network,p.status,p.created_at,c.trade_name,c.company_name FROM posts p JOIN clients c ON c.id=p.client_id AND c.company_id=p.company_id WHERE p.company_id=? AND date(p.created_at) BETWEEN ? AND ?" + client_clause.format("p") + " ORDER BY p.created_at DESC,p.id DESC", params).fetchall()
     creatives = db.execute("SELECT cp.id,cp.client_id,cp.subject,cp.status,cp.export_path,cp.created_at,c.trade_name,c.company_name FROM creative_posts cp JOIN clients c ON c.id=cp.client_id AND c.company_id=cp.company_id WHERE cp.company_id=? AND date(cp.created_at) BETWEEN ? AND ?" + client_clause.format("cp") + " ORDER BY cp.created_at DESC,cp.id DESC", params).fetchall()
     approvals = db.execute("SELECT a.id,a.client_id,a.title,a.source_type,a.snapshot_json,a.status,a.submitted_at,c.trade_name,c.company_name FROM approvals a JOIN clients c ON c.id=a.client_id AND c.company_id=a.company_id WHERE a.company_id=? AND date(a.submitted_at) BETWEEN ? AND ?" + client_clause.format("a") + " ORDER BY a.submitted_at DESC,a.id DESC", params).fetchall()
-    schedules = db.execute("SELECT sp.id,sp.client_id,sp.approval_id,sp.network,sp.scheduled_at_utc,sp.timezone,sp.status,a.title,c.trade_name,c.company_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? AND date(sp.scheduled_at_utc) BETWEEN ? AND ?" + client_clause.format("sp") + " ORDER BY sp.scheduled_at_utc DESC,sp.id DESC", params).fetchall()
+    schedules = db.execute("SELECT sp.id,sp.client_id,sp.approval_id,sp.network,sp.scheduled_at_utc,sp.timezone,sp.status,a.title,c.trade_name,c.company_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status,(SELECT mr.outcome FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? AND date(sp.scheduled_at_utc) BETWEEN ? AND ?" + client_clause.format("sp") + " ORDER BY sp.scheduled_at_utc DESC,sp.id DESC", params).fetchall()
     events = db.execute("SELECT e.new_status,COUNT(*) AS count FROM approval_events e JOIN approvals a ON a.id=e.approval_id AND a.company_id=e.company_id WHERE e.company_id=? AND date(e.created_at) BETWEEN ? AND ? AND e.new_status IN ('approved','changes_requested','rejected')" + (" AND a.client_id=?" if client_id is not None else "") + " GROUP BY e.new_status", params).fetchall()
     from collections import Counter
     approval_statuses = Counter(row["status"] for row in approvals)
     decision_events = Counter({row["new_status"]: row["count"] for row in events})
     post_networks = Counter(row["network"] for row in posts)
-    schedule_networks = Counter(row["network"] for row in schedules if row["status"] == "scheduled" and row["meta_status"] != "published")
+    schedule_networks = Counter(row["network"] for row in schedules if row["status"] == "scheduled" and row["meta_status"] != "published" and row["meta_resolution"] != "confirmed_published")
     schedule_statuses = Counter("published" if row["meta_status"] == "published" else row["status"] for row in schedules)
+    schedules_reconciled = sum(1 for row in schedules if row["meta_resolution"] == "confirmed_published")
+    schedules_active = sum(1 for row in schedules if row["status"] == "scheduled" and row["meta_status"] != "published" and row["meta_resolution"] != "confirmed_published")
     exported_creatives = sum(1 for row in creatives if row["export_path"])
     activity = []
     for row in posts:
@@ -1560,9 +1612,9 @@ def build_operational_report(start_date, end_date, client_id):
         snapshot = json.loads(row["snapshot_json"])
         activity.append({"date": row["submitted_at"], "client": row["trade_name"] or row["company_name"], "category": "Aprovação", "title": row["title"], "network": snapshot.get("network", "—"), "status": {"pending":"Aguardando cliente","approved":"Aprovado","changes_requested":"Alterações solicitadas","rejected":"Rejeitado"}.get(row["status"], row["status"])})
     for row in schedules:
-        activity.append({"date": row["scheduled_at_utc"], "client": row["trade_name"] or row["company_name"], "category": "Agenda interna", "title": row["title"], "network": row["network"], "status": "Publicado via Meta" if row["meta_status"] == "published" else ("Na agenda" if row["status"] == "scheduled" else "Cancelado")})
+        activity.append({"date": row["scheduled_at_utc"], "client": row["trade_name"] or row["company_name"], "category": "Agenda interna", "title": row["title"], "network": row["network"], "status": "Publicado via Meta" if row["meta_status"] == "published" else ("Confirmado manualmente na Meta" if row["meta_resolution"] == "confirmed_published" else ("Na agenda" if row["status"] == "scheduled" else "Cancelado"))})
     activity.sort(key=lambda item: item["date"].replace("T", " "), reverse=True)
-    metrics = {"planned_posts": len(posts), "creatives": len(creatives), "exported_creatives": exported_creatives, "approvals": len(approvals), "approval_pending": approval_statuses["pending"], "approval_approved": approval_statuses["approved"], "approval_changes": approval_statuses["changes_requested"], "approval_rejected": approval_statuses["rejected"], "approved_events": decision_events["approved"], "changes_events": decision_events["changes_requested"], "rejected_events": decision_events["rejected"], "schedules": len(schedules), "schedules_active": schedule_statuses["scheduled"], "schedules_published": schedule_statuses["published"], "schedules_cancelled": schedule_statuses["cancelled"]}
+    metrics = {"planned_posts": len(posts), "creatives": len(creatives), "exported_creatives": exported_creatives, "approvals": len(approvals), "approval_pending": approval_statuses["pending"], "approval_approved": approval_statuses["approved"], "approval_changes": approval_statuses["changes_requested"], "approval_rejected": approval_statuses["rejected"], "approved_events": decision_events["approved"], "changes_events": decision_events["changes_requested"], "rejected_events": decision_events["rejected"], "schedules": len(schedules), "schedules_active": schedules_active, "schedules_published": schedule_statuses["published"], "schedules_reconciled": schedules_reconciled, "schedules_cancelled": schedule_statuses["cancelled"]}
     network_rows = [{"network": network, "posts": post_networks[network], "schedules": schedule_networks[network]} for network in SCHEDULE_NETWORKS if post_networks[network] or schedule_networks[network]]
     return {"metrics": metrics, "activity": activity[:300], "network_rows": network_rows, "activity_count": len(activity)}
 
@@ -1609,7 +1661,7 @@ def reports_export():
     writer.writerow(["Cliente", spreadsheet_safe(client_name)])
     writer.writerow([])
     writer.writerow(["Indicador", "Quantidade"])
-    for label, key in [("Posts planejados", "planned_posts"), ("Artes criadas", "creatives"), ("Artes exportadas", "exported_creatives"), ("Aprovações enviadas", "approvals"), ("Aprovações pendentes", "approval_pending"), ("Aprovadas", "approval_approved"), ("Alterações solicitadas", "approval_changes"), ("Rejeitadas", "approval_rejected"), ("Horários na agenda", "schedules"), ("Agendamentos ativos", "schedules_active"), ("Publicadas via Meta", "schedules_published"), ("Agendamentos cancelados", "schedules_cancelled")]:
+    for label, key in [("Posts planejados", "planned_posts"), ("Artes criadas", "creatives"), ("Artes exportadas", "exported_creatives"), ("Aprovações enviadas", "approvals"), ("Aprovações pendentes", "approval_pending"), ("Aprovadas", "approval_approved"), ("Alterações solicitadas", "approval_changes"), ("Rejeitadas", "approval_rejected"), ("Horários na agenda", "schedules"), ("Agendamentos ativos", "schedules_active"), ("Publicadas via Meta (API)", "schedules_published"), ("Publicações conferidas manualmente", "schedules_reconciled"), ("Agendamentos cancelados", "schedules_cancelled")]:
         writer.writerow([label, report["metrics"][key]])
     writer.writerow([])
     writer.writerow(["Categoria", "Cliente", "Conteúdo", "Rede", "Data registrada (UTC)", "Status interno"])

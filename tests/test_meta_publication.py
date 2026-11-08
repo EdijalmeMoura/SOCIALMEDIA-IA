@@ -109,6 +109,53 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
             attempt = app_module.get_db().execute("SELECT status FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()
             self.assertEqual(attempt["status"], "unknown")
 
+    def test_unknown_attempt_can_be_manually_confirmed_without_faking_api_success(self):
+        schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)
+        with patch.dict(os.environ, self.meta_env, clear=False), patch.object(app_module, "publish_facebook_text", side_effect=meta_integration.MetaIntegrationError("timeout", uncertain=True)) as publish:
+            self.client.post(f"/schedule/{schedule_id}/publish", data={"csrf_token": self.csrf(), "connection_id": str(connection_id)})
+            with app_module.app.app_context():
+                attempt_id = app_module.get_db().execute("SELECT id FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()[0]
+            page = self.client.get("/schedule")
+            self.assertIn(b"Conferir resultado na Meta", page.data)
+            response = self.client.post(f"/schedule/meta-attempt/{attempt_id}/reconcile", data={"csrf_token": self.csrf(), "outcome": "confirmed_published", "remote_publication_id": "fb-post-verified-19", "note": "Conferido na Página publicada, ID comparado na Meta"})
+            self.assertIn("confirmed_published", response.location)
+            with app_module.app.app_context():
+                db = app_module.get_db()
+                attempt = db.execute("SELECT * FROM meta_publication_attempts WHERE id=?", (attempt_id,)).fetchone()
+                resolution = db.execute("SELECT * FROM meta_publication_reconciliations WHERE attempt_id=?", (attempt_id,)).fetchone()
+                self.assertEqual(attempt["status"], "unknown")
+                self.assertIsNone(attempt["remote_publication_id"])
+                self.assertEqual(resolution["outcome"], "confirmed_published")
+                self.assertEqual(resolution["remote_publication_id"], "fb-post-verified-19")
+            page = self.client.get("/schedule")
+            self.assertIn(b"Confirmado manualmente na Meta", page.data)
+            self.assertIn(b"fb-post-verified-19", page.data)
+            self.assertNotIn(b"Registrar confer\xc3\xaancia", page.data)
+            report = self.client.get("/reports")
+            self.assertIn(b"0 confirmadas pela API", report.data)
+            self.assertIn(b"1 conferidas manualmente", report.data)
+            blocked = self.client.post(f"/schedule/{schedule_id}/publish", data={"csrf_token": self.csrf(), "connection_id": str(connection_id)})
+            self.assertIn("incerta", blocked.location)
+            publish.assert_called_once()
+
+    def test_confirming_unknown_not_published_releases_only_after_manual_check(self):
+        schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)
+        with patch.dict(os.environ, self.meta_env, clear=False), patch.object(app_module, "publish_facebook_text", side_effect=[meta_integration.MetaIntegrationError("timeout", uncertain=True), "fb-post-after-check"]) as publish:
+            self.client.post(f"/schedule/{schedule_id}/publish", data={"csrf_token": self.csrf(), "connection_id": str(connection_id)})
+            with app_module.app.app_context():
+                attempt_id = app_module.get_db().execute("SELECT id FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()[0]
+            self.client.post(f"/schedule/meta-attempt/{attempt_id}/reconcile", data={"csrf_token": self.csrf(), "outcome": "confirmed_not_published", "remote_publication_id": "", "note": "Conferido no feed da Página, nenhum post foi criado"})
+            with app_module.app.app_context():
+                db = app_module.get_db()
+                self.assertEqual(db.execute("SELECT status FROM meta_publication_attempts WHERE id=?", (attempt_id,)).fetchone()[0], "failed")
+            page = self.client.get("/schedule")
+            self.assertIn(b"Publicar via Meta", page.data)
+            self.client.post(f"/schedule/{schedule_id}/publish", data={"csrf_token": self.csrf(), "connection_id": str(connection_id)})
+            self.assertEqual(publish.call_count, 2)
+            with app_module.app.app_context():
+                statuses = [row[0] for row in app_module.get_db().execute("SELECT status FROM meta_publication_attempts WHERE schedule_id=? ORDER BY id", (schedule_id,)).fetchall()]
+                self.assertEqual(statuses, ["failed", "published"])
+
     def test_signed_public_media_is_time_limited_and_signature_checked(self):
         (app_module.UPLOAD_DIR / "approved-art.png").write_bytes(b"image bytes")
         with patch.dict(os.environ, self.meta_env, clear=False):
