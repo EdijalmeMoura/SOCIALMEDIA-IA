@@ -1,7 +1,7 @@
 """Server-side Meta OAuth and Graph API helpers.
 
-Live calls are intentionally isolated here so the app can fail closed when the
-Meta app is not configured. Never log or return access tokens to the browser.
+Live calls are isolated here so the app can fail closed when the Meta app is
+not configured. Never log or return access tokens to the browser.
 """
 from __future__ import annotations
 
@@ -31,6 +31,10 @@ FACEBOOK_HOST = "https://www.facebook.com"
 
 class MetaIntegrationError(Exception):
     """Safe-to-display configuration or Graph API error."""
+
+    def __init__(self, message, uncertain=False):
+        super().__init__(message)
+        self.uncertain = uncertain
 
 
 @dataclass(frozen=True)
@@ -112,11 +116,11 @@ def _request_json(method, path, settings, params=None, access_token=None, appsec
         except (ValueError, AttributeError):
             message, code = "Resposta de erro do Meta Graph API.", exc.code
         suffix = f" (código {code})" if code is not None else ""
-        raise MetaIntegrationError(f"Meta Graph API{suffix}: {message}")
+        raise MetaIntegrationError(f"Meta Graph API{suffix}: {message}", uncertain=exc.code >= 500)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise MetaIntegrationError("Não foi possível alcançar o Meta Graph API deste servidor. Verifique a saída HTTPS e tente novamente.") from exc
+        raise MetaIntegrationError("Não foi possível alcançar o Meta Graph API deste servidor. O resultado da publicação pode ser incerto; confira a Página/conta antes de tentar novamente.", uncertain=True) from exc
     except (UnicodeDecodeError, json.JSONDecodeError):
-        raise MetaIntegrationError("O Meta Graph API retornou uma resposta inválida.")
+        raise MetaIntegrationError("O Meta Graph API retornou uma resposta inválida; confira a Página/conta antes de tentar novamente.", uncertain=True)
     if not isinstance(data, dict):
         raise MetaIntegrationError("O Meta Graph API retornou um formato inesperado.")
     if data.get("error"):
@@ -170,6 +174,52 @@ def fetch_pages(user_token, settings):
             "instagram_username": str(instagram.get("username", ""))[:120] or None,
         })
     return normalized
+
+
+def _validate_public_image_url(image_url):
+    parsed = urlparse(image_url or "")
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        raise MetaIntegrationError("A imagem precisa ter uma URL HTTPS pública acessível aos servidores da Meta.")
+
+
+def publish_instagram_image(instagram_user_id, page_access_token, image_url, caption, settings):
+    _validate_public_image_url(image_url)
+    container = _request_json("POST", f"{urllib.parse.quote(str(instagram_user_id), safe='')}/media", settings, {
+        "image_url": image_url,
+        "caption": (caption or "")[:2200],
+    }, page_access_token)
+    creation_id = container.get("id")
+    if not creation_id:
+        raise MetaIntegrationError("A Meta não retornou o ID do contêiner de imagem.")
+    published = _request_json("POST", f"{urllib.parse.quote(str(instagram_user_id), safe='')}/media_publish", settings, {
+        "creation_id": str(creation_id),
+    }, page_access_token)
+    if not published.get("id"):
+        raise MetaIntegrationError("O resultado da publicação no Instagram é incerto. Confira a conta antes de tentar novamente.", uncertain=True)
+    return str(published["id"])
+
+
+def publish_facebook_photo(page_id, page_access_token, image_url, caption, settings):
+    _validate_public_image_url(image_url)
+    published = _request_json("POST", f"{urllib.parse.quote(str(page_id), safe='')}/photos", settings, {
+        "url": image_url,
+        "caption": (caption or "")[:63206],
+    }, page_access_token)
+    remote_id = published.get("post_id") or published.get("id")
+    if not remote_id:
+        raise MetaIntegrationError("O resultado da publicação no Facebook é incerto. Confira a Página antes de tentar novamente.", uncertain=True)
+    return str(remote_id)
+
+
+def publish_facebook_text(page_id, page_access_token, message, settings):
+    if not (message or "").strip():
+        raise MetaIntegrationError("A publicação não tem texto para enviar ao Facebook.")
+    published = _request_json("POST", f"{urllib.parse.quote(str(page_id), safe='')}/feed", settings, {
+        "message": (message or "")[:63206],
+    }, page_access_token)
+    if not published.get("id"):
+        raise MetaIntegrationError("O resultado da publicação no Facebook é incerto. Confira a Página antes de tentar novamente.", uncertain=True)
+    return str(published["id"])
 
 
 def encrypt_token(token, settings):

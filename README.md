@@ -90,7 +90,7 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 - Fila interna de horários para conteúdo aprovado pelo cliente, com rede e fuso horário IANA; horário convertido e salvo em UTC.
 - Somente ciclos aprovados podem ser agendados. Publicações editoriais mantêm a rede que foi aprovada; artes aprovadas podem ser organizadas para as redes suportadas no planejamento.
 - Reagendamento e cancelamento preservam eventos de auditoria. Um conteúdo não pode ter dois horários ativos para a mesma rede.
-- A agenda é somente operacional: não há serviço em segundo plano, conexão com contas sociais, envio automático, status de publicação ou promessa de postagem.
+- A agenda não dispara jobs em segundo plano nem publica no horário automaticamente. A ação manual de publicação via Meta foi adicionada posteriormente e está descrita na Etapa 08.
 
 ## Etapa 07 implementada
 
@@ -101,11 +101,12 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 
 ## Limites desta entrega
 
-Publicação automática em redes sociais, métricas de desempenho externo e billing ainda não foram implementados. A conexão Meta abaixo está em preparação e não foi validada ao vivo. Encaminhar um planejamento para produção altera apenas o estado interno; a agenda não publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+Publicação automática em redes sociais, métricas de desempenho externo e billing ainda não foram implementados. As ações manuais da Meta descritas abaixo não foram validadas ao vivo neste sandbox; integração e publicação reais dependem de configuração e teste no deploy. Encaminhar um planejamento para produção altera apenas o estado interno. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
 
 ## Etapa 08 em andamento — fundação Meta e notificações internas
 
 - Notificações dentro do produto para pedidos de revisão, respostas e comentários; destinatários e leitura ficam isolados por agência/conta de portal. Nenhum e-mail é enviado.
-- Fundação de OAuth Meta para descobrir Páginas do Facebook e contas profissionais do Instagram vinculadas. O App ID/Secret, callback e versão Graph vêm do ambiente; tokens de Página são criptografados com Fernet.
-- O sandbox desta execução não tem saída para os servidores Meta. Os testes cobrem validação e protocolo com respostas simuladas, mas a autorização real e a publicação ainda não foram verificadas. Nenhum post foi enviado.
-- Antes de conectar, configure `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION`, `META_REDIRECT_URI` (exatamente a URL pública `/integrations/meta/callback`) e `META_TOKEN_ENCRYPTION_KEY` no gerenciador de segredos do servidor. Gere a chave de criptografia com `.venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Não cole nem versione esses segredos. Configure a mesma chave de criptografia de forma persistente; perder/trocar a chave impede a leitura dos tokens já armazenados.
+- OAuth Meta para descobrir Páginas do Facebook e contas profissionais do Instagram vinculadas; tokens de Página criptografados com Fernet. A plataforma também possui ações manuais via Graph API para publicar um horário vencido e aprovado: feed de texto/foto do Facebook e imagem no Instagram.
+- Não existe publicação automática em background. Instagram requer arte exportada e URL pública HTTPS; Meta ainda pode exigir revisão e permissões avançadas.
+- O sandbox desta execução não tem saída para os servidores Meta. Testes cobrem protocolo com respostas simuladas, mas autorização e publicação reais **não foram verificadas**; nenhum post foi enviado.
+- Antes de conectar, configure `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION`, `META_REDIRECT_URI` (exatamente a URL pública `/integrations/meta/callback`) e `META_TOKEN_ENCRYPTION_KEY` no gerenciador de segredos do servidor. Para imagens, configure `META_PUBLIC_BASE_URL` com a origem HTTPS pública que a Meta possa buscar. Gere a chave de criptografia com `.venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Não cole nem versione esses segredos. Configure a mesma chave de criptografia de forma persistente; perder/trocar a chave impede a leitura dos tokens já armazenados.

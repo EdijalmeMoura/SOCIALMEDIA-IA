@@ -173,7 +173,7 @@ class SocialMediaApprovalFlowTests(unittest.TestCase):
         self.agency_login()
         page = self.client.get("/schedule")
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b"sem publica\xc3\xa7\xc3\xa3o autom\xc3\xa1tica", page.data.lower())
+        self.assertIn(b"a agenda n\xc3\xa3o publica sozinha", page.data.lower())
         schedule_form["csrf_token"] = self.csrf()
         response = self.client.post("/schedule", data=schedule_form)
         self.assertIn("created=", response.location)

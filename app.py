@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import hashlib
 import hmac
 import io
 import json
@@ -11,6 +12,7 @@ import secrets
 import sqlite3
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -21,7 +23,7 @@ from flask import Flask, abort, g, jsonify, make_response, redirect, render_temp
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
-from meta_integration import MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, load_meta_settings
+from meta_integration import MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, load_meta_settings, publish_facebook_photo, publish_facebook_text, publish_instagram_image
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SOCIALMEDIA_DATA", BASE_DIR / "instance"))
@@ -256,6 +258,21 @@ CREATE TABLE IF NOT EXISTS meta_page_connections (
  UNIQUE(company_id,page_id)
 );
 CREATE INDEX IF NOT EXISTS idx_meta_connections_tenant ON meta_page_connections(company_id,page_name);
+CREATE TABLE IF NOT EXISTS meta_publication_attempts (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ schedule_id INTEGER NOT NULL REFERENCES scheduled_publications(id) ON DELETE CASCADE,
+ connection_id INTEGER REFERENCES meta_page_connections(id) ON DELETE SET NULL,
+ attempted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ network TEXT NOT NULL CHECK(network IN ('Instagram','Facebook')),
+ status TEXT NOT NULL CHECK(status IN ('publishing','published','failed','unknown')),
+ remote_publication_id TEXT,
+ error_message TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_publications_schedule ON meta_publication_attempts(company_id,schedule_id,created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_publications_single_active ON meta_publication_attempts(schedule_id) WHERE status IN ('publishing','published','unknown');
 """
 
 
@@ -824,7 +841,7 @@ def dashboard():
     feed_count = db.execute("SELECT COUNT(*) FROM feed_items WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
     approval_pending_count = db.execute("SELECT COUNT(*) FROM approvals WHERE company_id=? AND status='pending'", (g.user["company_id"],)).fetchone()[0]
     approval_total_count = db.execute("SELECT COUNT(*) FROM approvals WHERE company_id=?", (g.user["company_id"],)).fetchone()[0]
-    scheduled_count = db.execute("SELECT COUNT(*) FROM scheduled_publications WHERE company_id=? AND status='scheduled'", (g.user["company_id"],)).fetchone()[0]
+    scheduled_count = db.execute("SELECT COUNT(*) FROM scheduled_publications sp WHERE sp.company_id=? AND sp.status='scheduled' AND NOT EXISTS (SELECT 1 FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id AND ma.status='published')", (g.user["company_id"],)).fetchone()[0]
     today = datetime.now(timezone.utc)
     weekdays = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
     months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
@@ -1270,7 +1287,7 @@ def portal_approval_media(approval_id, filename):
 
 
 def scheduled_publication_for_tenant(schedule_id):
-    return get_db().execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,c.company_name,c.trade_name FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.id=? AND sp.company_id=?", (schedule_id, g.user["company_id"])).fetchone()
+    return get_db().execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,a.status AS approval_status,c.company_name,c.trade_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status,(SELECT ma.remote_publication_id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_remote_id,(SELECT ma.error_message FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_error FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.id=? AND sp.company_id=?", (schedule_id, g.user["company_id"])).fetchone()
 
 
 @app.route("/schedule", methods=["GET", "POST"])
@@ -1319,19 +1336,40 @@ def schedule_page():
         item["snapshot"] = json.loads(item["snapshot_json"])
         item["network"] = item["snapshot"].get("network", "")
         approvals.append(item)
-    schedules = db.execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,c.company_name,c.trade_name FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? ORDER BY CASE sp.status WHEN 'scheduled' THEN 0 ELSE 1 END,sp.scheduled_at_utc,sp.id DESC LIMIT 100", (g.user["company_id"],)).fetchall()
+    db.execute("UPDATE meta_publication_attempts SET status='unknown',error_message='A tentativa ficou sem resposta do servidor. Confira a conta Meta antes de qualquer nova tentativa.',updated_at=CURRENT_TIMESTAMP WHERE company_id=? AND status='publishing' AND datetime(created_at)<datetime('now','-10 minutes')", (g.user["company_id"],))
+    db.commit()
+    schedules = db.execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,a.status AS approval_status,c.company_name,c.trade_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status,(SELECT ma.remote_publication_id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_remote_id,(SELECT ma.error_message FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_error FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? ORDER BY CASE sp.status WHEN 'scheduled' THEN 0 ELSE 1 END,sp.scheduled_at_utc,sp.id DESC LIMIT 100", (g.user["company_id"],)).fetchall()
     schedule_rows = []
     for row in schedules:
         item = dict(row)
         item["local_label"] = scheduled_local_label(item["scheduled_at_utc"], item["timezone"])
+        try:
+            item["is_due"] = datetime.fromisoformat(item["scheduled_at_utc"]).astimezone(timezone.utc) <= datetime.now(timezone.utc)
+        except ValueError:
+            item["is_due"] = False
+        snapshot = json.loads(item["snapshot_json"])
+        item["has_export"] = bool(snapshot.get("export_path") and (UPLOAD_DIR / snapshot["export_path"]).is_file())
+        item["meta_published"] = item["meta_status"] == "published"
+        item["meta_busy"] = item["meta_status"] in {"publishing", "published", "unknown"}
         try:
             item["local_input"] = datetime.fromisoformat(item["scheduled_at_utc"]).astimezone(ZoneInfo(item["timezone"])).strftime("%Y-%m-%dT%H:%M")
         except (ValueError, ZoneInfoNotFoundError):
             item["local_input"] = ""
         item["events"] = db.execute("SELECT se.*,u.name AS actor_name FROM schedule_events se LEFT JOIN users u ON u.id=se.actor_user_id WHERE se.scheduled_publication_id=? AND se.company_id=? ORDER BY se.id DESC LIMIT 5", (item["id"], g.user["company_id"])).fetchall()
         schedule_rows.append(item)
+    connections = db.execute("SELECT id,page_id,page_name,instagram_user_id,instagram_username FROM meta_page_connections WHERE company_id=? ORDER BY page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    try:
+        load_meta_settings()
+        meta_configured = True
+    except MetaIntegrationError:
+        meta_configured = False
+    try:
+        meta_public_url_ready = bool(meta_public_base_url())
+    except MetaIntegrationError:
+        meta_public_url_ready = False
+    active_schedule_count = sum(1 for item in schedule_rows if item["status"] == "scheduled" and not item["meta_published"])
     local_default = (datetime.now(ZoneInfo(DEFAULT_SCHEDULE_TIMEZONE)) + timedelta(days=1)).replace(second=0, microsecond=0)
-    return render_template("schedule.html", clients=clients, selected=selected, approvals=approvals, schedules=schedule_rows, networks=SCHEDULE_NETWORKS, default_timezone=DEFAULT_SCHEDULE_TIMEZONE, default_datetime=local_default.strftime("%Y-%m-%dT%H:%M"), error=request.args.get("error"), created=request.args.get("created"))
+    return render_template("schedule.html", clients=clients, selected=selected, approvals=approvals, schedules=schedule_rows, active_schedule_count=active_schedule_count, networks=SCHEDULE_NETWORKS, meta_connections=connections, meta_configured=meta_configured, meta_public_url_ready=meta_public_url_ready, default_timezone=DEFAULT_SCHEDULE_TIMEZONE, default_datetime=local_default.strftime("%Y-%m-%dT%H:%M"), error=request.args.get("error"), created=request.args.get("created"), published=request.args.get("published"))
 
 
 @app.post("/schedule/<int:schedule_id>/reschedule")
@@ -1340,6 +1378,8 @@ def schedule_reschedule(schedule_id):
     schedule = scheduled_publication_for_tenant(schedule_id)
     if not schedule or schedule["status"] != "scheduled":
         abort(404)
+    if schedule["meta_status"] in {"publishing", "published", "unknown"}:
+        return redirect(url_for("schedule_page", error="Esta tentativa está em andamento ou tem resultado incerto; verifique a conta Meta antes de alterar o horário."))
     try:
         scheduled_at_utc, zone_name = parse_schedule_time(request.form.get("scheduled_local"), clean(request.form.get("timezone"), 80))
     except ValueError as exc:
@@ -1360,6 +1400,8 @@ def schedule_cancel(schedule_id):
     schedule = scheduled_publication_for_tenant(schedule_id)
     if not schedule or schedule["status"] != "scheduled":
         abort(404)
+    if schedule["meta_status"] in {"publishing", "published", "unknown"}:
+        return redirect(url_for("schedule_page", error="Esta tentativa está em andamento ou tem resultado incerto; verifique a conta Meta antes de cancelar."))
     db = get_db()
     updated = db.execute("UPDATE scheduled_publications SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND status='scheduled'", (schedule_id, g.user["company_id"]))
     if updated.rowcount != 1:
@@ -1368,6 +1410,91 @@ def schedule_cancel(schedule_id):
     db.execute("INSERT INTO schedule_events(scheduled_publication_id,company_id,actor_user_id,event_type,scheduled_at_utc,timezone,note) VALUES(?,?,?,'cancelled',?,?,?)", (schedule_id, g.user["company_id"], g.user["id"], schedule["scheduled_at_utc"], schedule["timezone"], "Agendamento interno cancelado"))
     db.commit()
     return redirect(url_for("schedule_page", cancelled=schedule_id))
+
+
+@app.post("/schedule/<int:schedule_id>/publish")
+@roles_required("owner", "admin", "editor")
+def schedule_publish_now(schedule_id):
+    schedule = scheduled_publication_for_tenant(schedule_id)
+    if not schedule or schedule["status"] != "scheduled":
+        abort(404)
+    if schedule["approval_status"] != "approved":
+        return redirect(url_for("schedule_page", error="Só é possível publicar o ciclo aprovado pelo cliente."))
+    if schedule["meta_status"] in {"publishing", "published", "unknown"}:
+        return redirect(url_for("schedule_page", error="Já existe uma tentativa ativa, concluída ou incerta para este horário."))
+    if schedule["network"] not in {"Facebook", "Instagram"}:
+        return redirect(url_for("schedule_page", error="Esta etapa publica apenas em Páginas do Facebook e contas profissionais do Instagram."))
+    try:
+        scheduled_at = datetime.fromisoformat(schedule["scheduled_at_utc"]).astimezone(timezone.utc)
+    except ValueError:
+        return redirect(url_for("schedule_page", error="O horário salvo não pôde ser interpretado."))
+    if scheduled_at > datetime.now(timezone.utc):
+        return redirect(url_for("schedule_page", error="Este horário ainda não chegou. A publicação só pode ser iniciada quando estiver no horário ou após ele."))
+    try:
+        connection_id = int(request.form.get("connection_id", ""))
+        settings = load_meta_settings()
+    except (ValueError, MetaIntegrationError) as exc:
+        return redirect(url_for("schedule_page", error=str(exc) or "Escolha uma conexão Meta válida."))
+    connection = get_db().execute("SELECT * FROM meta_page_connections WHERE id=? AND company_id=?", (connection_id, g.user["company_id"])).fetchone()
+    if not connection:
+        return redirect(url_for("schedule_page", error="Escolha uma Página Meta conectada a esta agência."))
+    if schedule["network"] == "Instagram" and not connection["instagram_user_id"]:
+        return redirect(url_for("schedule_page", error="A Página selecionada não possui uma conta profissional do Instagram vinculada."))
+    snapshot = json.loads(schedule["snapshot_json"])
+    if snapshot["type"] == "creative":
+        content = snapshot.get("content", {})
+        caption = "\n\n".join(value for value in [content.get("caption", "").strip(), content.get("hashtags", "").strip()] if value)
+        image_filename = snapshot.get("export_path")
+    else:
+        caption = "\n\n".join(value for value in [snapshot.get("caption", "").strip(), snapshot.get("hashtags", "").strip()] if value)
+        image_filename = None
+    image_url = None
+    if schedule["network"] == "Instagram" and not image_filename:
+        return redirect(url_for("schedule_page", error="O Instagram exige uma arte exportada; publique uma criação visual aprovada."))
+    if image_filename:
+        if secure_filename(image_filename) != image_filename or not (UPLOAD_DIR / image_filename).is_file():
+            return redirect(url_for("schedule_page", error="O arquivo exportado desta aprovação não está disponível."))
+        try:
+            image_url = create_meta_image_url(image_filename)
+        except MetaIntegrationError as exc:
+            if schedule["network"] == "Facebook" and snapshot["type"] == "planned":
+                image_url = None
+            else:
+                return redirect(url_for("schedule_page", error=str(exc)))
+    try:
+        page_token = decrypt_token(connection["page_access_token_encrypted"], settings)
+    except MetaIntegrationError as exc:
+        return redirect(url_for("schedule_page", error=str(exc)))
+    db = get_db()
+    try:
+        attempt_id = db.execute("INSERT INTO meta_publication_attempts(company_id,schedule_id,connection_id,attempted_by,network,status) VALUES(?,?,?,?,?,'publishing')", (g.user["company_id"], schedule_id, connection_id, g.user["id"], schedule["network"])).lastrowid
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return redirect(url_for("schedule_page", error="Já existe uma tentativa em andamento ou uma publicação concluída para este horário."))
+    try:
+        if schedule["network"] == "Instagram":
+            remote_id = publish_instagram_image(connection["instagram_user_id"], page_token, image_url, caption, settings)
+        elif image_url:
+            remote_id = publish_facebook_photo(connection["page_id"], page_token, image_url, caption, settings)
+        else:
+            remote_id = publish_facebook_text(connection["page_id"], page_token, caption, settings)
+    except MetaIntegrationError as exc:
+        status = "unknown" if exc.uncertain else "failed"
+        db.execute("UPDATE meta_publication_attempts SET status=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=?", (status, clean(str(exc), 700), attempt_id, g.user["company_id"]))
+        notify_agency(db, g.user["company_id"], "Publicação Meta não confirmada", str(exc), url_for("schedule_page"))
+        db.commit()
+        return redirect(url_for("schedule_page", error=str(exc)))
+    except Exception:
+        message = "A resposta da Meta não pôde ser confirmada. Confira a conta antes de repetir para evitar uma publicação duplicada."
+        db.execute("UPDATE meta_publication_attempts SET status='unknown',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=?", (message, attempt_id, g.user["company_id"]))
+        notify_agency(db, g.user["company_id"], "Resultado da publicação incerto", message, url_for("schedule_page"))
+        db.commit()
+        return redirect(url_for("schedule_page", error=message))
+    db.execute("UPDATE meta_publication_attempts SET status='published',remote_publication_id=?,error_message='',updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=?", (clean(remote_id, 255), attempt_id, g.user["company_id"]))
+    notify_agency(db, g.user["company_id"], "Publicação confirmada pela Meta", f"{schedule['approval_title']} · {schedule['network']} · ID {clean(remote_id, 180)}", url_for("schedule_page"))
+    db.commit()
+    return redirect(url_for("schedule_page", published=schedule_id))
 
 
 def parse_report_filters():
@@ -1405,14 +1532,14 @@ def build_operational_report(start_date, end_date, client_id):
     posts = db.execute("SELECT p.id,p.client_id,p.theme,p.network,p.status,p.created_at,c.trade_name,c.company_name FROM posts p JOIN clients c ON c.id=p.client_id AND c.company_id=p.company_id WHERE p.company_id=? AND date(p.created_at) BETWEEN ? AND ?" + client_clause.format("p") + " ORDER BY p.created_at DESC,p.id DESC", params).fetchall()
     creatives = db.execute("SELECT cp.id,cp.client_id,cp.subject,cp.status,cp.export_path,cp.created_at,c.trade_name,c.company_name FROM creative_posts cp JOIN clients c ON c.id=cp.client_id AND c.company_id=cp.company_id WHERE cp.company_id=? AND date(cp.created_at) BETWEEN ? AND ?" + client_clause.format("cp") + " ORDER BY cp.created_at DESC,cp.id DESC", params).fetchall()
     approvals = db.execute("SELECT a.id,a.client_id,a.title,a.source_type,a.snapshot_json,a.status,a.submitted_at,c.trade_name,c.company_name FROM approvals a JOIN clients c ON c.id=a.client_id AND c.company_id=a.company_id WHERE a.company_id=? AND date(a.submitted_at) BETWEEN ? AND ?" + client_clause.format("a") + " ORDER BY a.submitted_at DESC,a.id DESC", params).fetchall()
-    schedules = db.execute("SELECT sp.id,sp.client_id,sp.approval_id,sp.network,sp.scheduled_at_utc,sp.timezone,sp.status,a.title,c.trade_name,c.company_name FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? AND date(sp.scheduled_at_utc) BETWEEN ? AND ?" + client_clause.format("sp") + " ORDER BY sp.scheduled_at_utc DESC,sp.id DESC", params).fetchall()
+    schedules = db.execute("SELECT sp.id,sp.client_id,sp.approval_id,sp.network,sp.scheduled_at_utc,sp.timezone,sp.status,a.title,c.trade_name,c.company_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? AND date(sp.scheduled_at_utc) BETWEEN ? AND ?" + client_clause.format("sp") + " ORDER BY sp.scheduled_at_utc DESC,sp.id DESC", params).fetchall()
     events = db.execute("SELECT e.new_status,COUNT(*) AS count FROM approval_events e JOIN approvals a ON a.id=e.approval_id AND a.company_id=e.company_id WHERE e.company_id=? AND date(e.created_at) BETWEEN ? AND ? AND e.new_status IN ('approved','changes_requested','rejected')" + (" AND a.client_id=?" if client_id is not None else "") + " GROUP BY e.new_status", params).fetchall()
     from collections import Counter
     approval_statuses = Counter(row["status"] for row in approvals)
     decision_events = Counter({row["new_status"]: row["count"] for row in events})
     post_networks = Counter(row["network"] for row in posts)
-    schedule_networks = Counter(row["network"] for row in schedules)
-    schedule_statuses = Counter(row["status"] for row in schedules)
+    schedule_networks = Counter(row["network"] for row in schedules if row["status"] == "scheduled" and row["meta_status"] != "published")
+    schedule_statuses = Counter("published" if row["meta_status"] == "published" else row["status"] for row in schedules)
     exported_creatives = sum(1 for row in creatives if row["export_path"])
     activity = []
     for row in posts:
@@ -1423,9 +1550,9 @@ def build_operational_report(start_date, end_date, client_id):
         snapshot = json.loads(row["snapshot_json"])
         activity.append({"date": row["submitted_at"], "client": row["trade_name"] or row["company_name"], "category": "Aprovação", "title": row["title"], "network": snapshot.get("network", "—"), "status": {"pending":"Aguardando cliente","approved":"Aprovado","changes_requested":"Alterações solicitadas","rejected":"Rejeitado"}.get(row["status"], row["status"])})
     for row in schedules:
-        activity.append({"date": row["scheduled_at_utc"], "client": row["trade_name"] or row["company_name"], "category": "Agenda interna", "title": row["title"], "network": row["network"], "status": "Na agenda" if row["status"] == "scheduled" else "Cancelado"})
+        activity.append({"date": row["scheduled_at_utc"], "client": row["trade_name"] or row["company_name"], "category": "Agenda interna", "title": row["title"], "network": row["network"], "status": "Publicado via Meta" if row["meta_status"] == "published" else ("Na agenda" if row["status"] == "scheduled" else "Cancelado")})
     activity.sort(key=lambda item: item["date"].replace("T", " "), reverse=True)
-    metrics = {"planned_posts": len(posts), "creatives": len(creatives), "exported_creatives": exported_creatives, "approvals": len(approvals), "approval_pending": approval_statuses["pending"], "approval_approved": approval_statuses["approved"], "approval_changes": approval_statuses["changes_requested"], "approval_rejected": approval_statuses["rejected"], "approved_events": decision_events["approved"], "changes_events": decision_events["changes_requested"], "rejected_events": decision_events["rejected"], "schedules": len(schedules), "schedules_active": schedule_statuses["scheduled"], "schedules_cancelled": schedule_statuses["cancelled"]}
+    metrics = {"planned_posts": len(posts), "creatives": len(creatives), "exported_creatives": exported_creatives, "approvals": len(approvals), "approval_pending": approval_statuses["pending"], "approval_approved": approval_statuses["approved"], "approval_changes": approval_statuses["changes_requested"], "approval_rejected": approval_statuses["rejected"], "approved_events": decision_events["approved"], "changes_events": decision_events["changes_requested"], "rejected_events": decision_events["rejected"], "schedules": len(schedules), "schedules_active": schedule_statuses["scheduled"], "schedules_published": schedule_statuses["published"], "schedules_cancelled": schedule_statuses["cancelled"]}
     network_rows = [{"network": network, "posts": post_networks[network], "schedules": schedule_networks[network]} for network in SCHEDULE_NETWORKS if post_networks[network] or schedule_networks[network]]
     return {"metrics": metrics, "activity": activity[:300], "network_rows": network_rows, "activity_count": len(activity)}
 
@@ -1472,7 +1599,7 @@ def reports_export():
     writer.writerow(["Cliente", spreadsheet_safe(client_name)])
     writer.writerow([])
     writer.writerow(["Indicador", "Quantidade"])
-    for label, key in [("Posts planejados", "planned_posts"), ("Artes criadas", "creatives"), ("Artes exportadas", "exported_creatives"), ("Aprovações enviadas", "approvals"), ("Aprovações pendentes", "approval_pending"), ("Aprovadas", "approval_approved"), ("Alterações solicitadas", "approval_changes"), ("Rejeitadas", "approval_rejected"), ("Horários na agenda", "schedules"), ("Agendamentos ativos", "schedules_active"), ("Agendamentos cancelados", "schedules_cancelled")]:
+    for label, key in [("Posts planejados", "planned_posts"), ("Artes criadas", "creatives"), ("Artes exportadas", "exported_creatives"), ("Aprovações enviadas", "approvals"), ("Aprovações pendentes", "approval_pending"), ("Aprovadas", "approval_approved"), ("Alterações solicitadas", "approval_changes"), ("Rejeitadas", "approval_rejected"), ("Horários na agenda", "schedules"), ("Agendamentos ativos", "schedules_active"), ("Publicadas via Meta", "schedules_published"), ("Agendamentos cancelados", "schedules_cancelled")]:
         writer.writerow([label, report["metrics"][key]])
     writer.writerow([])
     writer.writerow(["Categoria", "Cliente", "Conteúdo", "Rede", "Data registrada (UTC)", "Status interno"])
@@ -1482,6 +1609,52 @@ def reports_export():
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
     response.headers["Content-Disposition"] = f"attachment; filename=relatorio-socialmedia-{start_date}-a-{end_date}.csv"
     response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+def meta_public_base_url():
+    base_url = os.environ.get("META_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(base_url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path:
+        raise MetaIntegrationError("Configure META_PUBLIC_BASE_URL com a origem HTTPS pública desta aplicação para que a Meta possa buscar imagens aprovadas.")
+    return base_url
+
+
+def sign_meta_media(filename, expires):
+    message = f"{filename}:{expires}".encode("utf-8")
+    return hmac.new(app.config["SECRET_KEY"].encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def create_meta_image_url(filename):
+    base_url = meta_public_base_url()
+    if secure_filename(filename) != filename or Path(filename).suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+        raise MetaIntegrationError("A arte exportada não é um arquivo PNG ou JPG seguro.")
+    expires = int(time.time()) + 600
+    signature = sign_meta_media(filename, expires)
+    return f"{base_url}/meta/media/{urllib.parse.quote(filename, safe='')}?expires={expires}&signature={signature}"
+
+
+@app.get("/meta/media/<path:filename>")
+def meta_public_media(filename):
+    if secure_filename(filename) != filename or Path(filename).suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+        abort(404)
+    try:
+        expires = int(request.args.get("expires", ""))
+    except (TypeError, ValueError):
+        abort(404)
+    now = int(time.time())
+    if expires < now or expires > now + 900:
+        abort(404)
+    expected = sign_meta_media(filename, expires)
+    provided = request.args.get("signature", "")
+    if not provided or not hmac.compare_digest(expected, provided):
+        abort(404)
+    file_path = UPLOAD_DIR / filename
+    if not file_path.is_file():
+        abort(404)
+    response = send_from_directory(UPLOAD_DIR, filename, max_age=300)
+    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return response
 
 

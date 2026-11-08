@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
+import urllib.parse
+import urllib.error
 
 from cryptography.fernet import Fernet
 
@@ -115,6 +117,36 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertIn("disconnected=1", deleted.location)
             with app_module.app.app_context():
                 self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_page_connections").fetchone()[0], 0)
+
+    def test_publish_helpers_send_documented_graph_requests_without_leaking_tokens_in_urls(self):
+        settings = meta_integration.load_meta_settings(self.meta_env)
+        image_url = "https://social.example.test/meta/media/art.png?expires=123&signature=abc"
+        with patch("meta_integration.urllib.request.urlopen", side_effect=[FakeResponse({"id": "container-1"}), FakeResponse({"id": "ig-publication-9"})]) as open_url:
+            result = meta_integration.publish_instagram_image("ig-user-4", "page-token-secret", image_url, "Legenda #arte", settings)
+        self.assertEqual(result, "ig-publication-9")
+        self.assertEqual(open_url.call_count, 2)
+        create_request = open_url.call_args_list[0].args[0]
+        publish_request = open_url.call_args_list[1].args[0]
+        self.assertEqual(create_request.full_url, "https://graph.facebook.com/v22.0/ig-user-4/media")
+        self.assertEqual(create_request.get_method(), "POST")
+        self.assertNotIn("page-token-secret", create_request.full_url)
+        self.assertEqual(urllib.parse.parse_qs(create_request.data.decode())["image_url"], [image_url])
+        self.assertEqual(urllib.parse.parse_qs(publish_request.data.decode())["creation_id"], ["container-1"])
+        with patch("meta_integration.urllib.request.urlopen", return_value=FakeResponse({"post_id": "fb-post-8", "id": "photo-8"})) as open_url:
+            result = meta_integration.publish_facebook_photo("page-2", "page-token-secret", image_url, "Legenda", settings)
+        self.assertEqual(result, "fb-post-8")
+        self.assertEqual(open_url.call_args.args[0].full_url, "https://graph.facebook.com/v22.0/page-2/photos")
+        with patch("meta_integration.urllib.request.urlopen", return_value=FakeResponse({"id": "fb-post-10"})) as open_url:
+            result = meta_integration.publish_facebook_text("page-2", "page-token-secret", "Texto", settings)
+        self.assertEqual(result, "fb-post-10")
+        self.assertEqual(open_url.call_args.args[0].full_url, "https://graph.facebook.com/v22.0/page-2/feed")
+
+    def test_graph_timeout_is_marked_as_uncertain_to_prevent_blind_retry(self):
+        settings = meta_integration.load_meta_settings(self.meta_env)
+        with patch("meta_integration.urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+            with self.assertRaises(meta_integration.MetaIntegrationError) as caught:
+                meta_integration.publish_facebook_text("page-2", "page-token-secret", "Texto", settings)
+        self.assertTrue(caught.exception.uncertain)
 
     def test_missing_meta_configuration_fails_closed_without_showing_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
