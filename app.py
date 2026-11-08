@@ -307,6 +307,21 @@ CREATE INDEX IF NOT EXISTS idx_meta_reconciliations_tenant ON meta_publication_r
 """
 
 
+def cleanup_stale_instagram_images(max_age_seconds=3600):
+    now = time.time()
+    removed = 0
+    for image_path in UPLOAD_DIR.glob("meta_instagram_*.jpg"):
+        if not re.fullmatch(r"meta_instagram_[a-f0-9]{24}\.jpg", image_path.name):
+            continue
+        try:
+            if image_path.is_file() and now - image_path.stat().st_mtime > max_age_seconds:
+                image_path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH)
@@ -330,6 +345,7 @@ def init_db():
 
 
 init_db()
+cleanup_stale_instagram_images()
 
 
 def csrf_token():

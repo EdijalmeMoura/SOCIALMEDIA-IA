@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -101,6 +102,21 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
             self.assertEqual(attempt["status"], "published")
             self.assertEqual(attempt["remote_publication_id"], "ig-publication-123")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM notifications WHERE recipient_type='agency' AND title='Publicação confirmada pela Meta'").fetchone()[0], 1)
+
+    def test_stale_instagram_temporary_cleanup_preserves_fresh_and_approved_images(self):
+        stale = app_module.UPLOAD_DIR / ("meta_instagram_" + "a" * 24 + ".jpg")
+        fresh = app_module.UPLOAD_DIR / ("meta_instagram_" + "b" * 24 + ".jpg")
+        unrelated = app_module.UPLOAD_DIR / "approved-art.jpg"
+        invalid_name = app_module.UPLOAD_DIR / "meta_instagram_temporary.jpg"
+        for path in (stale, fresh, unrelated, invalid_name):
+            path.write_bytes(b"cleanup-test")
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+        self.assertEqual(app_module.cleanup_stale_instagram_images(3600), 1)
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
+        self.assertTrue(unrelated.exists())
+        self.assertTrue(invalid_name.exists())
 
     def test_instagram_export_creates_temporary_jpeg_and_preserves_approved_source(self):
         source_path = app_module.UPLOAD_DIR / "wide-approved.png"
