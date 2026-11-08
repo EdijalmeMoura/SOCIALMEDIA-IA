@@ -112,6 +112,15 @@ class MetaIntegrationTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             return session.get("csrf_token")
 
+    def test_meta_callback_uri_requires_exact_host_and_route(self):
+        valid = "https://agency.example.test/integrations/meta/callback"
+        self.assertTrue(app_module.meta_callback_uri_matches(valid, "agency.example.test"))
+        self.assertFalse(app_module.meta_callback_uri_matches(valid, "other.example.test"))
+        self.assertFalse(app_module.meta_callback_uri_matches("https://agency.example.test/callback", "agency.example.test"))
+        self.assertFalse(app_module.meta_callback_uri_matches(valid + "?next=/", "agency.example.test"))
+        self.assertFalse(app_module.meta_callback_uri_matches("http://agency.example.test/integrations/meta/callback", "agency.example.test"))
+        self.assertTrue(app_module.meta_callback_uri_matches("http://localhost:5000/integrations/meta/callback", "localhost:5000"))
+
     def test_meta_configuration_and_oauth_authorization_url(self):
         with patch.dict(os.environ, self.meta_env, clear=False):
             settings = meta_integration.load_meta_settings()
@@ -193,6 +202,8 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertIn(b"@aurora", page.data)
             self.assertIn(b"Prazo registrado do token OAuth:", page.data)
             self.assertIn(b"O que falta para validar a integra\xc3\xa7\xc3\xa3o", page.data)
+            self.assertIn(b"Callback OAuth", page.data)
+            self.assertIn(b"Revisar configura\xc3\xa7\xc3\xa3o", page.data)
             self.assertIn(b"Seguran\xc3\xa7a da sess\xc3\xa3o", page.data)
             self.assertIn(b"Pendente no deploy", page.data)
             self.assertIn(b"Facebook \xc2\xb7 publica\xc3\xa7\xc3\xa3o real", page.data)

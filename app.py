@@ -1850,6 +1850,19 @@ def reports_export():
     return response
 
 
+META_OAUTH_CALLBACK_PATH = "/integrations/meta/callback"
+
+
+def meta_callback_uri_matches(redirect_uri, current_host):
+    parsed = urllib.parse.urlsplit(redirect_uri or "")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path != META_OAUTH_CALLBACK_PATH:
+        return False
+    if (parsed.netloc or "").lower() != (current_host or "").lower():
+        return False
+    local_http = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"}
+    return parsed.scheme == "https" or local_http
+
+
 def meta_public_base_url():
     base_url = os.environ.get("META_PUBLIC_BASE_URL", "").strip().rstrip("/")
     parsed = urllib.parse.urlsplit(base_url)
@@ -1921,9 +1934,11 @@ def meta_settings_page():
         settings = load_meta_settings()
         configured = True
         graph_version = settings.graph_version
+        oauth_callback_matches = meta_callback_uri_matches(settings.redirect_uri, request.host)
     except MetaIntegrationError as exc:
         configured = False
         graph_version = None
+        oauth_callback_matches = False
         settings_error = str(exc)
     db = get_db()
     connections = db.execute("SELECT pc.id,pc.page_id,pc.page_name,pc.instagram_user_id,pc.instagram_username,pc.token_expires_at,pc.connected_at,(SELECT mc.status FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_status,(SELECT mc.details FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_details,(SELECT mc.checked_at FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_checked_at FROM meta_page_connections pc WHERE pc.company_id=? ORDER BY pc.page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
@@ -1953,7 +1968,7 @@ def meta_settings_page():
     last_graph_tls_check = db.execute("SELECT status,details,checked_at FROM meta_graph_connectivity_checks WHERE company_id=? ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
     session_secret = str(app.config.get("SECRET_KEY") or "")
     session_security_ready = bool(app.config.get("SESSION_COOKIE_SECURE")) and len(session_secret) >= 32 and session_secret != "dev-only-change-this-secret-before-deploying"
-    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, public_media_base_url=public_media_base_url, session_security_ready=session_security_ready, last_public_media_check=last_public_media_check, last_graph_tls_check=last_graph_tls_check, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
+    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, oauth_callback_matches=oauth_callback_matches, public_media_url_ready=public_media_url_ready, public_media_base_url=public_media_base_url, session_security_ready=session_security_ready, last_public_media_check=last_public_media_check, last_graph_tls_check=last_graph_tls_check, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
 
 
 @app.get("/integrations/meta/validation-guide")
@@ -2047,7 +2062,7 @@ def meta_oauth_start():
     return redirect(authorization_url(settings, state))
 
 
-@app.get("/integrations/meta/callback")
+@app.get(META_OAUTH_CALLBACK_PATH)
 @roles_required("owner", "admin")
 def meta_oauth_callback():
     expected_state = session.pop("meta_oauth_state", None)

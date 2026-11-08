@@ -6,7 +6,7 @@ Este roteiro deve ser executado no deploy público que hospedará a aplicação,
 
 - Servir a aplicação por HTTPS, com `SECRET_KEY` forte e persistente e `COOKIE_SECURE=1`.
 - No gerenciador de segredos do servidor, configurar `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION`, `META_REDIRECT_URI` e `META_TOKEN_ENCRYPTION_KEY`. Não inserir os valores no Git, em tickets ou no chat.
-- `META_REDIRECT_URI` deve ser a URL pública exata da rota `/integrations/meta/callback`, cadastrada também nas configurações do App.
+- `META_REDIRECT_URI` deve ser a URL pública exata da rota `/integrations/meta/callback`, cadastrada também nas configurações do App. A tela Conexões Meta compara host/rota com a requisição atual, mas a correspondência no painel do App ainda precisa ser conferida manualmente.
 - Para publicação de imagens, configurar `META_PUBLIC_BASE_URL` como a origem HTTPS pública da aplicação, sem caminho, barra final, query ou fragmento. A Meta precisa conseguir acessar a URL temporária assinada da imagem.
 - Em **Conexões Meta**, use **Testar origem** para confirmar que o próprio servidor consegue buscar um JPEG de prova pela URL assinada. Esse teste valida o endpoint e o acesso a partir do servidor da aplicação; não comprova que a rede da Meta consegue acessá-lo.
 - Confirmar que o servidor permite conexões HTTPS de saída aos endpoints Facebook/Graph da Meta e que o App está na versão Graph configurada. Em **Conexões Meta**, **Testar saída** verifica handshake TLS do servidor com `graph.facebook.com`, sem credenciais; isso não testa OAuth, escopos nem publicação.
