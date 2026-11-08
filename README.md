@@ -32,7 +32,7 @@ Abra `http://localhost:5000`. O primeiro acesso começa pela criação de uma co
 python -m unittest discover -s tests -v
 ```
 
-Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação, aprovações, agenda interna com fuso/auditoria e relatórios com exportação CSV.
+Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação, aprovações, notificações internas, agenda com fuso/auditoria, relatórios CSV e o protocolo OAuth/Graph Meta via mocks.
 
 ## Etapa 01 implementada
 
@@ -101,4 +101,11 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 
 ## Limites desta entrega
 
-Integrações Meta, publicação automática em redes sociais, métricas de desempenho externo e billing ainda não foram implementados. Encaminhar um planejamento para produção altera apenas o estado interno; a agenda não publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+Publicação automática em redes sociais, métricas de desempenho externo e billing ainda não foram implementados. A conexão Meta abaixo está em preparação e não foi validada ao vivo. Encaminhar um planejamento para produção altera apenas o estado interno; a agenda não publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+
+## Etapa 08 em andamento — fundação Meta e notificações internas
+
+- Notificações dentro do produto para pedidos de revisão, respostas e comentários; destinatários e leitura ficam isolados por agência/conta de portal. Nenhum e-mail é enviado.
+- Fundação de OAuth Meta para descobrir Páginas do Facebook e contas profissionais do Instagram vinculadas. O App ID/Secret, callback e versão Graph vêm do ambiente; tokens de Página são criptografados com Fernet.
+- O sandbox desta execução não tem saída para os servidores Meta. Os testes cobrem validação e protocolo com respostas simuladas, mas a autorização real e a publicação ainda não foram verificadas. Nenhum post foi enviado.
+- Antes de conectar, configure `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_VERSION`, `META_REDIRECT_URI` (exatamente a URL pública `/integrations/meta/callback`) e `META_TOKEN_ENCRYPTION_KEY` no gerenciador de segredos do servidor. Gere a chave de criptografia com `.venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Não cole nem versione esses segredos. Configure a mesma chave de criptografia de forma persistente; perder/trocar a chave impede a leitura dos tokens já armazenados.

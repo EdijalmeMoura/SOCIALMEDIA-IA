@@ -217,6 +217,53 @@ class SocialMediaApprovalFlowTests(unittest.TestCase):
         with app_module.app.app_context():
             self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM scheduled_publications").fetchone()[0], 0)
 
+    def test_portal_and_agency_notifications_are_recipient_scoped_and_mark_read(self):
+        self.create_approval()
+        with app_module.app.app_context():
+            db = app_module.get_db()
+            approval_id = db.execute("SELECT id FROM approvals").fetchone()[0]
+            portal_notice = db.execute("SELECT * FROM notifications WHERE recipient_type='client' AND recipient_portal_user_id=(SELECT id FROM client_portal_users WHERE email='client-approval@example.com')").fetchone()
+            self.assertIsNotNone(portal_notice)
+            self.assertEqual(portal_notice["target_url"], f"/portal/approvals/{approval_id}")
+            portal_notification_id = portal_notice["id"]
+        self.portal_login()
+        page = self.client.get("/notifications")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Novo conte\xc3\xbado para revis\xc3\xa3o", page.data)
+        opened = self.client.post(f"/notifications/{portal_notification_id}/open", data={"csrf_token": self.csrf()})
+        self.assertEqual(opened.status_code, 302)
+        self.assertIn(f"/portal/approvals/{approval_id}", opened.location)
+        with app_module.app.app_context():
+            self.assertIsNotNone(app_module.get_db().execute("SELECT read_at FROM notifications WHERE id=?", (portal_notification_id,)).fetchone()[0])
+        self.client.post(f"/portal/approvals/{approval_id}/respond", data={"csrf_token": self.csrf(), "status": "approved", "body": "Ok."})
+        self.agency_login()
+        agency_page = self.client.get("/notifications")
+        self.assertEqual(agency_page.status_code, 200)
+        self.assertIn(b"Retorno do cliente", agency_page.data)
+        with app_module.app.app_context():
+            agency_notice = app_module.get_db().execute("SELECT id FROM notifications WHERE recipient_type='agency' AND recipient_user_id=?", (self.user_id,)).fetchone()
+            self.assertIsNotNone(agency_notice)
+        marked = self.client.post("/notifications/read-all", data={"csrf_token": self.csrf()})
+        self.assertEqual(marked.status_code, 302)
+        with app_module.app.app_context():
+            self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM notifications WHERE recipient_type='agency' AND recipient_user_id=? AND read_at IS NULL", (self.user_id,)).fetchone()[0], 0)
+
+    def test_comments_generate_notifications_for_the_other_party(self):
+        self.create_approval()
+        with app_module.app.app_context():
+            approval_id = app_module.get_db().execute("SELECT id FROM approvals").fetchone()[0]
+        response = self.client.post(f"/approvals/{approval_id}/comment", data={"csrf_token": self.csrf(), "body": "Adicionamos contexto visual."})
+        self.assertEqual(response.status_code, 302)
+        self.portal_login()
+        portal_page = self.client.get("/notifications")
+        self.assertIn(b"Novo coment\xc3\xa1rio da ag\xc3\xaancia", portal_page.data)
+        response = self.client.post(f"/portal/approvals/{approval_id}/comment", data={"csrf_token": self.csrf(), "body": "Recebido pelo cliente."})
+        self.assertEqual(response.status_code, 302)
+        self.agency_login()
+        agency_page = self.client.get("/notifications")
+        self.assertEqual(agency_page.status_code, 200)
+        self.assertIn(b"Novo coment\xc3\xa1rio do cliente", agency_page.data)
+
     def test_draft_art_cannot_be_sent_as_final_approval(self):
         with app_module.app.app_context():
             db = app_module.get_db()

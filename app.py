@@ -21,6 +21,7 @@ from flask import Flask, abort, g, jsonify, make_response, redirect, render_temp
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
+from meta_integration import MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, load_meta_settings
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SOCIALMEDIA_DATA", BASE_DIR / "instance"))
@@ -232,6 +233,29 @@ CREATE TABLE IF NOT EXISTS schedule_events (
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_schedule_events_item ON schedule_events(scheduled_publication_id,created_at);
+CREATE TABLE IF NOT EXISTS notifications (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ recipient_type TEXT NOT NULL CHECK(recipient_type IN ('agency','client')),
+ recipient_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+ recipient_portal_user_id INTEGER REFERENCES client_portal_users(id) ON DELETE CASCADE,
+ title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', target_url TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, read_at TEXT,
+ CHECK((recipient_type='agency' AND recipient_user_id IS NOT NULL AND recipient_portal_user_id IS NULL) OR (recipient_type='client' AND recipient_user_id IS NULL AND recipient_portal_user_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_agency_unread ON notifications(company_id,recipient_user_id,read_at,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_client_unread ON notifications(company_id,recipient_portal_user_id,read_at,created_at DESC);
+CREATE TABLE IF NOT EXISTS meta_page_connections (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ connected_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ page_id TEXT NOT NULL, page_name TEXT NOT NULL,
+ instagram_user_id TEXT, instagram_username TEXT,
+ page_access_token_encrypted TEXT NOT NULL, token_expires_at TEXT,
+ connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(company_id,page_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_connections_tenant ON meta_page_connections(company_id,page_name);
 """
 
 
@@ -293,6 +317,12 @@ def security_and_csrf():
             g.portal_client = get_db().execute("SELECT * FROM clients WHERE id=? AND company_id=?", (portal_user["client_id"], portal_user["company_id"])).fetchone()
         else:
             session.clear()
+    if getattr(g, "user", None):
+        g.unread_notification_count = get_db().execute("SELECT COUNT(*) FROM notifications WHERE recipient_type='agency' AND recipient_user_id=? AND company_id=? AND read_at IS NULL", (g.user["id"], g.user["company_id"])).fetchone()[0]
+    elif getattr(g, "portal_user", None):
+        g.unread_notification_count = get_db().execute("SELECT COUNT(*) FROM notifications WHERE recipient_type='client' AND recipient_portal_user_id=? AND company_id=? AND read_at IS NULL", (g.portal_user["id"], g.portal_user["company_id"])).fetchone()[0]
+    else:
+        g.unread_notification_count = 0
 
 
 @app.after_request
@@ -340,6 +370,16 @@ def roles_required(*roles):
 
 def clean(value, limit=5000):
     return (value if isinstance(value, str) else "").strip()[:limit]
+
+
+def notify_agency(db, company_id, title, body, target_url):
+    users = db.execute("SELECT id FROM users WHERE company_id=?", (company_id,)).fetchall()
+    db.executemany("INSERT INTO notifications(company_id,recipient_type,recipient_user_id,title,body,target_url) VALUES(?,'agency',?,?,?,?)", [(company_id, user["id"], clean(title, 160), clean(body, 500), target_url) for user in users])
+
+
+def notify_client_portal(db, company_id, client_id, title, body, target_url):
+    users = db.execute("SELECT id FROM client_portal_users WHERE company_id=? AND client_id=? AND is_active=1", (company_id, client_id)).fetchall()
+    db.executemany("INSERT INTO notifications(company_id,recipient_type,recipient_portal_user_id,title,body,target_url) VALUES(?,'client',?,?,?,?)", [(company_id, user["id"], clean(title, 160), clean(body, 500), target_url) for user in users])
 
 
 def valid_color(value):
@@ -994,6 +1034,7 @@ def approvals_page():
             note = clean(request.form.get("message"), 2000)
             if note:
                 store_approval_comment(db, approval_id, g.user["company_id"], "agency", note, user_id=g.user["id"])
+            notify_client_portal(db, g.user["company_id"], client_id, "Novo conteúdo para revisão", title, url_for("portal_approval_detail", approval_id=approval_id))
             db.commit()
         except sqlite3.IntegrityError:
             db.rollback()
@@ -1078,6 +1119,7 @@ def agency_approval_comment(approval_id):
         return redirect(url_for("approval_detail", approval_id=approval_id, error="Escreva um comentário ou anexe uma referência."))
     db = get_db()
     store_approval_comment(db, approval_id, g.user["company_id"], "agency", body, user_id=g.user["id"], attachment=attachment)
+    notify_client_portal(db, g.user["company_id"], approval["client_id"], "Novo comentário da agência", body or "A equipe anexou uma referência.", url_for("portal_approval_detail", approval_id=approval_id))
     db.commit()
     return redirect(url_for("approval_detail", approval_id=approval_id) + "#history")
 
@@ -1183,6 +1225,8 @@ def portal_approval_respond(approval_id):
     db.execute("INSERT INTO approval_events(approval_id,company_id,actor_type,actor_portal_user_id,previous_status,new_status,note) VALUES(?,?, 'client',?,'pending',?,?)", (approval_id, g.portal_user["company_id"], g.portal_user["id"], status, body[:1000]))
     if body or attachment:
         store_approval_comment(db, approval_id, g.portal_user["company_id"], "client", body, portal_user_id=g.portal_user["id"], attachment=attachment)
+    decision_labels = {"approved": "aprovou", "changes_requested": "solicitou alterações em", "rejected": "rejeitou"}
+    notify_agency(db, g.portal_user["company_id"], "Retorno do cliente", f"{g.portal_user['name']} {decision_labels[status]}: {approval['title']}", url_for("approval_detail", approval_id=approval_id))
     db.commit()
     return redirect(url_for("portal_approval_detail", approval_id=approval_id) + "?responded=1")
 
@@ -1204,6 +1248,7 @@ def portal_approval_comment(approval_id):
         abort(400, "Escreva um comentário ou anexe uma referência.")
     db = get_db()
     store_approval_comment(db, approval_id, g.portal_user["company_id"], "client", body, portal_user_id=g.portal_user["id"], attachment=attachment)
+    notify_agency(db, g.portal_user["company_id"], "Novo comentário do cliente", body or "O cliente anexou uma referência.", url_for("approval_detail", approval_id=approval_id))
     db.commit()
     return redirect(url_for("portal_approval_detail", approval_id=approval_id) + "#history")
 
@@ -1438,6 +1483,125 @@ def reports_export():
     response.headers["Content-Disposition"] = f"attachment; filename=relatorio-socialmedia-{start_date}-a-{end_date}.csv"
     response.headers["Cache-Control"] = "private, no-store"
     return response
+
+
+@app.get("/integrations/meta")
+@roles_required("owner", "admin")
+def meta_settings_page():
+    settings_error = None
+    try:
+        settings = load_meta_settings()
+        configured = True
+        graph_version = settings.graph_version
+    except MetaIntegrationError as exc:
+        configured = False
+        graph_version = None
+        settings_error = str(exc)
+    connections = get_db().execute("SELECT id,page_id,page_name,instagram_user_id,instagram_username,token_expires_at,connected_at FROM meta_page_connections WHERE company_id=? ORDER BY page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, connections=connections, error=request.args.get("error"), connected=request.args.get("connected"))
+
+
+@app.post("/integrations/meta/connect")
+@roles_required("owner", "admin")
+def meta_oauth_start():
+    try:
+        settings = load_meta_settings()
+    except MetaIntegrationError as exc:
+        return redirect(url_for("meta_settings_page", error=str(exc)))
+    state = secrets.token_urlsafe(32)
+    session["meta_oauth_state"] = state
+    session["meta_oauth_started"] = int(time.time())
+    return redirect(authorization_url(settings, state))
+
+
+@app.get("/integrations/meta/callback")
+@roles_required("owner", "admin")
+def meta_oauth_callback():
+    expected_state = session.pop("meta_oauth_state", None)
+    started = session.pop("meta_oauth_started", 0)
+    provided_state = request.args.get("state", "")
+    if not expected_state or not provided_state or not hmac.compare_digest(expected_state, provided_state) or time.time() - started > 600:
+        return redirect(url_for("meta_settings_page", error="A sessão de autorização expirou ou não corresponde. Inicie a conexão novamente."))
+    if request.args.get("error"):
+        description = clean(request.args.get("error_description") or request.args.get("error"), 240)
+        return redirect(url_for("meta_settings_page", error="A autorização Meta não foi concluída: " + description))
+    try:
+        settings = load_meta_settings()
+        short_token = exchange_code(request.args.get("code"), settings)
+        long_token = exchange_long_lived_token(short_token.get("access_token"), settings)
+        user_token = long_token.get("access_token")
+        if not user_token:
+            raise MetaIntegrationError("A troca do token do usuário não retornou access_token.")
+        pages = fetch_pages(user_token, settings)
+        if not pages:
+            raise MetaIntegrationError("Nenhuma Página do Facebook foi encontrada. Confira as permissões, o acesso à Página e a conta profissional do Instagram vinculada.")
+        expires_in = long_token.get("expires_in")
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))).isoformat(timespec="seconds") if str(expires_in or "").isdigit() else None
+        db = get_db()
+        for page in pages:
+            db.execute("INSERT INTO meta_page_connections(company_id,connected_by,page_id,page_name,instagram_user_id,instagram_username,page_access_token_encrypted,token_expires_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(company_id,page_id) DO UPDATE SET connected_by=excluded.connected_by,page_name=excluded.page_name,instagram_user_id=excluded.instagram_user_id,instagram_username=excluded.instagram_username,page_access_token_encrypted=excluded.page_access_token_encrypted,token_expires_at=excluded.token_expires_at,updated_at=CURRENT_TIMESTAMP", (g.user["company_id"], g.user["id"], page["page_id"], page["page_name"], page["instagram_user_id"], page["instagram_username"], encrypt_token(page["page_access_token"], settings), expires_at))
+        db.commit()
+    except (MetaIntegrationError, TypeError, ValueError) as exc:
+        get_db().rollback()
+        message = str(exc) if isinstance(exc, MetaIntegrationError) else "A resposta de autorização Meta não estava em um formato válido."
+        return redirect(url_for("meta_settings_page", error=message))
+    return redirect(url_for("meta_settings_page", connected=len(pages)))
+
+
+@app.post("/integrations/meta/<int:connection_id>/disconnect")
+@roles_required("owner", "admin")
+def meta_disconnect(connection_id):
+    db = get_db()
+    connection = db.execute("SELECT id FROM meta_page_connections WHERE id=? AND company_id=?", (connection_id, g.user["company_id"])).fetchone()
+    if not connection:
+        abort(404)
+    db.execute("DELETE FROM meta_page_connections WHERE id=? AND company_id=?", (connection_id, g.user["company_id"]))
+    db.commit()
+    return redirect(url_for("meta_settings_page", disconnected=1))
+
+
+@app.get("/notifications")
+def notification_center():
+
+    if getattr(g, "user", None):
+        rows = get_db().execute("SELECT * FROM notifications WHERE company_id=? AND recipient_type='agency' AND recipient_user_id=? ORDER BY created_at DESC,id DESC LIMIT 100", (g.user["company_id"], g.user["id"])).fetchall()
+        return render_template("notifications.html", notifications=rows, audience="agency")
+    if getattr(g, "portal_user", None):
+        rows = get_db().execute("SELECT * FROM notifications WHERE company_id=? AND recipient_type='client' AND recipient_portal_user_id=? ORDER BY created_at DESC,id DESC LIMIT 100", (g.portal_user["company_id"], g.portal_user["id"])).fetchall()
+        return render_template("notifications.html", notifications=rows, audience="client", portal_user=g.portal_user, client=g.portal_client)
+    return redirect(url_for("login"))
+
+
+@app.post("/notifications/<int:notification_id>/open")
+def notification_open(notification_id):
+    db = get_db()
+    if getattr(g, "user", None):
+        notification = db.execute("SELECT * FROM notifications WHERE id=? AND company_id=? AND recipient_type='agency' AND recipient_user_id=?", (notification_id, g.user["company_id"], g.user["id"])).fetchone()
+    elif getattr(g, "portal_user", None):
+        notification = db.execute("SELECT * FROM notifications WHERE id=? AND company_id=? AND recipient_type='client' AND recipient_portal_user_id=?", (notification_id, g.portal_user["company_id"], g.portal_user["id"])).fetchone()
+    else:
+        return redirect(url_for("login"))
+    if not notification:
+        abort(404)
+    db.execute("UPDATE notifications SET read_at=COALESCE(read_at,CURRENT_TIMESTAMP) WHERE id=?", (notification_id,))
+    db.commit()
+    target = notification["target_url"]
+    if not target.startswith("/") or target.startswith("//"):
+        target = url_for("notification_center")
+    return redirect(target)
+
+
+@app.post("/notifications/read-all")
+def notification_read_all():
+    db = get_db()
+    if getattr(g, "user", None):
+        db.execute("UPDATE notifications SET read_at=CURRENT_TIMESTAMP WHERE company_id=? AND recipient_type='agency' AND recipient_user_id=? AND read_at IS NULL", (g.user["company_id"], g.user["id"]))
+    elif getattr(g, "portal_user", None):
+        db.execute("UPDATE notifications SET read_at=CURRENT_TIMESTAMP WHERE company_id=? AND recipient_type='client' AND recipient_portal_user_id=? AND read_at IS NULL", (g.portal_user["company_id"], g.portal_user["id"]))
+    else:
+        return redirect(url_for("login"))
+    db.commit()
+    return redirect(url_for("notification_center"))
 
 
 @app.get("/feed")
@@ -2002,7 +2166,7 @@ def team_page():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "module": "stage-07", "database": "sqlite"}
+    return {"status": "ok", "module": "stage-08-foundation", "database": "sqlite"}
 
 
 @app.errorhandler(403)
