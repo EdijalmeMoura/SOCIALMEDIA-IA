@@ -140,6 +140,8 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertIn(b"@aurora", page.data)
             self.assertIn(b"Publicar no Facebook", page.data)
             self.assertIn(b"Publicar no Instagram", page.data)
+            self.assertIn(b"Consentimento OAuth capturado em", page.data)
+            self.assertIn("Atualizar conexão e permissões".encode(), page.data)
             self.assertIn(b"recusada", page.data)
             self.assertNotIn(b"page-access-token", page.data)
             with patch.object(app_module, "check_page_connection", return_value={"page_id": "page-7", "page_name": "Página Aurora"}) as check_page:
