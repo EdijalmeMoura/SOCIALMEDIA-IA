@@ -273,6 +273,17 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
         self.assertIn("prazo OAuth passou; teste o Graph".encode(), page.data)
         self.assertIn(b"Publicar via Meta", page.data)
 
+    def test_schedule_surfaces_graph_read_failure_without_claiming_publish_permission(self):
+        _schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)
+        with app_module.app.app_context():
+            app_module.get_db().execute("INSERT INTO meta_connection_checks(company_id,connection_id,checked_by,status,details) VALUES(?,?,?,'failed','Teste de leitura falhou')", (self.company_id, connection_id, self.user_id))
+            app_module.get_db().commit()
+        with patch.dict(os.environ, self.meta_env, clear=False):
+            page = self.client.get("/schedule")
+        self.assertIn("falha na leitura Graph".encode(), page.data)
+        self.assertIn(b"leitura Graph n\xc3\xa3o comprova permiss\xc3\xa3o de publica\xc3\xa7\xc3\xa3o", page.data)
+        self.assertIn(b"Publicar via Meta", page.data)
+
     def test_future_schedule_is_not_sent_to_graph_api(self):
         schedule_id, connection_id = self.make_due_schedule()
         with app_module.app.app_context():
