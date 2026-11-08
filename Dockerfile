@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && groupadd --system app \
-    && useradd --system --gid app --home-dir /nonexistent --shell /usr/sbin/nologin app \
+    && useradd --uid 10001 --gid app --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin app \
     && mkdir -p /data \
     && chown app:app /data
 
