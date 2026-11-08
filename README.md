@@ -103,6 +103,10 @@ Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usa
 
 Publicação automática em redes sociais, métricas de desempenho externo e billing ainda não foram implementados. As ações manuais da Meta descritas abaixo não foram validadas ao vivo neste sandbox; integração e publicação reais dependem de configuração e teste no deploy. Encaminhar um planejamento para produção altera apenas o estado interno. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
 
+## Deploy para validação
+
+Há um caminho Docker de instância única com Waitress, volume persistente e verificações de `SECRET_KEY`/cookie seguro no entrypoint: [`docs/deploy-single-instance.md`](docs/deploy-single-instance.md). Ele não configura domínio, TLS, segredos ou permissões Meta, nem substitui o roteiro de validação ao vivo.
+
 ## Etapa 08 em andamento — fundação Meta e notificações internas
 
 - Notificações dentro do produto para pedidos de revisão, respostas e comentários; destinatários e leitura ficam isolados por agência/conta de portal. Alertas de prazo OAuth Meta (até 7 dias ou prazo informado já passado) são gerados ao abrir Conexões Meta, enviados apenas a owner/admin e deduplicados por Página, prazo e tipo; a agenda também avisa antes da ação manual sem bloquear, pois esse prazo não comprova expiração do token da Página. A agenda também marca tentativas sem resposta há mais de 10 minutos como incertas e notifica owner/admin uma vez; é necessária conferência manual antes de repetir. Não há e-mail nem rotina em background.
