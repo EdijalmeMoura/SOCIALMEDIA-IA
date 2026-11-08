@@ -1,6 +1,6 @@
 # SocialMedia IA
 
-Núcleo inicial do SaaS para agências de social media. A entrega implementa **exclusivamente a Etapa 01**: autenticação, workspaces isolados, clientes, identidade visual, arquivos de referência e permissões de equipe.
+Núcleo incremental do SaaS para agências de social media. As **Etapas 01, 02 e 03** estão implementadas: workspaces isolados, clientes e identidade visual, planejamento editorial com IA e estúdio de criação.
 
 ## Requisitos
 
@@ -32,7 +32,7 @@ Abra `http://localhost:5000`. O primeiro acesso começa pela criação de uma co
 python -m unittest discover -s tests -v
 ```
 
-Os testes criam banco e arquivos temporários e cobrem registro, autenticação/CSRF, criação/edição/exclusão de clientes, identidade de marca, uploads, isolamento entre agências e permissões.
+Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads e exportação.
 
 ## Etapa 01 implementada
 
@@ -58,6 +58,17 @@ Os testes criam banco e arquivos temporários e cobrem registro, autenticação/
 
 Para habilitar: inicie o servidor com `OPENAI_API_KEY` configurada no ambiente. A chave é lida somente no servidor e enviada ao endpoint oficial do provedor; não a coloque no navegador nem no Git. A chamada pode gerar custos na conta vinculada à chave. Os testes simulam somente a resposta HTTP para não fazer chamadas pagas.
 
+## Etapa 03 implementada
+
+- Estúdio por cliente para gerar título, subtítulo, legenda, hashtags, CTA, briefing, sugestão de imagem e composição com base no assunto e na identidade visual.
+- Formatos quadrado (1080×1080), vertical/carrossel/anúncio (1080×1350), Stories (1080×1920), banner (1200×628) e capa (1640×624).
+- Geração de imagens reais via OpenAI Images API (`OPENAI_IMAGE_MODEL`, padrão `gpt-image-1`); sem chave, não há imagem simulada. Saídas são recortadas com Pillow para o tamanho exato da prancheta, sem esticar a imagem.
+- Editor de prancheta no navegador: edição de textos, cores, tamanho, movimentação/redimensionamento dos elementos, logo do cliente, substituição da imagem e exportação PNG/JPG.
+- Salvamento de conteúdo e layout, histórico de versões com restauração e criação de variações via API.
+- Arquivos privados e isolados por agência; geração registrada em `ai_generations`; limite local de 12 chamadas de IA por usuário por minuto.
+
+Texto usa `OPENAI_API_KEY` e `OPENAI_MODEL` (padrão `gpt-4o-mini`). Imagens usam a mesma chave e `OPENAI_IMAGE_MODEL` (padrão `gpt-image-1`). Os dados da marca/assunto necessários à criação e o prompt da imagem são enviados ao provedor configurado. A rede do servidor deve permitir acesso a `api.openai.com`. O arquivo final só existe após exportação no editor.
+
 ## Limites desta entrega
 
-Geração de artes, feed, aprovação do cliente, publicação/agendamento em redes sociais, integrações sociais/pagamentos, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção apenas altera o estado interno e **não** publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+Feed preview, aprovação do cliente, publicação/agendamento em redes sociais, integrações Meta/pagamentos, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção apenas altera o estado interno e **não** publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
