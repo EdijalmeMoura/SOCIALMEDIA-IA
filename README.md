@@ -46,6 +46,18 @@ Os testes criam banco e arquivos temporários e cobrem registro, autenticação/
 - Exclusão de clientes e limpeza de arquivos relacionados.
 - Dashboard inicial responsivo e busca no portfólio.
 
+## Etapa 02 implementada
+
+- Planejamento editorial de 7, 15 ou 30 dias, escolhendo cliente, objetivo, redes, quantidade de publicações e contexto de campanha.
+- Inclusão automática do perfil do negócio, produtos, público, objetivos e identidade visual do cliente no contexto da geração.
+- Integração real com OpenAI Chat Completions via `OPENAI_API_KEY`; `OPENAI_MODEL` é opcional e usa `gpt-4o-mini` por padrão. Sem chave, a geração fica desabilitada e não cria resultados de demonstração.
+- Validação de resposta: quantidade solicitada, redes selecionadas, período e campos editoriais essenciais. O plano e os posts só são persistidos após resposta válida do provedor.
+- Calendário editorial visual por semana, com temas, datas e posts detalhados; planos e publicações ficam isolados por agência e cliente.
+- Edição de posts e datas dentro do período, duplicação, exclusão, regeneração via API e encaminhamento para o fluxo de produção. Esse estado não publica em redes sociais.
+- Auditoria de gerações, modelo e uso de tokens, sem armazenar a chave de API; limite local de 12 chamadas de IA por usuário a cada minuto.
+
+Para habilitar: inicie o servidor com `OPENAI_API_KEY` configurada no ambiente. A chave é lida somente no servidor e enviada ao endpoint oficial do provedor; não a coloque no navegador nem no Git. A chamada pode gerar custos na conta vinculada à chave. Os testes simulam somente a resposta HTTP para não fazer chamadas pagas.
+
 ## Limites desta entrega
 
-O planejamento com IA, geração de artes, feed, aprovação, agendamento, integrações sociais/pagamentos, relatórios e billing não foram iniciados: fazem parte das próximas etapas e não são apresentados como integrações funcionais nesta versão. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.
+Geração de artes, feed, aprovação do cliente, publicação/agendamento em redes sociais, integrações sociais/pagamentos, relatórios e billing ainda não foram implementados. Encaminhar um planejamento para produção apenas altera o estado interno e **não** publica conteúdo. SQLite atende ao núcleo local; para escala de produção multi-instância, migrar para PostgreSQL e armazenamento de arquivos externo.

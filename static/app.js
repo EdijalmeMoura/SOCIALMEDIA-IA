@@ -5,6 +5,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('[data-password-toggle]').forEach(button=>button.addEventListener('click',()=>{const input=button.parentElement.querySelector('input');input.type=input.type==='password'?'text':'password'}));
   document.querySelectorAll('[data-confirm]').forEach(form=>form.addEventListener('submit',event=>{if(!window.confirm(form.dataset.confirm))event.preventDefault()}));
   document.querySelectorAll('[data-submit-form]').forEach(button=>button.addEventListener('click',()=>document.getElementById(button.dataset.submitForm)?.requestSubmit()));
+  const plannerClient=document.getElementById('plannerClient');
+  const clientContext=document.getElementById('clientContext');
+  plannerClient?.addEventListener('change',()=>{const option=plannerClient.selectedOptions[0];if(option?.value&&clientContext){clientContext.textContent=`${option.dataset.segment||'Cliente'} · perfil e identidade visual carregados automaticamente.`}else if(clientContext){clientContext.textContent='A IA usará o cadastro e identidade visual deste cliente.'}});
   const search=document.getElementById('clientSearch');
   search?.addEventListener('input',()=>{const query=search.value.trim().toLowerCase();let visible=0;document.querySelectorAll('.client-card').forEach(card=>{const match=card.dataset.search.includes(query);card.hidden=!match;if(match)visible++});const noResults=document.getElementById('noSearchResults');if(noResults)noResults.hidden=visible>0});
   document.querySelectorAll('[data-color-picker]').forEach(color=>{const text=color.parentElement.querySelector('[data-color-value]');color.addEventListener('input',()=>text.value=color.value);text.addEventListener('input',()=>{if(/^#[\da-f]{6}$/i.test(text.value))color.value=text.value})});
