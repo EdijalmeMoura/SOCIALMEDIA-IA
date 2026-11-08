@@ -2,6 +2,7 @@ import os
 import re
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
@@ -162,6 +163,32 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertEqual(guide.status_code, 200)
             self.assertIn(b"Roteiro de valida\xc3\xa7\xc3\xa3o ao vivo", guide.data)
             guide.close()
+            soon_expiry = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(timespec="seconds")
+            with app_module.app.app_context():
+                db = app_module.get_db()
+                db.execute("UPDATE meta_page_connections SET token_expires_at=? WHERE id=?", (soon_expiry, connection_id))
+                db.commit()
+            self.client.get("/integrations/meta")
+            self.client.get("/integrations/meta")
+            with app_module.app.app_context():
+                db = app_module.get_db()
+                notices = db.execute("SELECT * FROM meta_token_expiry_notices WHERE connection_id=?", (connection_id,)).fetchall()
+                self.assertEqual(len(notices), 1)
+                self.assertEqual(notices[0]["notice_type"], "expiring")
+                notification_count = db.execute("SELECT COUNT(*) FROM notifications WHERE company_id=? AND title='Prazo informado do token Meta se aproxima'", (stored["company_id"],)).fetchone()[0]
+                self.assertEqual(notification_count, 1)
+            expired_at = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+            with app_module.app.app_context():
+                db = app_module.get_db()
+                db.execute("UPDATE meta_page_connections SET token_expires_at=? WHERE id=?", (expired_at, connection_id))
+                db.commit()
+            self.client.get("/integrations/meta")
+            notification_page = self.client.get("/notifications")
+            self.assertIn(b"Prazo informado do token Meta passou", notification_page.data)
+            with app_module.app.app_context():
+                db = app_module.get_db()
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM meta_token_expiry_notices WHERE connection_id=?", (connection_id,)).fetchone()[0], 2)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM notifications WHERE company_id=? AND title='Prazo informado do token Meta passou'", (stored["company_id"],)).fetchone()[0], 1)
             deleted = self.client.post(f"/integrations/meta/{connection_id}/disconnect", data={"csrf_token": self.csrf()})
             self.assertIn("disconnected=1", deleted.location)
             with app_module.app.app_context():

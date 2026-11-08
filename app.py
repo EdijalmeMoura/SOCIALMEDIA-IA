@@ -258,6 +258,15 @@ CREATE TABLE IF NOT EXISTS meta_page_connections (
  UNIQUE(company_id,page_id)
 );
 CREATE INDEX IF NOT EXISTS idx_meta_connections_tenant ON meta_page_connections(company_id,page_name);
+CREATE TABLE IF NOT EXISTS meta_token_expiry_notices (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ connection_id INTEGER NOT NULL REFERENCES meta_page_connections(id) ON DELETE CASCADE,
+ token_expires_at TEXT NOT NULL,
+ notice_type TEXT NOT NULL CHECK(notice_type IN ('expiring','expired')),
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(connection_id,token_expires_at,notice_type)
+);
 CREATE TABLE IF NOT EXISTS meta_connection_permissions (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -439,6 +448,21 @@ def clean(value, limit=5000):
 def notify_agency(db, company_id, title, body, target_url):
     users = db.execute("SELECT id FROM users WHERE company_id=?", (company_id,)).fetchall()
     db.executemany("INSERT INTO notifications(company_id,recipient_type,recipient_user_id,title,body,target_url) VALUES(?,'agency',?,?,?,?)", [(company_id, user["id"], clean(title, 160), clean(body, 500), target_url) for user in users])
+
+
+def notify_meta_token_expiry(db, company_id, connection_id, page_name, expires_at, expiry_utc, notice_type, target_url):
+    inserted = db.execute("INSERT OR IGNORE INTO meta_token_expiry_notices(company_id,connection_id,token_expires_at,notice_type) VALUES(?,?,?,?)", (company_id, connection_id, expires_at, notice_type))
+    if inserted.rowcount != 1:
+        return
+    if notice_type == "expired":
+        title = "Prazo informado do token Meta passou"
+        body = f"{page_name}: prazo OAuth informado passou em {expiry_utc} UTC. Teste a leitura Graph e reconecte se necessário."
+    else:
+        title = "Prazo informado do token Meta se aproxima"
+        body = f"{page_name}: prazo OAuth informado em {expiry_utc} UTC. Confira a conexão e reconecte se necessário."
+    admins = db.execute("SELECT id FROM users WHERE company_id=? AND role IN ('owner','admin')", (company_id,)).fetchall()
+    db.executemany("INSERT INTO notifications(company_id,recipient_type,recipient_user_id,title,body,target_url) VALUES(?,'agency',?,?,?,?)", [(company_id, user["id"], clean(title, 160), clean(body, 500), target_url) for user in admins])
+    db.commit()
 
 
 def notify_client_portal(db, company_id, client_id, title, body, target_url):
@@ -1859,6 +1883,8 @@ def meta_settings_page():
                 item["token_expiry_status"] = "expired" if remaining <= 0 else "expiring" if remaining <= 7 * 24 * 60 * 60 else "future"
         except (TypeError, ValueError):
             pass
+        if item["token_expiry_status"] in {"expiring", "expired"} and item["token_expires_at"]:
+            notify_meta_token_expiry(db, g.user["company_id"], item["id"], item["page_name"], item["token_expires_at"], item["token_expiry_utc"], item["token_expiry_status"], url_for("meta_settings_page"))
         connection_rows.append(item)
     connections = connection_rows
     last_graph_read = db.execute("SELECT mc.checked_at,pc.page_name FROM meta_connection_checks mc JOIN meta_page_connections pc ON pc.id=mc.connection_id AND pc.company_id=mc.company_id WHERE mc.company_id=? AND mc.status='ok' ORDER BY mc.id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
