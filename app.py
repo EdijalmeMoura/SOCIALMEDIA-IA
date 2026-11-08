@@ -450,6 +450,21 @@ def notify_agency(db, company_id, title, body, target_url):
     db.executemany("INSERT INTO notifications(company_id,recipient_type,recipient_user_id,title,body,target_url) VALUES(?,'agency',?,?,?,?)", [(company_id, user["id"], clean(title, 160), clean(body, 500), target_url) for user in users])
 
 
+def meta_token_expiry_info(expires_at, now_utc=None):
+    if not expires_at:
+        return "unknown", None
+    try:
+        expiry = datetime.fromisoformat(expires_at)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        expiry = expiry.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return "unknown", None
+    remaining = (expiry - (now_utc or datetime.now(timezone.utc))).total_seconds()
+    status = "expired" if remaining <= 0 else "expiring" if remaining <= 7 * 24 * 60 * 60 else "future"
+    return status, expiry.strftime("%Y-%m-%d %H:%M")
+
+
 def notify_meta_token_expiry(db, company_id, connection_id, page_name, expires_at, expiry_utc, notice_type, target_url):
     inserted = db.execute("INSERT OR IGNORE INTO meta_token_expiry_notices(company_id,connection_id,token_expires_at,notice_type) VALUES(?,?,?,?)", (company_id, connection_id, expires_at, notice_type))
     if inserted.rowcount != 1:
@@ -1487,7 +1502,12 @@ def schedule_page():
             item["local_input"] = ""
         item["events"] = db.execute("SELECT se.*,u.name AS actor_name FROM schedule_events se LEFT JOIN users u ON u.id=se.actor_user_id WHERE se.scheduled_publication_id=? AND se.company_id=? ORDER BY se.id DESC LIMIT 5", (item["id"], g.user["company_id"])).fetchall()
         schedule_rows.append(item)
-    connections = db.execute("SELECT pc.id,pc.page_id,pc.page_name,pc.instagram_user_id,pc.instagram_username,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='pages_manage_posts') AS facebook_publish_permission,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='instagram_basic') AS instagram_basic_permission,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='instagram_content_publish') AS instagram_publish_permission FROM meta_page_connections pc WHERE pc.company_id=? ORDER BY pc.page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    connection_rows = db.execute("SELECT pc.id,pc.page_id,pc.page_name,pc.instagram_user_id,pc.instagram_username,pc.token_expires_at,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='pages_manage_posts') AS facebook_publish_permission,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='instagram_basic') AS instagram_basic_permission,(SELECT p.status FROM meta_connection_permissions p WHERE p.connection_id=pc.id AND p.company_id=pc.company_id AND p.permission='instagram_content_publish') AS instagram_publish_permission FROM meta_page_connections pc WHERE pc.company_id=? ORDER BY pc.page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    connections = []
+    for row in connection_rows:
+        item = dict(row)
+        item["token_expiry_status"], item["token_expiry_utc"] = meta_token_expiry_info(item["token_expires_at"])
+        connections.append(item)
     try:
         load_meta_settings()
         meta_configured = True
@@ -1870,19 +1890,7 @@ def meta_settings_page():
     connection_rows = []
     for connection in connections:
         item = dict(connection, permissions=permission_map.get(connection["id"], []))
-        item["token_expiry_status"] = "unknown"
-        item["token_expiry_utc"] = None
-        try:
-            expiry = datetime.fromisoformat(item["token_expires_at"]) if item["token_expires_at"] else None
-            if expiry:
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=timezone.utc)
-                expiry = expiry.astimezone(timezone.utc)
-                item["token_expiry_utc"] = expiry.strftime("%Y-%m-%d %H:%M")
-                remaining = (expiry - now_utc).total_seconds()
-                item["token_expiry_status"] = "expired" if remaining <= 0 else "expiring" if remaining <= 7 * 24 * 60 * 60 else "future"
-        except (TypeError, ValueError):
-            pass
+        item["token_expiry_status"], item["token_expiry_utc"] = meta_token_expiry_info(item["token_expires_at"], now_utc)
         if item["token_expiry_status"] in {"expiring", "expired"} and item["token_expires_at"]:
             notify_meta_token_expiry(db, g.user["company_id"], item["id"], item["page_name"], item["token_expires_at"], item["token_expiry_utc"], item["token_expiry_status"], url_for("meta_settings_page"))
         connection_rows.append(item)

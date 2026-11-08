@@ -241,6 +241,18 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
         with app_module.app.app_context():
             self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()[0], 0)
 
+    def test_schedule_warns_about_past_oauth_deadline_without_blocking_manual_publish(self):
+        schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)
+        with app_module.app.app_context():
+            expired_at = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+            app_module.get_db().execute("UPDATE meta_page_connections SET token_expires_at=? WHERE id=?", (expired_at, connection_id))
+            app_module.get_db().commit()
+        with patch.dict(os.environ, self.meta_env, clear=False):
+            page = self.client.get("/schedule")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("prazo OAuth passou; teste o Graph".encode(), page.data)
+        self.assertIn(b"Publicar via Meta", page.data)
+
     def test_future_schedule_is_not_sent_to_graph_api(self):
         schedule_id, connection_id = self.make_due_schedule()
         with app_module.app.app_context():
