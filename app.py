@@ -23,7 +23,7 @@ from flask import Flask, abort, g, jsonify, make_response, redirect, render_temp
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
-from meta_integration import MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, load_meta_settings, publish_facebook_photo, publish_facebook_text, publish_instagram_image
+from meta_integration import MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SOCIALMEDIA_DATA", BASE_DIR / "instance"))
@@ -258,6 +258,16 @@ CREATE TABLE IF NOT EXISTS meta_page_connections (
  UNIQUE(company_id,page_id)
 );
 CREATE INDEX IF NOT EXISTS idx_meta_connections_tenant ON meta_page_connections(company_id,page_name);
+CREATE TABLE IF NOT EXISTS meta_connection_checks (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ connection_id INTEGER NOT NULL REFERENCES meta_page_connections(id) ON DELETE CASCADE,
+ checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ status TEXT NOT NULL CHECK(status IN ('ok','failed')),
+ details TEXT NOT NULL DEFAULT '',
+ checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_connection_checks_latest ON meta_connection_checks(company_id,connection_id,checked_at DESC);
 CREATE TABLE IF NOT EXISTS meta_publication_attempts (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -1670,8 +1680,29 @@ def meta_settings_page():
         configured = False
         graph_version = None
         settings_error = str(exc)
-    connections = get_db().execute("SELECT id,page_id,page_name,instagram_user_id,instagram_username,token_expires_at,connected_at FROM meta_page_connections WHERE company_id=? ORDER BY page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
+    connections = get_db().execute("SELECT pc.id,pc.page_id,pc.page_name,pc.instagram_user_id,pc.instagram_username,pc.token_expires_at,pc.connected_at,(SELECT mc.status FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_status,(SELECT mc.details FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_check_details,(SELECT mc.checked_at FROM meta_connection_checks mc WHERE mc.connection_id=pc.id AND mc.company_id=pc.company_id ORDER BY mc.id DESC LIMIT 1) AS last_checked_at FROM meta_page_connections pc WHERE pc.company_id=? ORDER BY pc.page_name COLLATE NOCASE", (g.user["company_id"],)).fetchall()
     return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, connections=connections, error=request.args.get("error"), connected=request.args.get("connected"))
+
+
+@app.post("/integrations/meta/<int:connection_id>/check")
+@roles_required("owner", "admin")
+def meta_connection_test(connection_id):
+    db = get_db()
+    connection = db.execute("SELECT * FROM meta_page_connections WHERE id=? AND company_id=?", (connection_id, g.user["company_id"])).fetchone()
+    if not connection:
+        abort(404)
+    try:
+        settings = load_meta_settings()
+        page_token = decrypt_token(connection["page_access_token_encrypted"], settings)
+        checked = check_page_connection(connection["page_id"], page_token, settings)
+        status = "ok"
+        details = "Conexão Graph confirmada para " + (checked["page_name"] or connection["page_name"])
+    except MetaIntegrationError as exc:
+        status = "failed"
+        details = clean(str(exc), 500)
+    db.execute("INSERT INTO meta_connection_checks(company_id,connection_id,checked_by,status,details) VALUES(?,?,?,?,?)", (g.user["company_id"], connection_id, g.user["id"], status, details))
+    db.commit()
+    return redirect(url_for("meta_settings_page", connection_check=status))
 
 
 @app.post("/integrations/meta/connect")

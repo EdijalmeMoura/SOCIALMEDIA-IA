@@ -176,6 +176,13 @@ def fetch_pages(user_token, settings):
     return normalized
 
 
+def check_page_connection(page_id, page_access_token, settings):
+    result = _request_json("GET", str(page_id), settings, {"fields": "id,name"}, page_access_token, appsecret_proof=True)
+    if str(result.get("id", "")) != str(page_id):
+        raise MetaIntegrationError("O Graph API respondeu com uma Página diferente da que está salva nesta conexão.")
+    return {"page_id": str(result["id"]), "page_name": str(result.get("name", ""))[:200]}
+
+
 def _validate_public_image_url(image_url):
     parsed = urlparse(image_url or "")
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:

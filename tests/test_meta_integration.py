@@ -113,10 +113,28 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn(b"@aurora", page.data)
             self.assertNotIn(b"page-access-token", page.data)
+            with patch.object(app_module, "check_page_connection", return_value={"page_id": "page-7", "page_name": "Página Aurora"}) as check_page:
+                checked = self.client.post(f"/integrations/meta/{connection_id}/check", data={"csrf_token": self.csrf()})
+            self.assertIn("connection_check=ok", checked.location)
+            check_page.assert_called_once_with("page-7", "page-access-token", meta_integration.load_meta_settings())
+            page = self.client.get("/integrations/meta")
+            self.assertIn(b"Conex\xc3\xa3o confirmada", page.data)
             deleted = self.client.post(f"/integrations/meta/{connection_id}/disconnect", data={"csrf_token": self.csrf()})
             self.assertIn("disconnected=1", deleted.location)
             with app_module.app.app_context():
                 self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_page_connections").fetchone()[0], 0)
+
+    def test_page_connection_check_queries_meta_and_rejects_a_mismatched_page(self):
+        settings = meta_integration.load_meta_settings(self.meta_env)
+        with patch("meta_integration.urllib.request.urlopen", return_value=FakeResponse({"id": "page-7", "name": "Página Aurora"})) as open_url:
+            result = meta_integration.check_page_connection("page-7", "page-token", settings)
+        self.assertEqual(result["page_name"], "Página Aurora")
+        request = open_url.call_args.args[0]
+        self.assertTrue(request.full_url.startswith("https://graph.facebook.com/v22.0/page-7?"))
+        self.assertIn("appsecret_proof=", request.full_url)
+        with patch("meta_integration.urllib.request.urlopen", return_value=FakeResponse({"id": "other-page", "name": "Outra"})):
+            with self.assertRaises(meta_integration.MetaIntegrationError):
+                meta_integration.check_page_connection("page-7", "page-token", settings)
 
     def test_publish_helpers_send_documented_graph_requests_without_leaking_tokens_in_urls(self):
         settings = meta_integration.load_meta_settings(self.meta_env)
