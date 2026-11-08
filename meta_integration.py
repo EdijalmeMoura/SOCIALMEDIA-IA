@@ -194,13 +194,13 @@ def publish_instagram_image(instagram_user_id, page_access_token, image_url, cap
     container = _request_json("POST", f"{urllib.parse.quote(str(instagram_user_id), safe='')}/media", settings, {
         "image_url": image_url,
         "caption": (caption or "")[:2200],
-    }, page_access_token)
+    }, page_access_token, appsecret_proof=True)
     creation_id = container.get("id")
     if not creation_id:
         raise MetaIntegrationError("A Meta não retornou o ID do contêiner de imagem.")
     published = _request_json("POST", f"{urllib.parse.quote(str(instagram_user_id), safe='')}/media_publish", settings, {
         "creation_id": str(creation_id),
-    }, page_access_token)
+    }, page_access_token, appsecret_proof=True)
     if not published.get("id"):
         raise MetaIntegrationError("O resultado da publicação no Instagram é incerto. Confira a conta antes de tentar novamente.", uncertain=True)
     return str(published["id"])
@@ -211,7 +211,7 @@ def publish_facebook_photo(page_id, page_access_token, image_url, caption, setti
     published = _request_json("POST", f"{urllib.parse.quote(str(page_id), safe='')}/photos", settings, {
         "url": image_url,
         "caption": (caption or "")[:63206],
-    }, page_access_token)
+    }, page_access_token, appsecret_proof=True)
     remote_id = published.get("post_id") or published.get("id")
     if not remote_id:
         raise MetaIntegrationError("O resultado da publicação no Facebook é incerto. Confira a Página antes de tentar novamente.", uncertain=True)
@@ -223,7 +223,7 @@ def publish_facebook_text(page_id, page_access_token, message, settings):
         raise MetaIntegrationError("A publicação não tem texto para enviar ao Facebook.")
     published = _request_json("POST", f"{urllib.parse.quote(str(page_id), safe='')}/feed", settings, {
         "message": (message or "")[:63206],
-    }, page_access_token)
+    }, page_access_token, appsecret_proof=True)
     if not published.get("id"):
         raise MetaIntegrationError("O resultado da publicação no Facebook é incerto. Confira a Página antes de tentar novamente.", uncertain=True)
     return str(published["id"])

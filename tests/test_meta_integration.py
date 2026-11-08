@@ -148,16 +148,24 @@ class MetaIntegrationTests(unittest.TestCase):
         self.assertEqual(create_request.full_url, "https://graph.facebook.com/v22.0/ig-user-4/media")
         self.assertEqual(create_request.get_method(), "POST")
         self.assertNotIn("page-token-secret", create_request.full_url)
-        self.assertEqual(urllib.parse.parse_qs(create_request.data.decode())["image_url"], [image_url])
-        self.assertEqual(urllib.parse.parse_qs(publish_request.data.decode())["creation_id"], ["container-1"])
+        create_body = urllib.parse.parse_qs(create_request.data.decode())
+        publish_body = urllib.parse.parse_qs(publish_request.data.decode())
+        self.assertEqual(create_body["image_url"], [image_url])
+        self.assertEqual(publish_body["creation_id"], ["container-1"])
+        self.assertRegex(create_body["appsecret_proof"][0], r"^[a-f0-9]{64}$")
+        self.assertRegex(publish_body["appsecret_proof"][0], r"^[a-f0-9]{64}$")
         with patch("meta_integration.urllib.request.urlopen", return_value=FakeResponse({"post_id": "fb-post-8", "id": "photo-8"})) as open_url:
             result = meta_integration.publish_facebook_photo("page-2", "page-token-secret", image_url, "Legenda", settings)
         self.assertEqual(result, "fb-post-8")
         self.assertEqual(open_url.call_args.args[0].full_url, "https://graph.facebook.com/v22.0/page-2/photos")
+        photo_body = urllib.parse.parse_qs(open_url.call_args.args[0].data.decode())
+        self.assertRegex(photo_body["appsecret_proof"][0], r"^[a-f0-9]{64}$")
         with patch("meta_integration.urllib.request.urlopen", return_value=FakeResponse({"id": "fb-post-10"})) as open_url:
             result = meta_integration.publish_facebook_text("page-2", "page-token-secret", "Texto", settings)
         self.assertEqual(result, "fb-post-10")
         self.assertEqual(open_url.call_args.args[0].full_url, "https://graph.facebook.com/v22.0/page-2/feed")
+        text_body = urllib.parse.parse_qs(open_url.call_args.args[0].data.decode())
+        self.assertRegex(text_body["appsecret_proof"][0], r"^[a-f0-9]{64}$")
 
     def test_graph_timeout_is_marked_as_uncertain_to_prevent_blind_retry(self):
         settings = meta_integration.load_meta_settings(self.meta_env)
