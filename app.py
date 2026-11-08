@@ -23,7 +23,7 @@ from flask import Flask, abort, g, jsonify, make_response, redirect, render_temp
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
-from meta_integration import META_SCOPES, MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, fetch_permissions, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image
+from meta_integration import META_SCOPES, MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, fetch_permissions, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image, check_graph_tls_connectivity
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SOCIALMEDIA_DATA", BASE_DIR / "instance"))
@@ -277,6 +277,15 @@ CREATE TABLE IF NOT EXISTS meta_public_media_checks (
  checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_meta_public_media_checks_latest ON meta_public_media_checks(company_id,checked_at DESC);
+CREATE TABLE IF NOT EXISTS meta_graph_connectivity_checks (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+ checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+ status TEXT NOT NULL CHECK(status IN ('ok','failed')),
+ details TEXT NOT NULL DEFAULT '',
+ checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_graph_connectivity_checks_latest ON meta_graph_connectivity_checks(company_id,checked_at DESC);
 CREATE TABLE IF NOT EXISTS meta_connection_permissions (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -1941,9 +1950,10 @@ def meta_settings_page():
         public_media_base_url = ""
         public_media_url_ready = False
     last_public_media_check = db.execute("SELECT base_url,status,details,checked_at FROM meta_public_media_checks WHERE company_id=? ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
+    last_graph_tls_check = db.execute("SELECT status,details,checked_at FROM meta_graph_connectivity_checks WHERE company_id=? ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
     session_secret = str(app.config.get("SECRET_KEY") or "")
     session_security_ready = bool(app.config.get("SESSION_COOKIE_SECURE")) and len(session_secret) >= 32 and session_secret != "dev-only-change-this-secret-before-deploying"
-    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, public_media_base_url=public_media_base_url, session_security_ready=session_security_ready, last_public_media_check=last_public_media_check, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
+    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, public_media_base_url=public_media_base_url, session_security_ready=session_security_ready, last_public_media_check=last_public_media_check, last_graph_tls_check=last_graph_tls_check, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
 
 
 @app.get("/integrations/meta/validation-guide")
@@ -1984,6 +1994,23 @@ def meta_public_media_check():
     db.execute("INSERT INTO meta_public_media_checks(company_id,checked_by,base_url,status,details) VALUES(?,?,?,?,?)", (g.user["company_id"], g.user["id"], base_url, status, clean(details, 500)))
     db.commit()
     return redirect(url_for("meta_settings_page", media_check=status))
+
+
+@app.post("/integrations/meta/graph-connectivity-check")
+@roles_required("owner", "admin")
+def meta_graph_connectivity_check():
+    status = "failed"
+    details = "O servidor não concluiu a conexão TLS com graph.facebook.com. Confira DNS, firewall e acesso HTTPS de saída."
+    try:
+        tls_version = check_graph_tls_connectivity(timeout=5)
+        status = "ok"
+        details = f"Handshake TLS confirmado com graph.facebook.com ({clean(tls_version, 30)}). Isso não valida OAuth, permissões nem publicação."
+    except (OSError, TimeoutError, ValueError):
+        pass
+    db = get_db()
+    db.execute("INSERT INTO meta_graph_connectivity_checks(company_id,checked_by,status,details) VALUES(?,?,?,?)", (g.user["company_id"], g.user["id"], status, clean(details, 500)))
+    db.commit()
+    return redirect(url_for("meta_settings_page", graph_check=status))
 
 
 @app.post("/integrations/meta/<int:connection_id>/check")

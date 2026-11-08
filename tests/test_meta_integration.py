@@ -41,6 +41,34 @@ class FakeProbeResponse:
         return self.payload[:size] if size >= 0 else self.payload
 
 
+class FakeTLSStream:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def version(self):
+        return "TLSv1.3"
+
+
+class FakeSocket:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class FakeTLSContext:
+    def __init__(self):
+        self.hostname = None
+
+    def wrap_socket(self, connection, server_hostname):
+        self.hostname = server_hostname
+        return FakeTLSStream()
+
+
 class FakeResponse:
     def __init__(self, payload):
         import json
@@ -216,6 +244,32 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertIn("disconnected=1", deleted.location)
             with app_module.app.app_context():
                 self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_page_connections").fetchone()[0], 0)
+
+    def test_graph_tls_probe_uses_verified_hostname_and_timeout(self):
+        socket = FakeSocket()
+        context = FakeTLSContext()
+        with patch.object(meta_integration.socket, "create_connection", return_value=socket) as connect, patch.object(meta_integration.ssl, "create_default_context", return_value=context):
+            result = meta_integration.check_graph_tls_connectivity(timeout=3)
+        self.assertEqual(result, "TLSv1.3")
+        connect.assert_called_once_with(("graph.facebook.com", 443), timeout=3)
+        self.assertEqual(context.hostname, "graph.facebook.com")
+
+    def test_meta_graph_tls_button_records_success_and_failure_without_secrets(self):
+        with patch.object(app_module, "check_graph_tls_connectivity", return_value="TLSv1.3") as check_tls:
+            success = self.client.post("/integrations/meta/graph-connectivity-check", data={"csrf_token": self.csrf()})
+        self.assertIn("graph_check=ok", success.location)
+        check_tls.assert_called_once_with(timeout=5)
+        self.assertIn(b"Handshake TLS com o Graph da Meta confirmado", self.client.get(success.location).data)
+        with patch.object(app_module, "check_graph_tls_connectivity", side_effect=OSError("sensitive socket details")):
+            failure = self.client.post("/integrations/meta/graph-connectivity-check", data={"csrf_token": self.csrf()})
+        self.assertIn("graph_check=failed", failure.location)
+        failure_page = self.client.get(failure.location)
+        self.assertIn(b"O servidor n\xc3\xa3o alcan\xc3\xa7ou graph.facebook.com por TLS", failure_page.data)
+        self.assertNotIn(b"sensitive socket details", failure_page.data)
+        with app_module.app.app_context():
+            rows = app_module.get_db().execute("SELECT status,details FROM meta_graph_connectivity_checks ORDER BY id").fetchall()
+            self.assertEqual([row["status"] for row in rows], ["ok", "failed"])
+            self.assertNotIn("sensitive socket details", " ".join(row["details"] for row in rows))
 
     def test_public_media_probe_requires_exact_jpeg_from_same_url(self):
         image_url = "https://agency.example.test/meta/media/probe.jpg?signature=test"

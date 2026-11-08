@@ -10,6 +10,8 @@ import hmac
 import json
 import os
 import re
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -30,6 +32,16 @@ GRAPH_HOST = "https://graph.facebook.com"
 FACEBOOK_HOST = "https://www.facebook.com"
 INSTAGRAM_CONTAINER_MAX_CHECKS = 3
 INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS = 2
+
+
+def check_graph_tls_connectivity(timeout=5):
+    hostname = urlparse(GRAPH_HOST).hostname
+    if not hostname:
+        raise ValueError("Graph host is invalid")
+    context = ssl.create_default_context()
+    with socket.create_connection((hostname, 443), timeout=timeout) as connection:
+        with context.wrap_socket(connection, server_hostname=hostname) as secure_connection:
+            return secure_connection.version() or "TLS"
 
 
 class MetaIntegrationError(Exception):
