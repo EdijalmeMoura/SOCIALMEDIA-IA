@@ -40,3 +40,42 @@ jobs:
 
       - name: Build Docker image
         run: docker build --tag socialmedia-ia:ci .
+
+      - name: Smoke-test production container
+        env:
+          SECRET_KEY: ci-only-secret-not-for-production-0123456789abc
+          COOKIE_SECURE: "1"
+        run: |
+          docker run --detach --name socialmedia-ia-ci \
+            --publish 127.0.0.1:5051:5000 \
+            --tmpfs /data:rw,size=64m,uid=10001,gid=10001 \
+            --env SECRET_KEY --env COOKIE_SECURE \
+            socialmedia-ia:ci
+          python - <<'PY'
+          import json
+          import subprocess
+          import time
+          import urllib.error
+          import urllib.request
+
+          deadline = time.monotonic() + 25
+          last_error = None
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:5051/health", timeout=2) as response:
+                      payload = json.loads(response.read())
+                  if payload.get("status") != "ok" or payload.get("database") != "sqlite":
+                      raise RuntimeError(f"Unexpected health response: {payload!r}")
+                  print("Production container health check passed.")
+                  break
+              except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                  last_error = exc
+                  time.sleep(0.5)
+          else:
+              subprocess.run(["docker", "logs", "socialmedia-ia-ci"], check=False)
+              raise RuntimeError(f"Container did not become healthy: {last_error}")
+          PY
+
+      - name: Clean up smoke-test container
+        if: always()
+        run: docker rm --force socialmedia-ia-ci || true

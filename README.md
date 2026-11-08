@@ -105,7 +105,7 @@ Publicação automática em redes sociais, métricas de desempenho externo e bil
 
 ## Deploy para validação
 
-Há um caminho Docker de instância única com Waitress, volume persistente e verificações de `SECRET_KEY`/cookie seguro no entrypoint: [`docs/deploy-single-instance.md`](docs/deploy-single-instance.md). A CI executa a suíte e tenta construir essa imagem em pushes e pull requests. O deploy não configura domínio, TLS, segredos ou permissões Meta, nem substitui o roteiro de validação ao vivo.
+Há um caminho Docker de instância única com Waitress, volume persistente e verificações de `SECRET_KEY`/cookie seguro no entrypoint: [`docs/deploy-single-instance.md`](docs/deploy-single-instance.md). A CI executa a suíte, constrói a imagem e faz um smoke test do contêiner em pushes e pull requests. O deploy não configura domínio, TLS, segredos ou permissões Meta, nem substitui o roteiro de validação ao vivo.
 
 ## Etapa 08 em andamento — fundação Meta e notificações internas
 
