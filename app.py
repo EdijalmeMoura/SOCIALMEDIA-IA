@@ -1842,7 +1842,25 @@ def meta_settings_page():
     permission_map = {}
     for permission in permission_rows:
         permission_map.setdefault(permission["connection_id"], []).append(dict(permission))
-    connections = [dict(connection, permissions=permission_map.get(connection["id"], [])) for connection in connections]
+    now_utc = datetime.now(timezone.utc)
+    connection_rows = []
+    for connection in connections:
+        item = dict(connection, permissions=permission_map.get(connection["id"], []))
+        item["token_expiry_status"] = "unknown"
+        item["token_expiry_utc"] = None
+        try:
+            expiry = datetime.fromisoformat(item["token_expires_at"]) if item["token_expires_at"] else None
+            if expiry:
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                expiry = expiry.astimezone(timezone.utc)
+                item["token_expiry_utc"] = expiry.strftime("%Y-%m-%d %H:%M")
+                remaining = (expiry - now_utc).total_seconds()
+                item["token_expiry_status"] = "expired" if remaining <= 0 else "expiring" if remaining <= 7 * 24 * 60 * 60 else "future"
+        except (TypeError, ValueError):
+            pass
+        connection_rows.append(item)
+    connections = connection_rows
     last_graph_read = db.execute("SELECT mc.checked_at,pc.page_name FROM meta_connection_checks mc JOIN meta_page_connections pc ON pc.id=mc.connection_id AND pc.company_id=mc.company_id WHERE mc.company_id=? AND mc.status='ok' ORDER BY mc.id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
     last_facebook_publication = db.execute("SELECT remote_publication_id,created_at FROM meta_publication_attempts WHERE company_id=? AND network='Facebook' AND status='published' ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()
     last_instagram_publication = db.execute("SELECT remote_publication_id,created_at FROM meta_publication_attempts WHERE company_id=? AND network='Instagram' AND status='published' ORDER BY id DESC LIMIT 1", (g.user["company_id"],)).fetchone()

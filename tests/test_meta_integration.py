@@ -139,6 +139,7 @@ class MetaIntegrationTests(unittest.TestCase):
             page = self.client.get("/integrations/meta")
             self.assertEqual(page.status_code, 200)
             self.assertIn(b"@aurora", page.data)
+            self.assertIn(b"Prazo registrado do token OAuth:", page.data)
             self.assertIn(b"O que falta para validar a integra\xc3\xa7\xc3\xa3o", page.data)
             self.assertIn(b"Seguran\xc3\xa7a da sess\xc3\xa3o", page.data)
             self.assertIn(b"Pendente no deploy", page.data)
