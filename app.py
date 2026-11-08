@@ -465,6 +465,11 @@ def meta_token_expiry_info(expires_at, now_utc=None):
     return status, expiry.strftime("%Y-%m-%d %H:%M")
 
 
+def notify_meta_admins(db, company_id, title, body, target_url):
+    admins = db.execute("SELECT id FROM users WHERE company_id=? AND role IN ('owner','admin')", (company_id,)).fetchall()
+    db.executemany("INSERT INTO notifications(company_id,recipient_type,recipient_user_id,title,body,target_url) VALUES(?,'agency',?,?,?,?)", [(company_id, user["id"], clean(title, 160), clean(body, 500), target_url) for user in admins])
+
+
 def notify_meta_token_expiry(db, company_id, connection_id, page_name, expires_at, expiry_utc, notice_type, target_url):
     inserted = db.execute("INSERT OR IGNORE INTO meta_token_expiry_notices(company_id,connection_id,token_expires_at,notice_type) VALUES(?,?,?,?)", (company_id, connection_id, expires_at, notice_type))
     if inserted.rowcount != 1:
@@ -475,8 +480,7 @@ def notify_meta_token_expiry(db, company_id, connection_id, page_name, expires_a
     else:
         title = "Prazo informado do token Meta se aproxima"
         body = f"{page_name}: prazo OAuth informado em {expiry_utc} UTC. Confira a conexão e reconecte se necessário."
-    admins = db.execute("SELECT id FROM users WHERE company_id=? AND role IN ('owner','admin')", (company_id,)).fetchall()
-    db.executemany("INSERT INTO notifications(company_id,recipient_type,recipient_user_id,title,body,target_url) VALUES(?,'agency',?,?,?,?)", [(company_id, user["id"], clean(title, 160), clean(body, 500), target_url) for user in admins])
+    notify_meta_admins(db, company_id, title, body, target_url)
     db.commit()
 
 
@@ -1480,7 +1484,12 @@ def schedule_page():
         item["snapshot"] = json.loads(item["snapshot_json"])
         item["network"] = item["snapshot"].get("network", "")
         approvals.append(item)
-    db.execute("UPDATE meta_publication_attempts SET status='unknown',error_message='A tentativa ficou sem resposta do servidor. Confira a conta Meta antes de qualquer nova tentativa.',updated_at=CURRENT_TIMESTAMP WHERE company_id=? AND status='publishing' AND datetime(created_at)<datetime('now','-10 minutes')", (g.user["company_id"],))
+    stale_attempts = db.execute("SELECT ma.id,ma.network,a.title FROM meta_publication_attempts ma JOIN scheduled_publications sp ON sp.id=ma.schedule_id AND sp.company_id=ma.company_id JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id WHERE ma.company_id=? AND ma.status='publishing' AND datetime(ma.created_at)<datetime('now','-10 minutes') ORDER BY ma.id", (g.user["company_id"],)).fetchall()
+    for attempt in stale_attempts:
+        stale_message = "A tentativa ficou sem resposta do servidor. Confira a conta Meta antes de qualquer nova tentativa."
+        updated = db.execute("UPDATE meta_publication_attempts SET status='unknown',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND status='publishing'", (stale_message, attempt["id"], g.user["company_id"]))
+        if updated.rowcount == 1:
+            notify_meta_admins(db, g.user["company_id"], "Publicação Meta ficou sem conclusão", f"{attempt['title']} · {attempt['network']} · tentativa #{attempt['id']} está incerta após 10 minutos. Confira a conta Meta antes de tentar novamente.", url_for("schedule_page"))
     db.commit()
     schedules = db.execute("SELECT sp.*,a.title AS approval_title,a.source_type,a.snapshot_json,a.status AS approval_status,c.company_name,c.trade_name,(SELECT ma.status FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_status,(SELECT ma.remote_publication_id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_remote_id,(SELECT ma.error_message FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_error,(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AS meta_attempt_id,(SELECT mr.outcome FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution,(SELECT mr.remote_publication_id FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution_remote_id,(SELECT mr.note FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution_note,(SELECT u.name FROM meta_publication_reconciliations mr LEFT JOIN users u ON u.id=mr.reconciled_by WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution_by,(SELECT mr.created_at FROM meta_publication_reconciliations mr WHERE mr.attempt_id=(SELECT ma.id FROM meta_publication_attempts ma WHERE ma.schedule_id=sp.id AND ma.company_id=sp.company_id ORDER BY ma.id DESC LIMIT 1) AND mr.company_id=sp.company_id ORDER BY mr.id DESC LIMIT 1) AS meta_resolution_at FROM scheduled_publications sp JOIN approvals a ON a.id=sp.approval_id AND a.company_id=sp.company_id JOIN clients c ON c.id=sp.client_id AND c.company_id=sp.company_id WHERE sp.company_id=? ORDER BY CASE sp.status WHEN 'scheduled' THEN 0 ELSE 1 END,sp.scheduled_at_utc,sp.id DESC LIMIT 100", (g.user["company_id"],)).fetchall()
     schedule_rows = []

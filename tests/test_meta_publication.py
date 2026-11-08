@@ -241,6 +241,26 @@ class MetaManualPublishingRouteTests(unittest.TestCase):
         with app_module.app.app_context():
             self.assertEqual(app_module.get_db().execute("SELECT COUNT(*) FROM meta_publication_attempts WHERE schedule_id=?", (schedule_id,)).fetchone()[0], 0)
 
+    def test_stale_meta_attempt_becomes_unknown_and_notifies_admin_only_once(self):
+        schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)
+        with app_module.app.app_context():
+            db = app_module.get_db()
+            created_at = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat(timespec="seconds")
+            attempt_id = db.execute("INSERT INTO meta_publication_attempts(company_id,schedule_id,connection_id,attempted_by,network,status,created_at) VALUES(?,?,?,?,?,'publishing',?)", (self.company_id, schedule_id, connection_id, self.user_id, "Facebook", created_at)).lastrowid
+            db.commit()
+        first = self.client.get("/schedule")
+        second = self.client.get("/schedule")
+        self.assertIn(b"Resultado incerto", first.data)
+        self.assertIn(b"Conferir resultado na Meta", first.data)
+        self.assertIn(b"Publica\xc3\xa7\xc3\xa3o Meta ficou sem conclus\xc3\xa3o", self.client.get("/notifications").data)
+        with app_module.app.app_context():
+            db = app_module.get_db()
+            status = db.execute("SELECT status FROM meta_publication_attempts WHERE id=?", (attempt_id,)).fetchone()[0]
+            notice_count = db.execute("SELECT COUNT(*) FROM notifications WHERE company_id=? AND title='Publicação Meta ficou sem conclusão'", (self.company_id,)).fetchone()[0]
+            self.assertEqual(status, "unknown")
+            self.assertEqual(notice_count, 1)
+        self.assertEqual(second.status_code, 200)
+
     def test_schedule_warns_about_past_oauth_deadline_without_blocking_manual_publish(self):
         schedule_id, connection_id = self.make_due_schedule(network="Facebook", with_image=False)
         with app_module.app.app_context():
