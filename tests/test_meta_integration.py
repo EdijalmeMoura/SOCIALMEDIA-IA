@@ -50,6 +50,7 @@ class MetaIntegrationTests(unittest.TestCase):
             "META_REDIRECT_URI": "https://agency.example.test/integrations/meta/callback",
             "META_GRAPH_VERSION": "v22.0",
             "META_TOKEN_ENCRYPTION_KEY": self.encryption_key,
+            "META_PUBLIC_BASE_URL": "https://agency.example.test",
         }
 
     def tearDown(self):
@@ -142,6 +143,7 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertIn(b"Publicar no Instagram", page.data)
             self.assertIn(b"Consentimento OAuth capturado em", page.data)
             self.assertIn("Atualizar conexão e permissões".encode(), page.data)
+            self.assertIn("acessibilidade externa não foi testada".encode(), page.data)
             self.assertIn(b"recusada", page.data)
             self.assertNotIn(b"page-access-token", page.data)
             with patch.object(app_module, "check_page_connection", return_value={"page_id": "page-7", "page_name": "Página Aurora"}) as check_page:
@@ -258,6 +260,7 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn(b"Configura\xc3\xa7\xc3\xa3o pendente", page.data)
             self.assertIn(b"META_APP_ID", page.data)
+            self.assertIn(b"origem HTTPS pendente", page.data)
             self.assertNotIn(b"test-app-secret-not-real", page.data)
 
     def test_oauth_callback_rejects_state_mismatch_without_graph_calls(self):

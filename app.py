@@ -1843,7 +1843,11 @@ def meta_settings_page():
     for permission in permission_rows:
         permission_map.setdefault(permission["connection_id"], []).append(dict(permission))
     connections = [dict(connection, permissions=permission_map.get(connection["id"], [])) for connection in connections]
-    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, connections=connections, error=request.args.get("error"), connected=request.args.get("connected"))
+    try:
+        public_media_url_ready = bool(meta_public_base_url())
+    except MetaIntegrationError:
+        public_media_url_ready = False
+    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, connections=connections, error=request.args.get("error"), connected=request.args.get("connected"))
 
 
 @app.post("/integrations/meta/<int:connection_id>/check")
