@@ -140,6 +140,8 @@ class MetaIntegrationTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn(b"@aurora", page.data)
             self.assertIn(b"O que falta para validar a integra\xc3\xa7\xc3\xa3o", page.data)
+            self.assertIn(b"Seguran\xc3\xa7a da sess\xc3\xa3o", page.data)
+            self.assertIn(b"Pendente no deploy", page.data)
             self.assertIn(b"Facebook \xc2\xb7 publica\xc3\xa7\xc3\xa3o real", page.data)
             self.assertIn(b"Ainda n\xc3\xa3o comprovada", page.data)
             self.assertIn(b"Publicar no Facebook", page.data)

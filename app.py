@@ -1850,7 +1850,9 @@ def meta_settings_page():
         public_media_url_ready = bool(meta_public_base_url())
     except MetaIntegrationError:
         public_media_url_ready = False
-    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
+    session_secret = str(app.config.get("SECRET_KEY") or "")
+    session_security_ready = bool(app.config.get("SESSION_COOKIE_SECURE")) and len(session_secret) >= 32 and session_secret != "dev-only-change-this-secret-before-deploying"
+    return render_template("meta_integrations.html", configured=configured, graph_version=graph_version, settings_error=settings_error, public_media_url_ready=public_media_url_ready, session_security_ready=session_security_ready, connections=connections, last_graph_read=last_graph_read, last_facebook_publication=last_facebook_publication, last_instagram_publication=last_instagram_publication, error=request.args.get("error"), connected=request.args.get("connected"))
 
 
 @app.get("/integrations/meta/validation-guide")
