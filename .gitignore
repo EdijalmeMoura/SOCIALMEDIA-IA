@@ -3,5 +3,7 @@ __pycache__/
 .venv/
 venv/
 instance/
+backups/
+
 .pytest_cache/
 .coverage

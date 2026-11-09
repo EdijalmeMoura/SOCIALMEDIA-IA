@@ -34,6 +34,7 @@ jobs:
           python -m py_compile app.py meta_integration.py tests/*.py
           node --check static/app.js
           sh -n docker-entrypoint.sh
+          sh -n scripts/backup-data.sh
 
       - name: Run test suite
         run: python -m unittest discover -s tests -v

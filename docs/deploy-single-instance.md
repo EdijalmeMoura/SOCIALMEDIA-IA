@@ -25,7 +25,24 @@ Este caminho Docker é para uma **instância única** com SQLite e armazenamento
 
    `META_*` pode ficar ausente enquanto a integração Meta não for usada; `SECRET_KEY` e `COOKIE_SECURE=1` são exigidos pelo entrypoint de produção. Não exponha diretamente a porta HTTP do contêiner à internet. O proxy deve encaminhar para `127.0.0.1:5000`, servir HTTPS e repassar corretamente o host original.
 
-4. Monte sempre o volume persistente `/data` e faça backup coordenado do SQLite e dos uploads. A imagem executa como usuário não root e inicia Waitress com quatro threads. O health check em `/health` confirma uma consulta SQLite e retorna HTTP 503 se o banco estiver indisponível.
+4. Monte sempre o volume persistente `/data` e faça backup coordenado do SQLite e dos uploads. Use `scripts/backup-data.sh /caminho/seguro` para criar um arquivo `.tar.gz`: o script para temporariamente o serviço, arquiva o volume inteiro em ponto consistente e reinicia o serviço mesmo se o arquivamento falhar. É necessário Docker Compose e acesso à imagem auxiliar `alpine:3.21.3`. Trate os arquivos como dados sensíveis, armazene cópias fora do host e mantenha um cronograma de retenção; a pasta padrão `backups/` fica ignorada pelo Git. Faça um exercício de restauração em volume isolado antes de depender do backup. As chaves `SECRET_KEY` e `META_TOKEN_ENCRYPTION_KEY` devem ser armazenadas em backup seguro separado: o volume de dados sozinho não basta para recuperar sessões/links e tokens Meta criptografados. A imagem executa como usuário não root e inicia Waitress com quatro threads. O health check em `/health` confirma uma consulta SQLite e retorna HTTP 503 se o banco estiver indisponível.
+
+Para restaurar um arquivo confiável, pare o serviço e extraia-o sobre o volume persistente (esta operação substitui os dados atuais; faça outro backup antes):
+
+```sh
+ARCHIVE=/caminho/seguro/socialmedia-ia-AAAAMMDDTHHMMSSZ.tar.gz
+ARCHIVE_DIR=$(dirname "$ARCHIVE")
+ARCHIVE_NAME=$(basename "$ARCHIVE")
+docker compose -f compose.yaml stop web
+docker run --rm \
+  --mount type=volume,source=socialmedia-ia-data,target=/data \
+  --mount "type=bind,source=$ARCHIVE_DIR,target=/backup,readonly" \
+  -e ARCHIVE_NAME="$ARCHIVE_NAME" alpine:3.21.3 \
+  sh -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -xzf "/backup/$ARCHIVE_NAME" -C /data'
+docker compose -f compose.yaml start web
+```
+
+Se a extração falhar, mantenha o serviço parado e investigue antes de iniciar. Nunca restaure arquivos recebidos de fonte não confiável.
 
 ## Variante Docker Compose
 
