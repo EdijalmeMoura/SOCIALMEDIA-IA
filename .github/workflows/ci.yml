@@ -52,9 +52,10 @@ jobs:
           SECRET_KEY: ci-only-secret-not-for-production-0123456789abc
           COOKIE_SECURE: "1"
         run: |
+          docker volume create socialmedia-ia-ci-data
           docker run --detach --name socialmedia-ia-ci \
             --publish 127.0.0.1:5051:5000 \
-            --tmpfs /data:rw,size=64m,uid=10001,gid=10001 \
+            --volume socialmedia-ia-ci-data:/data \
             --env SECRET_KEY --env COOKIE_SECURE \
             socialmedia-ia:ci
           python - <<'PY'
@@ -64,24 +65,35 @@ jobs:
           import urllib.error
           import urllib.request
 
-          deadline = time.monotonic() + 25
-          last_error = None
-          while time.monotonic() < deadline:
-              try:
-                  with urllib.request.urlopen("http://127.0.0.1:5051/health", timeout=2) as response:
-                      payload = json.loads(response.read())
-                  if payload.get("status") != "ok" or payload.get("database") != "sqlite":
-                      raise RuntimeError(f"Unexpected health response: {payload!r}")
-                  print("Production container health check passed.")
-                  break
-              except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                  last_error = exc
-                  time.sleep(0.5)
-          else:
+          def check_runtime():
+              deadline = time.monotonic() + 25
+              last_error = None
+              while time.monotonic() < deadline:
+                  try:
+                      with urllib.request.urlopen("http://127.0.0.1:5051/health", timeout=2) as response:
+                          payload = json.loads(response.read())
+                      if payload.get("status") != "ok" or payload.get("database") != "sqlite":
+                          raise RuntimeError(f"Unexpected health response: {payload!r}")
+                      subprocess.run([
+                          "docker", "exec", "socialmedia-ia-ci", "python", "-c",
+                          "import sqlite3; db=sqlite3.connect('/data/socialmedia.db'); assert db.execute(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='companies'\").fetchone(); db.close()",
+                      ], check=True)
+                      print("Container health and persistent SQLite volume passed.")
+                      return
+                  except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                      last_error = exc
+                      time.sleep(0.5)
               subprocess.run(["docker", "logs", "socialmedia-ia-ci"], check=False)
               raise RuntimeError(f"Container did not become healthy: {last_error}")
+
+          check_runtime()
+          subprocess.run(["docker", "stop", "socialmedia-ia-ci"], check=True)
+          subprocess.run(["docker", "start", "socialmedia-ia-ci"], check=True)
+          check_runtime()
           PY
 
-      - name: Clean up smoke-test container
+      - name: Clean up smoke-test container and volume
         if: always()
-        run: docker rm --force socialmedia-ia-ci || true
+        run: |
+          docker rm --force socialmedia-ia-ci || true
+          docker volume rm socialmedia-ia-ci-data || true
