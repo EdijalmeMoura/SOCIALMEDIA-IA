@@ -112,6 +112,18 @@ class MetaIntegrationTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             return session.get("csrf_token")
 
+    def test_health_checks_sqlite_and_hides_database_errors(self):
+        healthy = self.client.get("/health")
+        self.assertEqual(healthy.status_code, 200)
+        self.assertEqual(healthy.get_json()["database"], "sqlite")
+        with self.client.session_transaction() as session:
+            session.clear()
+        with patch.object(app_module, "get_db", side_effect=app_module.sqlite3.OperationalError("sensitive database path")):
+            unavailable = self.client.get("/health")
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(unavailable.get_json()["database"], "unavailable")
+        self.assertNotIn(b"sensitive database path", unavailable.data)
+
     def test_meta_callback_uri_requires_exact_host_and_route(self):
         valid = "https://agency.example.test/integrations/meta/callback"
         self.assertTrue(app_module.meta_callback_uri_matches(valid, "agency.example.test"))

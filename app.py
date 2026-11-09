@@ -2721,6 +2721,10 @@ def team_page():
 
 @app.get("/health")
 def health():
+    try:
+        get_db().execute("SELECT 1").fetchone()
+    except sqlite3.Error:
+        return {"status": "error", "module": "stage-08-foundation", "database": "unavailable"}, 503
     return {"status": "ok", "module": "stage-08-foundation", "database": "sqlite"}
 
 

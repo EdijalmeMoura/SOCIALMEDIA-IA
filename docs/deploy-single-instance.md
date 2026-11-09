@@ -25,7 +25,7 @@ Este caminho Docker é para uma **instância única** com SQLite e armazenamento
 
    `META_*` pode ficar ausente enquanto a integração Meta não for usada; `SECRET_KEY` e `COOKIE_SECURE=1` são exigidos pelo entrypoint de produção. Não exponha diretamente a porta HTTP do contêiner à internet. O proxy deve encaminhar para `127.0.0.1:5000`, servir HTTPS e repassar corretamente o host original.
 
-4. Monte sempre o volume persistente `/data` e faça backup coordenado do SQLite e dos uploads. A imagem executa como usuário não root, inicia Waitress com quatro threads e expõe health check em `/health`.
+4. Monte sempre o volume persistente `/data` e faça backup coordenado do SQLite e dos uploads. A imagem executa como usuário não root e inicia Waitress com quatro threads. O health check em `/health` confirma uma consulta SQLite e retorna HTTP 503 se o banco estiver indisponível.
 
 ## Depois do deploy
 
