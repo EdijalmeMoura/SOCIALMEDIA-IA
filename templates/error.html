@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block title %}{{ code }} · SocialMedia IA{% endblock %}{% block content %}<div class="empty-state error-page"><div class="error-code">{{ code }}</div><h1>Ops, algo saiu do caminho.</h1><p>{{ message }}</p><a class="button primary" href="{{ url_for('dashboard') if g.user else url_for('login') }}">Voltar ao início <span>→</span></a></div>{% endblock %}
