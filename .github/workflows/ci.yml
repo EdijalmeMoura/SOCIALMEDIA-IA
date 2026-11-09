@@ -41,6 +41,12 @@ jobs:
       - name: Build Docker image
         run: docker build --tag socialmedia-ia:ci .
 
+      - name: Validate Docker Compose configuration
+        run: |
+          printf '%s\n' 'SECRET_KEY=ci-only-secret-not-for-production-0123456789abc' > "$RUNNER_TEMP/socialmedia.env"
+          chmod 600 "$RUNNER_TEMP/socialmedia.env"
+          SOCIALMEDIA_ENV_FILE="$RUNNER_TEMP/socialmedia.env" docker compose -f compose.yaml config --quiet
+
       - name: Smoke-test production container
         env:
           SECRET_KEY: ci-only-secret-not-for-production-0123456789abc
