@@ -1,0 +1,21 @@
+# Instalação em hospedagem compartilhada com Plesk
+
+Este procedimento requer **Linux**, Python 3.11 ou superior, acesso SSH e suporte do provedor a aplicações Python WSGI (por exemplo, Passenger) com configuração de interpretador e variáveis de ambiente persistentes. O Plesk por si só não garante esses recursos: confirme com o provedor antes de começar. A hospedagem PHP convencional sem WSGI não executa esta aplicação. Os nomes e a disponibilidade das opções variam conforme o provedor; pode ser necessário pedir a ele a configuração do WSGI.
+
+1. Configure o domínio e um certificado HTTPS válido no Plesk. Coloque o código em um diretório privado fora do document root público (`httpdocs`), por exemplo `~/socialmedia-ia`. Não copie banco, uploads, ambiente virtual ou segredos para um diretório servido diretamente pela web. A configuração do domínio deve encaminhar as requisições ao WSGI, não servir o código como arquivos estáticos.
+2. Por SSH, na raiz do código, execute `sh scripts/install-plesk.sh`. Se necessário, informe o interpretador, por exemplo `PYTHON=python3.11 sh scripts/install-plesk.sh`. O script cria `.venv` se não existir e instala as dependências; não apaga dados ou segredos. Se não houver SSH/venv/pip, peça ao provedor uma instalação equivalente.
+3. Crie uma pasta persistente e privada **fora do document root**, por exemplo `mkdir -p ~/socialmedia-data && chmod 700 ~/socialmedia-data`. Use seu caminho absoluto real (veja com `cd ~/socialmedia-data && pwd`). O usuário que executa o WSGI precisa ter permissão de leitura e escrita nela. Ela conterá o SQLite e todos os uploads; não use armazenamento temporário ou compartilhado entre servidores.
+4. Nas configurações persistentes de ambiente da aplicação no painel, ou com ajuda do provedor, configure:
+   - `SECRET_KEY`: valor aleatório persistente com pelo menos 32 caracteres. Gere uma vez por SSH com `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`. Guarde-o em local seguro; não publique nem inclua no Git.
+   - `COOKIE_SECURE=1`.
+   - `SOCIALMEDIA_DATA`: caminho absoluto da pasta privada criada acima.
+   - Opcional: `OPENAI_API_KEY` para IA e as variáveis `META_*` descritas no README para a integração Meta. Guarde também a chave Fernet da Meta de forma persistente e separada dos dados.
+5. Configure no suporte Python/WSGI do painel a raiz da aplicação como o diretório do código, o interpretador como o caminho absoluto de `.venv/bin/python` e o arquivo de entrada como `passenger_wsgi.py`, com callable `application`. Se o provedor usar outro servidor WSGI, a referência equivalente é `passenger_wsgi:application`. Não use `python app.py` nem o servidor de desenvolvimento para produção. Reinicie a aplicação pelo painel após configurar ou alterar variáveis.
+6. Acesse `https://seu-dominio/health` (deve retornar sucesso), abra o domínio e crie sua conta e agência. Verifique os logs do servidor se a aplicação não iniciar. O arquivo WSGI recusa a inicialização sem chave adequada, cookie seguro e diretório de dados absoluto. A configuração do HTTPS e a privacidade dos diretórios precisam ser verificadas no servidor.
+
+## Operação e segurança
+
+- SQLite é adequado aqui somente para uma instância em um único servidor, sem réplicas e sem compartilhamento de arquivos de rede. O limitador de login é em memória: múltiplos processos não compartilham limites. Peça rate limiting compartilhado no proxy/provedor antes de expor o serviço em produção.
+- Para backup consistente, pare a aplicação pelo painel, copie toda a pasta de dados e reinicie-a. Proteja o backup e mantenha cópias fora do servidor; teste a restauração. Faça backup separado e seguro de `SECRET_KEY` e `META_TOKEN_ENCRYPTION_KEY`. Não regenere as chaves a cada deploy. Para restaurar, pare a aplicação e substitua os dados por um backup confiável, após fazer backup dos dados atuais.
+- Atualizações: faça backup, atualize o código sem substituir a pasta de dados nem as variáveis, execute novamente o instalador e reinicie a aplicação. Teste `/health` e o login.
+- A disponibilidade de bibliotecas Python, acesso de saída para OpenAI/Meta, limites de recursos, proxy e HTTPS dependem do provedor. Publicação Meta real exige configuração e validação específicas; veja [meta-live-validation.md](meta-live-validation.md).
