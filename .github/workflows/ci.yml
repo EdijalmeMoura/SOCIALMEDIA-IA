@@ -40,6 +40,39 @@ jobs:
       - name: Run test suite
         run: python -m unittest discover -s tests -v
 
+      - name: Smoke-test automatic installation from environment
+        env:
+          SOCIALMEDIA_AUTO_INSTALL: "1"
+          SOCIALMEDIA_AGENCY_NAME: "CI Agency"
+          SOCIALMEDIA_OWNER_NAME: "CI Owner"
+          SOCIALMEDIA_OWNER_EMAIL: "ci-owner@example.com"
+          SOCIALMEDIA_OWNER_PASSWORD: "CiAutomaticPass123"
+          SOCIALMEDIA_PUBLIC_ORIGIN: "https://ci.example"
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import tempfile
+          from pathlib import Path
+          import sys
+
+          data = Path(tempfile.mkdtemp())
+          os.environ["SOCIALMEDIA_DATA"] = str(data)
+          os.environ["SOCIALMEDIA_DB"] = str(data / "socialmedia.db")
+          import app
+
+          assert app.AUTO_INSTALL_STATUS == "installed", app.AUTO_INSTALL_STATUS
+          client = app.app.test_client()
+          health = client.get("/health").get_json()
+          assert health["status"] == "ok"
+          assert health["installation"]["automatic"] == "installed"
+          assert health["installation"]["pending"] is False
+          assert client.get("/install").status_code == 410
+          assert client.get("/").headers["Location"] == "/login"
+          assert oct((data / "installer.env").stat().st_mode)[-3:] == "600"
+          print(json.dumps(health))
+          PY
+
       - name: Build Docker image
         run: docker build --tag socialmedia-ia:ci .
 

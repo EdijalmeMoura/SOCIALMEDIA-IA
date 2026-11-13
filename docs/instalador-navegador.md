@@ -5,11 +5,66 @@ própria aplicação abre um assistente em `/install` **apenas enquanto a instâ
 não tem conta** e, ao concluir, grava a configuração privada, cria o proprietário
 e fecha a rota para sempre.
 
-## Quando ele aparece
+## Três modos de instalar
+
+| Modo | Quem dispara | Interação | Quando usar |
+| --- | --- | --- | --- |
+| **Automático (boot)** | `SOCIALMEDIA_AUTO_INSTALL=1` + variáveis do proprietário | nenhuma | "deploy e esquece": Render, Railway, Fly, Docker, VPS com systemd |
+| **Automático (1 clique)** | `/install?auto=1` | 1 clique | variáveis já definidas, mas você quer ver a tela de conclusão |
+| **Assistente guiado** | `/install` | 3 telas | instalação local ou quando ninguém preparou o ambiente |
+
+Os três caminhos usam **a mesma validação, o mesmo arquivo `0600`, a mesma
+transação de criação da conta e as mesmas garantias**. Não há duas
+implementações para divergirem.
+
+### Instalação automática no boot
+
+Defina no painel da hospedagem (nunca no Git):
+
+```sh
+SOCIALMEDIA_AUTO_INSTALL=1
+SOCIALMEDIA_AGENCY_NAME="Estúdio Aurora"
+SOCIALMEDIA_OWNER_NAME="Ana Souza"
+SOCIALMEDIA_OWNER_EMAIL="ana@suaagencia.com"
+SOCIALMEDIA_OWNER_PASSWORD="uma-senha-forte-e-unica"   # 8+ caracteres, sem senhas óbvias
+SOCIALMEDIA_PUBLIC_ORIGIN="https://app.suaagencia.com"  # usada no callback Meta e nos cookies
+# opcionais: OPENAI_API_KEY / OPENAI_MODEL / OPENAI_IMAGE_MODEL
+# opcionais: META_APP_ID / META_APP_SECRET / META_GRAPH_VERSION
+```
+
+O que acontece no primeiro boot:
+
+1. O entrypoint confere se as cinco variáveis existem; se faltar alguma, falha
+   com uma mensagem clara (`SOCIALMEDIA_AUTO_INSTALL=1 requires: …`).
+2. A aplicação gera `SECRET_KEY` (e a chave Fernet da Meta, se configurada),
+   grava o arquivo privado `0600`, cria agência + proprietário em uma
+   transação e registra a instalação.
+3. Reinícios seguintes detectam a instalação, **não recriam nada** e logam
+   `Automatic installation skipped: this instance is already installed.`
+4. Falhas são **não fatais**: o app sobe e `/install` continua disponível para
+   concluir manualmente. Nada fica pela metade.
+5. Depois de instalado, **remova `SOCIALMEDIA_OWNER_PASSWORD`** do serviço. O
+   hash já está no banco; a variável não é usada de novo (e o log lembra isso).
+
+Com uma variável ausente o boot **não** quebra no modo Docker: o entrypoint
+rejeita e explica. Sem `SOCIALMEDIA_AUTO_INSTALL`, nada muda.
+
+### Um clique em `/install`
+
+Se as variáveis estiverem completas, a tela do assistente mostra o botão
+**Instalar automaticamente** (ou abra `/install?auto=1`). Ele reaproveita a
+mesma rotina e cai na tela de conclusão com o resumo — útil para conferir
+callback Meta, arquivo de configuração e próximos passos sem preencher nada.
+Variáveis incompletas mostram a tela "Faltam dados no servidor" com a lista do
+que falta, sem criar conta. Se `SOCIALMEDIA_INSTALL_TOKEN` estiver definido, o
+token também é exigido nesse caminho.
+
+## Quando o assistente aparece
 
 | Situação | `/install` | `/` (anônimo) |
 | --- | --- | --- |
 | Instância nova (sem conta e sem `installer-state.json`) | 200 | redireciona para `/install` |
+| Instância criada no boot pelas variáveis | 410 | redireciona para `/login` com nota "Instância instalada" |
 | Instância instalada | 410 (encerrado) | redireciona para `/login` |
 | Banco já tem usuários, sem registro do instalador | 410 | redireciona para `/login` |
 
@@ -146,6 +201,18 @@ instalada **sem** `SECRET_KEY` persistente falha fechado, como antes.
 - **Instância antiga (contas criadas em `/register`)**: o instalador se fecha
   sozinho (410). Continue pela configuração manual de variáveis de ambiente.
 
+## Verificação rápida
+
+```sh
+curl -s https://seu-dominio/health
+# {"status":"ok","module":"stage-08-foundation","database":"sqlite",
+#  "installation":{"automatic":"installed","pending":false,"recorded":true}}
+```
+
+`installation.automatic` mostra como o boot se comportou (`installed`,
+`already_installed`, `skipped`, `failed`); `pending: true` significa que ainda
+não há workspace e `/install` segue aberto.
+
 ## Solução de problemas
 
 | Sintoma | Causa provável | Ação |
@@ -156,7 +223,24 @@ instalada **sem** `SECRET_KEY` persistente falha fechado, como antes.
 | "Valor inválido para …" | caractere não aceito em segredo | use apenas letras, números e `._-:/+@=%,&?~` |
 | Login não persiste | proxy sem `X-Forwarded-Proto: https` e cookie `Secure` | encaminhe o header ou reinicie com `COOKIE_SECURE=1` só atrás de HTTPS |
 | Rascunho perdido | processo reiniciou antes da confirmação | refaça a etapa 1 |
+| `SOCIALMEDIA_AUTO_INSTALL=1 requires: …` no log | falta variável obrigatória | defina as cinco variáveis e reinicie, ou remova a flag e use `/install` |
+| `/install?auto=1` responde 409 | variáveis incompletas ou valor rejeitado | veja a lista na própria tela; corrija no servidor |
+| Instalação automática "skipped": já instalado | conta/registro existentes | esperado; sobrescrever exige remover banco + `installer.env` + `installer-state.json` |
+| Senha do proprietário não funciona | `SOCIALMEDIA_OWNER_PASSWORD` mudou depois do boot | a senha vale só na **criação**; redefina por `/team` (outro admin) ou recomeçe do zero |
 | Contêiner não sobe após instalar | `SECRET_KEY` persistente ausente e instância já instalada | monte o volume com `installer.env` ou defina `SECRET_KEY` |
+
+## Segurança do modo automático
+
+- A senha vira hash imediatamente e **não** é gravada em `installer.env`, no
+  `installer-state.json`, em logs ou em telas.
+- As variáveis do proprietário são lidas apenas no boot; depois da instalação
+  elas não têm efeito (a rota `/install` está fechada).
+- O arquivo gerado continua `0600` e com precedência invertida: variáveis de
+  ambiente vencem o arquivo.
+- Fail-closed preservado: instância já instalada sem `SECRET_KEY` persistente
+  recusa subir (o arquivo privado é o segredo).
+- Se a senha vazar no painel da hospedagem, troque-a em `/team` com outro
+  owner/admin — a variável não reabre o instalador.
 
 ## O que o instalador **não** faz
 

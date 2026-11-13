@@ -7,6 +7,15 @@
   <p>Confira o ambiente, crie o acesso do proprietário e, se quiser, ative IA e Meta agora. Tudo pode ser ajustado depois no servidor.</p>
 </div>
 
+{% if auto_ready %}
+<div class="install-auto-banner">
+  <div><b>Instalação automática disponível</b><p>As variáveis do servidor já contêm agência, proprietário e senha. Crie a instância agora, sem preencher o formulário.</p></div>
+  <a class="button primary" href="{{ url_for('installer.installer_page', auto=1, access_token=access_token or None) }}">Instalar automaticamente <span>→</span></a>
+</div>
+{% elif auto_requested %}
+<div class="install-auto-banner"><div><b>Instalação automática incompleta</b><p>Faltam {{ auto_missing|length }} variável(is) no servidor. Você pode concluir pelo formulário abaixo.</p></div></div>
+{% endif %}
+
 {% if errors %}<div class="alert error-alert install-errors" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
 
 <section class="install-card install-checks">

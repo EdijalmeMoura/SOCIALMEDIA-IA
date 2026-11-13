@@ -1,9 +1,17 @@
-"""Browser-based first-run installer.
+"""First-run installation, automatic or through the browser.
 
 Bootstraps an instance without a shell: inspects the environment, validates
 the data directory, generates local secrets, writes a private configuration
 file (``0600``) and creates the owner account. It stays available only while
 the instance has no installation record and no accounts, then closes forever.
+
+Two entry points share the same validation and persistence:
+
+* ``run_automatic_installation`` — runs at boot when the host provides
+  ``SOCIALMEDIA_AUTO_INSTALL=1`` plus the owner credentials. Nothing is asked
+  in the browser; this is what "deploy and forget" needs.
+* ``create_installer_blueprint`` — the ``/install`` assistant, for the case
+  where the operator prefers to configure everything on screen.
 
 Secrets are never logged, never echoed to the browser and never written to the
 installation record. The configuration file is read back by the application on
@@ -14,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -26,7 +35,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
-from flask import Blueprint, current_app, make_response, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, make_response, redirect, render_template, request, session, url_for
 from werkzeug.security import generate_password_hash
 
 try:  # POSIX advisory locking; Windows falls back to a best-effort no-op.
@@ -40,6 +49,14 @@ ENV_FILENAME = "installer.env"
 CSRF_COOKIE = "smia_install_csrf"
 CSRF_FIELD = "install_csrf"
 ACCESS_TOKEN_ENV = "SOCIALMEDIA_INSTALL_TOKEN"
+AUTO_INSTALL_ENV = "SOCIALMEDIA_AUTO_INSTALL"
+AUTO_INSTALL_KEYS = (
+    "SOCIALMEDIA_AGENCY_NAME",
+    "SOCIALMEDIA_OWNER_NAME",
+    "SOCIALMEDIA_OWNER_EMAIL",
+    "SOCIALMEDIA_OWNER_PASSWORD",
+    "SOCIALMEDIA_PUBLIC_ORIGIN",
+)
 MIN_PASSWORD_LENGTH = 8
 DRAFT_TTL_SECONDS = 1800
 DONE_TICKET_TTL_SECONDS = 900
@@ -75,6 +92,8 @@ WEAK_PASSWORDS = {
     "socialmedia", "qwerty123", "instalador",
 }
 
+LOGGER = logging.getLogger("socialmedia.installer")
+
 _DRAFTS: dict[str, dict] = {}
 _DONE_TICKETS: dict[str, float] = {}
 _ACCESS_ATTEMPTS: dict[str, tuple[int, float]] = {}
@@ -92,6 +111,12 @@ class InstallerPaths:
 
     @property
     def state_path(self) -> Path:
+        # The installation record always sits next to the private config file,
+        # so moving SOCIALMEDIA_INSTALLER_ENV moves both.
+        configured = os.environ.get("SOCIALMEDIA_INSTALLER_ENV", "").strip()
+        if configured:
+            candidate = Path(configured)
+            return candidate.parent / STATE_FILENAME
         return Path(self.data_dir) / STATE_FILENAME
 
 
@@ -325,10 +350,13 @@ def reset_access_failures(bucket: str) -> None:
 # --- validation --------------------------------------------------------------
 
 
-def build_installation(form, *, existing_env: dict[str, str], origin: str, secure_request: bool):
+def build_installation(form, *, existing_env: dict[str, str], origin: str, secure_request: bool,
+                       require_confirmation: bool = True):
     """Validate the submitted form and return ``(payload, errors)``.
 
     The password is hashed right away; the plaintext never enters the payload.
+    ``require_confirmation`` is disabled for automatic installs, where the
+    operator cannot retype the password.
     """
     errors: list[str] = []
     agency = clean(form.get("agency_name"), 120)
@@ -347,9 +375,9 @@ def build_installation(form, *, existing_env: dict[str, str], origin: str, secur
         errors.append(f"A senha precisa ter pelo menos {MIN_PASSWORD_LENGTH} caracteres.")
     elif password.lower() in WEAK_PASSWORDS or password.lower() == email:
         errors.append("Escolha uma senha menos previsível.")
-    elif not confirmation:
+    elif require_confirmation and not confirmation:
         errors.append("Confirme a senha do administrador.")
-    elif password != confirmation:
+    elif require_confirmation and password != confirmation:
         errors.append("A confirmação da senha não confere.")
 
     try:
@@ -549,6 +577,101 @@ def execute_installation(payload: dict, paths: InstallerPaths, apply_runtime_con
         return record
 
 
+# --- automatic installation (boot from environment) --------------------------
+
+
+def auto_install_requested(env=None) -> bool:
+    env = os.environ if env is None else env
+    return (env.get(AUTO_INSTALL_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def auto_install_missing(env=None) -> list[str]:
+    env = os.environ if env is None else env
+    return [key for key in AUTO_INSTALL_KEYS if not (env.get(key) or "").strip()]
+
+
+def automatic_form(env=None) -> dict:
+    """Translate the deployment variables into the installer's form shape."""
+    env = os.environ if env is None else env
+    definition = {
+        "agency_name": "SOCIALMEDIA_AGENCY_NAME",
+        "admin_name": "SOCIALMEDIA_OWNER_NAME",
+        "admin_email": "SOCIALMEDIA_OWNER_EMAIL",
+        "admin_password": "SOCIALMEDIA_OWNER_PASSWORD",
+        "public_origin": "SOCIALMEDIA_PUBLIC_ORIGIN",
+        "openai_api_key": "OPENAI_API_KEY",
+        "openai_model": "OPENAI_MODEL",
+        "openai_image_model": "OPENAI_IMAGE_MODEL",
+        "meta_app_id": "META_APP_ID",
+        "meta_app_secret": "META_APP_SECRET",
+        "meta_graph_version": "META_GRAPH_VERSION",
+    }
+    return {field: (env.get(key) or "").strip() for field, key in definition.items()}
+
+
+def run_automatic_installation(paths: InstallerPaths, env=None, apply_runtime_config=None):
+    """Install without any browser interaction.
+
+    Returns ``(status, record_or_none)`` where status is one of ``installed``,
+    ``already_installed``, ``skipped`` (flag off) or ``failed``. The caller
+    decides whether a failure is fatal; the installer blueprint stays available
+    as a fallback on failure.
+    """
+    env = os.environ if env is None else env
+    if not auto_install_requested(env):
+        return "skipped", None
+    if not installer_needed(paths):
+        return "already_installed", load_state(paths.state_path)
+
+    missing = auto_install_missing(env)
+    if missing:
+        LOGGER.error(
+            "Instalação automática ignorada: defina %s.", ", ".join(missing)
+        )
+        return "failed", None
+
+    payload, errors = build_installation(
+        automatic_form(env),
+        existing_env=load_env_file(paths.env_path),
+        origin=clean(env.get("SOCIALMEDIA_PUBLIC_ORIGIN"), 200),
+        secure_request=False,
+        require_confirmation=False,
+    )
+    if errors:
+        LOGGER.error("Instalação automática rejeitada: %s", " ".join(errors))
+        return "failed", None
+
+    try:
+        record = execute_installation(payload, paths, apply_runtime_config=apply_runtime_config)
+    except InstallerError as exc:
+        LOGGER.error("Instalação automática falhou: %s", exc)
+        return "failed", None
+    except (OSError, sqlite3.Error) as exc:
+        LOGGER.exception("Instalação automática falhou (%s)", exc.__class__.__name__)
+        return "failed", None
+
+    LOGGER.info(
+        "Instalação automática concluída: agência=%s proprietário=%s origem=%s",
+        record["agency_name"], mask_email(record["owner_email"]), record["public_origin"],
+    )
+    LOGGER.warning(
+        "Remova SOCIALMEDIA_OWNER_PASSWORD do ambiente do serviço e mantenha o arquivo %s em backup seguro.",
+        record["env_file"],
+    )
+    return "installed", record
+
+
+def installation_banner(paths: InstallerPaths, env=None):
+    """Short status for the login page: how the workspace was created."""
+    env = os.environ if env is None else env
+    if installer_needed(paths):
+        return {"state": "pending", "message": "Instância ainda não instalada."}
+    record = load_state(paths.state_path)
+    if record:
+        return {"state": "installed", "message": f"Instância instalada em {record['installed_at']}."}
+    return {"state": "external", "message": "Instância configurada fora do instalador pelo navegador."}
+
+
 # --- drafts and tickets ------------------------------------------------------
 # Drafts stay in process memory: this is a single-process installer and nothing
 # sensitive (not even API keys) hits the disk before the final confirmation.
@@ -699,10 +822,15 @@ def create_installer_blueprint(*, paths, apply_runtime_config, login_endpoint: s
 
     def form_context(paths_now: InstallerPaths, form: dict, **extra):
         env_file = load_env_file(paths_now.env_path)
+        missing = auto_install_missing()
         context = {
             "checks": environment_checks(paths_now, request_is_secure(request)),
             "paths": paths_now,
             "form": form,
+            # One-click path is offered only when the deploy variables are complete.
+            "auto_ready": not missing,
+            "auto_requested": auto_install_requested(),
+            "auto_missing": missing,
             "existing": {
                 "secret_key": bool(env_file.get("SECRET_KEY")),
                 "openai": bool(env_file.get("OPENAI_API_KEY")),
@@ -717,9 +845,34 @@ def create_installer_blueprint(*, paths, apply_runtime_config, login_endpoint: s
         closed = closed_or_none()
         if closed is not None:
             return closed
+        # One-click install: /install?auto=1 builds the owner from the deploy
+        # variables and confirms the same consequences on the final screen.
+        if clean(request.args.get("auto"), 8) == "1":
+            return _automatic_install()
         if not access_allowed():
             return denied_page()
         return page("install.html", **form_context(current_paths(), {}))
+
+    def _automatic_install():
+        paths_now = current_paths()
+        missing = auto_install_missing()
+        if missing:
+            return page("install_auto.html", 409, paths=paths_now, missing=missing,
+                        checks=environment_checks(paths_now, request_is_secure(request)))
+        if not access_allowed():
+            return denied_page()
+        status, record = run_automatic_installation(paths_now, apply_runtime_config=apply_runtime_config)
+        if status == "installed":
+            session.clear()
+            ticket = issue_done_ticket()
+            response = redirect(url_for("installer.installer_done", ticket=ticket))
+            response.delete_cookie("session", path="/")
+            return response
+        if status == "already_installed":
+            return closed_page()
+        return page("install.html", 409, **form_context(paths_now, {}, errors=[
+            "A instalação automática não foi concluída. Revise os dados do servidor e conclua manualmente abaixo."
+        ]))
 
     @blueprint.post("/install/validate")
     def installer_validate():

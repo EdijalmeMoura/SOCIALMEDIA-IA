@@ -1,0 +1,40 @@
+{% extends 'install_base.html' %}{% set step = 1 %}
+{% block title %}Instalação automática{% endblock %}
+{% block top_note %}Aguardando variáveis do servidor{% endblock %}
+{% block content %}
+<div class="install-head">
+  <div class="install-kicker">INSTALAÇÃO AUTOMÁTICA</div>
+  <h1>Faltam dados no servidor.</h1>
+  <p>Este link instala sozinho usando as variáveis de ambiente da hospedagem. Nenhuma conta foi criada: as chaves abaixo estão ausentes ou vazias no processo da aplicação.</p>
+</div>
+
+{% if errors %}<div class="alert error-alert install-errors" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+
+<section class="install-card">
+  <div class="install-card-head"><div><h2>Variáveis obrigatórias</h2><p>Defina no painel da hospedagem (ou no <code>env_file</code> do serviço) e reinicie a aplicação.</p></div><span class="install-badge badge-fail">{{ missing|length }} pendente(s)</span></div>
+  <ul class="var-list">
+    {% for key in missing %}<li><code>{{ key }}</code><span>obrigatória</span></li>{% endfor %}
+  </ul>
+  <div class="install-note subtle">
+    <span>⌘</span>
+    <div><b>Modelo de configuração</b><p><code>SOCIALMEDIA_AUTO_INSTALL=1</code>, <code>SOCIALMEDIA_AGENCY_NAME</code>, <code>SOCIALMEDIA_OWNER_NAME</code>, <code>SOCIALMEDIA_OWNER_EMAIL</code>, <code>SOCIALMEDIA_OWNER_PASSWORD</code> (8+ caracteres, evite senhas óbvias) e <code>SOCIALMEDIA_PUBLIC_ORIGIN</code>. Opcionais: <code>OPENAI_*</code> e <code>META_*</code>.</p></div>
+  </div>
+</section>
+
+<section class="install-card">
+  <div class="install-card-head"><div><h2>Ambiente atual</h2><p>Verificações feitas agora neste processo.</p></div></div>
+  <ul class="check-list">
+    {% for check in checks %}
+    <li class="check check-{{ check.status }}">
+      <span class="check-icon">{% if check.status == 'ok' %}✓{% elif check.status == 'warn' %}!{% else %}×{% endif %}</span>
+      <div><b>{{ check.label }}</b><small>{{ check.detail }}</small></div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<div class="install-actions">
+  <p>Prefere concluir agora, sem mexer no servidor? Use o assistente guiado.</p>
+  <a class="button outline" href="{{ url_for('installer.installer_page', access_token=access_token or None) }}">Instalar manualmente <span>→</span></a>
+</div>
+{% endblock %}

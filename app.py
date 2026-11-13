@@ -28,8 +28,10 @@ from installer import (
     InstallerPaths,
     apply_env_file,
     create_installer_blueprint,
+    installation_banner,
     installer_needed,
     load_state,
+    run_automatic_installation,
 )
 from meta_integration import META_SCOPES, MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, fetch_permissions, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image, check_graph_tls_connectivity
 
@@ -418,6 +420,18 @@ app.register_blueprint(create_installer_blueprint(
     apply_runtime_config=apply_installed_configuration,
     login_endpoint="login",
 ))
+
+# Automatic installation: with SOCIALMEDIA_AUTO_INSTALL=1 plus the owner
+# variables, a fresh deploy is ready before the first request. Failures stay
+# non-fatal so the browser installer can finish the job.
+AUTO_INSTALL_STATUS = "skipped"
+try:
+    AUTO_INSTALL_STATUS, _auto_install_record = run_automatic_installation(
+        installer_paths(), apply_runtime_config=apply_installed_configuration,
+    )
+except Exception:  # never block boot because of the installer
+    app.logger.exception("Instalação automática falhou ao iniciar")
+    AUTO_INSTALL_STATUS = "failed"
 
 
 @app.before_request
@@ -973,7 +987,8 @@ def login():
                 return redirect(url_for("dashboard"))
             LOGIN_ATTEMPTS[bucket] = (attempts + 1, since)
             error = "E-mail ou senha incorretos."
-    return render_template("auth.html", mode="login", error=error)
+    return render_template("auth.html", mode="login", error=error,
+                           install_banner=installation_banner(installer_paths()))
 
 
 @app.post("/logout")
@@ -2773,7 +2788,14 @@ def health():
         get_db().execute("SELECT 1").fetchone()
     except sqlite3.Error:
         return {"status": "error", "module": "stage-08-foundation", "database": "unavailable"}, 503
-    return {"status": "ok", "module": "stage-08-foundation", "database": "sqlite"}
+    payload = {"status": "ok", "module": "stage-08-foundation", "database": "sqlite"}
+    # Which bootstrap path produced this instance: deploy env, browser or manual.
+    payload["installation"] = {
+        "automatic": AUTO_INSTALL_STATUS,
+        "pending": installer_needed(installer_paths()),
+        "recorded": bool(load_state(installer_paths().state_path)),
+    }
+    return payload
 
 
 @app.errorhandler(403)

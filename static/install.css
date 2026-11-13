@@ -102,6 +102,14 @@
 .done-status li.warn>span{background:#fff5e6;color:#b98423}
 .done-status b{display:block;font-size:9.5px;color:#333a4c}
 .done-status small{display:block;margin-top:2px;font-size:8.5px;line-height:1.6;color:#9298a9;word-break:break-word}
+.var-list{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.var-list li{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fafbfe;border:1px solid #eef0f6;border-radius:7px;padding:9px 11px;font-size:9px;color:#7d8497}
+.var-list code{font-size:9.5px}
+.var-list span{font-size:8px;color:#b9716d;background:#fff3f1;border:1px solid #f6ded9;border-radius:20px;padding:3px 7px}
+.install-auto-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between;background:#f4f5ff;border:1px solid #e6e9ff;border-radius:10px;padding:13px 15px;margin:0 0 16px}
+.install-auto-banner b{font-size:10.5px;color:#3b4470}
+.install-auto-banner p{margin:3px 0 0;font-size:9px;line-height:1.6;color:#828aab}
+.install-auto-banner .button{height:34px;font-size:10px}
 .install-footer{margin-top:30px;padding-top:16px;border-top:1px solid #e7e9f2;font-size:8.5px;color:#a2a8b7}
 .install-body .error-alert{font-size:10px}
 @media(max-width:1000px){.install-shell{grid-template-columns:1fr}.install-rail{padding:26px 24px;gap:18px}.install-steps{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.install-steps li{flex-direction:column;gap:6px;padding:9px}.rail-foot{display:none}.rail-intro{max-width:520px}.review-grid,.done-grid{grid-template-columns:1fr}.span-all{grid-column:auto}}
