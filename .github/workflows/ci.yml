@@ -31,8 +31,9 @@ jobs:
 
       - name: Validate Python, JavaScript, and container entrypoint syntax
         run: |
-          python -m py_compile app.py meta_integration.py tests/*.py
+          python -m py_compile app.py meta_integration.py installer.py tests/*.py
           node --check static/app.js
+          node --check static/install.js
           sh -n docker-entrypoint.sh
           sh -n scripts/backup-data.sh
 

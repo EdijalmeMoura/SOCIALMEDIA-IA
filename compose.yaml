@@ -4,7 +4,10 @@ services:
     container_name: socialmedia-ia
     restart: unless-stopped
     env_file:
-      - ${SOCIALMEDIA_ENV_FILE:-/etc/socialmedia-ia/socialmedia.env}
+      # Optional: pre-provisioned secrets (SECRET_KEY, META_*, OPENAI_*).
+      # Without it, the browser installer writes /data/installer.env instead.
+      - path: ${SOCIALMEDIA_ENV_FILE:-/etc/socialmedia-ia/socialmedia.env}
+        required: false
     environment:
       COOKIE_SECURE: "1"
       PORT: "5000"

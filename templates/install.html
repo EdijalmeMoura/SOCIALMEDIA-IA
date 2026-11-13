@@ -1,0 +1,106 @@
+{% extends 'install_base.html' %}{% set step = 1 %}
+{% block title %}Configurar instância{% endblock %}
+{% block content %}
+<div class="install-head">
+  <div class="install-kicker">PRIMEIRO ACESSO</div>
+  <h1>Vamos colocar sua instância no ar.</h1>
+  <p>Confira o ambiente, crie o acesso do proprietário e, se quiser, ative IA e Meta agora. Tudo pode ser ajustado depois no servidor.</p>
+</div>
+
+{% if errors %}<div class="alert error-alert install-errors" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+
+<section class="install-card install-checks">
+  <div class="install-card-head">
+    <div><h2>Ambiente detectado</h2><p>Leituras automáticas, refeitas a cada carregamento.</p></div>
+    <span class="install-badge {{ 'badge-ok' if not checks|selectattr('status', 'equalto', 'fail')|list else 'badge-fail' }}">{{ 'Tudo pronto' if not checks|selectattr('status', 'equalto', 'fail')|list else 'Requer atenção' }}</span>
+  </div>
+  <ul class="check-list">
+    {% for check in checks %}
+    <li class="check check-{{ check.status }}">
+      <span class="check-icon">{% if check.status == 'ok' %}✓{% elif check.status == 'warn' %}!{% else %}×{% endif %}</span>
+      <div><b>{{ check.label }}</b><small>{{ check.detail }}</small></div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<form class="install-form" method="post" action="{{ url_for('installer.installer_validate') }}" data-installer-form>
+  <input type="hidden" name="install_csrf" value="{{ install_csrf }}">
+  {% if access_token_required %}<input type="hidden" name="access_token" value="{{ access_token }}">{% endif %}
+
+  <section class="install-card">
+    <div class="install-card-head"><div><h2><span class="card-step">01</span> Workspace e proprietário</h2><p>Esta conta será a proprietária da agência e poderá convidar o restante da equipe.</p></div></div>
+    <div class="field-grid">
+      <label class="install-field span-6">Nome da agência <em>*</em>
+        <input name="agency_name" required maxlength="120" autocomplete="organization" value="{{ form.get('agency_name', '') }}" placeholder="Ex.: Estúdio Aurora">
+      </label>
+      <label class="install-field span-6">Seu nome <em>*</em>
+        <input name="admin_name" required maxlength="100" autocomplete="name" value="{{ form.get('admin_name', '') }}" placeholder="Ex.: Ana Souza">
+      </label>
+      <label class="install-field span-12">E-mail de acesso <em>*</em>
+        <input type="email" name="admin_email" required maxlength="160" autocomplete="email" value="{{ form.get('admin_email', '') }}" placeholder="voce@suaagencia.com">
+      </label>
+      <label class="install-field span-6">Senha <em>*</em>
+        <span class="password-wrap"><input type="password" name="admin_password" required minlength="8" autocomplete="new-password" placeholder="8 caracteres ou mais"><button type="button" class="password-toggle" data-password-toggle aria-label="Mostrar senha">◉</button></span>
+      </label>
+      <label class="install-field span-6">Confirmar senha <em>*</em>
+        <span class="password-wrap"><input type="password" name="admin_password_confirm" required minlength="8" autocomplete="new-password" placeholder="Repita a senha"><button type="button" class="password-toggle" data-password-toggle aria-label="Mostrar senha">◉</button></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="install-card">
+    <div class="install-card-head"><div><h2><span class="card-step">02</span> Endereço público e segurança</h2><p>Usado no callback da Meta e nos cookies. O <code>SECRET_KEY</code> é gerado agora, aleatório e persistente.</p></div></div>
+    <div class="field-grid">
+      <label class="install-field span-12">URL pública da instância
+        <input name="public_origin" maxlength="200" value="{{ form.get('public_origin', origin) }}" placeholder="https://app.suaagencia.com">
+        <small>Detectado nesta sessão: <b>{{ origin }}</b>. Informe o endereço final se houver proxy HTTPS à frente.</small>
+      </label>
+    </div>
+    <div class="install-note">
+      <span>♧</span>
+      <div><b>Arquivo de configuração privado</b><p>Os segredos serão gravados em <code>{{ paths.env_path }}</code> com permissão <code>0600</code>. Nada disso volta para o navegador.</p></div>
+    </div>
+  </section>
+
+  <section class="install-card">
+    <div class="install-card-head"><div><h2><span class="card-step">03</span> Inteligência artificial <span class="optional">opcional</span></h2><p>Sem chave, planejamento e estúdio ficam desabilitados — sem resultados simulados.</p></div></div>
+    <div class="field-grid">
+      <label class="install-field span-6">Chave da OpenAI
+        <input type="password" name="openai_api_key" maxlength="400" autocomplete="off" spellcheck="false" placeholder="{{ 'já configurada no servidor — deixe em branco para manter' if existing.openai else 'sk-...' }}" data-no-autofill>
+        <small>Enviada apenas ao servidor desta instância e salva só no arquivo privado.</small>
+      </label>
+      <label class="install-field span-3">Modelo de texto
+        <input name="openai_model" maxlength="64" value="{{ form.get('openai_model', 'gpt-4o-mini') }}">
+      </label>
+      <label class="install-field span-3">Modelo de imagem
+        <input name="openai_image_model" maxlength="64" value="{{ form.get('openai_image_model', 'gpt-image-1') }}">
+      </label>
+    </div>
+  </section>
+
+  <section class="install-card">
+    <div class="install-card-head"><div><h2><span class="card-step">04</span> Conexões Meta <span class="optional">opcional</span></h2><p>Páginas do Facebook e Instagram profissional. A chave Fernet dos tokens é gerada automaticamente.</p></div></div>
+    <div class="field-grid">
+      <label class="install-field span-4">App ID
+        <input name="meta_app_id" maxlength="40" inputmode="numeric" value="{{ form.get('meta_app_id', '') }}" placeholder="{{ 'já configurado — deixe em branco para manter' if existing.meta else '123456789012345' }}">
+      </label>
+      <label class="install-field span-5">App Secret
+        <input type="password" name="meta_app_secret" maxlength="200" autocomplete="off" spellcheck="false" placeholder="{{ 'já configurado — deixe em branco para manter' if existing.meta else 'segredo do App Meta' }}" data-no-autofill>
+      </label>
+      <label class="install-field span-3">Versão do Graph
+        <input name="meta_graph_version" maxlength="20" value="{{ form.get('meta_graph_version', 'v23.0') }}">
+      </label>
+    </div>
+    <div class="install-note subtle">
+      <span>∞</span>
+      <div><b>Callback calculado</b><p><code>{{ (form.get('public_origin') or origin) }}/integrations/meta/callback</code> — cadastre exatamente esta URL no App Meta. Permissões avançadas seguem exigindo revisão da Meta.</p></div>
+    </div>
+  </section>
+
+  <div class="install-actions">
+    <p>Sem criação de conta na nuvem: você define o primeiro acesso agora e revisa os dados antes de gravar.</p>
+    <button class="button primary install-submit" type="submit">Revisar instalação <span>→</span></button>
+  </div>
+</form>
+{% endblock %}

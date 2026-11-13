@@ -1,0 +1,108 @@
+/* Browser installer — self-contained look, reuses tokens from app.css */
+.install-body{background:#f5f6fb;font-family:'DM Sans',sans-serif;color:#1e2433}
+.install-body a{color:inherit;text-decoration:none}
+.install-body code{font-family:'DM Mono','SFMono-Regular',ui-monospace,monospace;font-size:.92em;background:#f2f3fa;border:1px solid #e7e9f4;border-radius:4px;padding:1px 5px;color:#3c4780;word-break:break-word}
+.install-shell{display:grid;grid-template-columns:322px minmax(0,1fr);min-height:100vh}
+.install-rail{background:#303b8c;color:#fff;padding:32px 30px;display:flex;flex-direction:column;gap:26px;position:relative;overflow:hidden}
+.install-rail:before,.install-rail:after{content:'';position:absolute;border:1px solid #ffffff14;border-radius:50%;pointer-events:none}
+.install-rail:before{width:420px;height:420px;right:-230px;top:-160px}
+.install-rail:after{width:320px;height:320px;right:-180px;top:-110px;border-color:#ffffff0f}
+.install-brand{display:flex;align-items:center;gap:11px;position:relative;z-index:1}
+.install-brand .brand-mark{background:#ff9568;box-shadow:0 5px 14px #1b216b66}
+.install-brand .brand-copy{color:#fff}
+.install-brand .brand-copy small{color:#aeb5e7}
+.rail-intro{margin:0;font-size:11px;line-height:1.75;color:#c6cbf1;position:relative;z-index:1}
+.install-steps{list-style:none;margin:0;padding:0;display:grid;gap:4px;position:relative;z-index:1}
+.install-steps li{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:9px;border:1px solid transparent;color:#b9c0ec}
+.install-steps li.current{background:#ffffff14;border-color:#ffffff26;color:#fff}
+.install-steps li.done{color:#a9e6d3}
+.install-steps>li>span{width:24px;height:24px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:8px;font-weight:700;border:1px solid #ffffff3d;color:#cdd2f5}
+.install-steps li.current>span{background:#ff9568;border-color:#ff9568;color:#fff}
+.install-steps li.done>span{background:#2fb98d;border-color:#2fb98d;color:#fff}
+.install-steps b{display:block;font-size:10px;font-weight:700;line-height:1.4}
+.install-steps small{display:block;font-size:8.5px;margin-top:3px;color:#9ea6d9;line-height:1.5}
+.install-steps li.current small{color:#ccd1f3}
+.rail-foot{margin-top:auto;background:#ffffff10;border:1px solid #ffffff1f;border-radius:10px;padding:14px;position:relative;z-index:1}
+.rail-foot b{font-size:10px;color:#fff}
+.rail-foot p{margin:6px 0 0;font-size:9px;line-height:1.7;color:#b7beee}
+.install-main{padding:30px clamp(20px,5vw,64px) 46px;max-width:1080px;width:100%}
+.install-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:18px;border-bottom:1px solid #e7e9f2;margin-bottom:26px;flex-wrap:wrap}
+.install-tag{font-size:8.5px;letter-spacing:1.5px;font-weight:700;color:#5669d8}
+.install-top-note{font-size:9px;color:#9198ac;background:#fff;border:1px solid #e7e9f2;border-radius:20px;padding:5px 10px}
+.install-head{max-width:640px}
+.install-kicker{font-size:8.5px;letter-spacing:1.5px;font-weight:700;color:#8289a0}
+.install-kicker-ok{display:inline-flex;align-items:center;gap:6px;color:#1f9a76;background:#e9f8f2;border:1px solid #d6f0e7;border-radius:20px;padding:5px 11px}
+.install-head h1{font:800 clamp(24px,3vw,31px)/1.2 Manrope,sans-serif;letter-spacing:-1.1px;margin:11px 0 8px}
+.install-head p{margin:0 0 22px;font-size:11.5px;line-height:1.75;color:#868da0}
+.install-errors ul{margin:0;padding-left:16px;display:grid;gap:4px}
+.install-card{background:#fff;border:1px solid #e8eaf2;border-radius:12px;padding:20px 22px;margin-bottom:14px;box-shadow:0 8px 24px #25305808}
+.install-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px}
+.install-card h2{font:700 14px Manrope,sans-serif;letter-spacing:-.2px;margin:0 0 5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.install-card-head p{margin:0;font-size:9.5px;line-height:1.65;color:#9198aa;max-width:520px}
+.card-step{display:inline-grid;place-items:center;height:20px;min-width:22px;padding:0 5px;border-radius:6px;background:#eef0ff;color:#5367d8;font-size:8.5px;font-weight:700}
+.optional{font-size:8px;font-weight:700;letter-spacing:.6px;color:#8b93a8;background:#f2f3f8;border:1px solid #e7e9f1;border-radius:20px;padding:3px 8px;text-transform:uppercase}
+.install-badge{font-size:8px;font-weight:700;letter-spacing:.3px;border-radius:20px;padding:5px 9px;white-space:nowrap}
+.badge-ok{background:#e9f8f2;color:#1f8e6c;border:1px solid #d5efe6}
+.badge-fail{background:#fff1ef;color:#b94a44;border:1px solid #f6d9d5}
+.badge-off{background:#f2f3f8;color:#7b8298;border:1px solid #e7e9f1}
+.check-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.check{display:flex;gap:11px;align-items:flex-start;border:1px solid #eef0f6;background:#fafbfe;border-radius:8px;padding:11px 13px}
+.check-icon{width:20px;height:20px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;background:#eaf8f2;color:#1c9a74}
+.check-warn .check-icon{background:#fff5e6;color:#b98423}
+.check-fail .check-icon{background:#ffefed;color:#b94a44}
+.check b{display:block;font-size:10px;color:#333a4c}
+.check small{display:block;margin-top:3px;font-size:9px;line-height:1.6;color:#8f96a8;word-break:break-word}
+.field-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:13px}
+.span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}.span-6{grid-column:span 6}.span-12{grid-column:span 12}
+.install-field{display:flex;flex-direction:column;gap:6px;font-size:9px;font-weight:700;color:#525a6d}
+.install-field em{color:#e87362;font-style:normal}
+.install-field input{height:38px;border:1px solid #e4e7f0;border-radius:7px;background:#fff;padding:0 11px;font:400 11px 'DM Sans',sans-serif;color:#293044;outline:0;transition:border .15s,box-shadow .15s;width:100%}
+.install-field input:focus{border-color:#8794ef;box-shadow:0 0 0 3px #5369e213}
+.install-field input::placeholder{color:#b1b5c0;font-weight:400}
+.install-field small{font-size:8.5px;font-weight:400;line-height:1.6;color:#969cad}
+.password-wrap{display:flex;align-items:center;gap:4px;border:1px solid #e4e7f0;border-radius:7px;background:#fff;padding-right:6px}
+.password-wrap:focus-within{border-color:#8794ef;box-shadow:0 0 0 3px #5369e213}
+.password-wrap input{border:0;box-shadow:none!important;background:transparent}
+.password-toggle{border:0;background:none;color:#9aa0b0;font-size:12px;padding:4px 5px}
+.install-note{display:flex;gap:11px;align-items:flex-start;margin-top:14px;background:#f6f7ff;border:1px solid #e9ecff;border-radius:9px;padding:12px 13px}
+.install-note>span{width:22px;height:22px;flex:none;border-radius:7px;background:#fff;color:#586be1;display:grid;place-items:center;font-size:11px}
+.install-note b{font-size:10px;color:#3a4260}
+.install-note p{margin:4px 0 0;font-size:9px;line-height:1.7;color:#858da1}
+.install-note.subtle{background:#fafbfe;border-color:#eef0f6}
+.install-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:18px;flex-wrap:wrap}
+.install-actions p{margin:0;font-size:9px;line-height:1.6;color:#949bad;max-width:460px}
+.install-submit{height:42px;padding:0 18px;font-size:11px}
+.install-cancel-form{display:inline-flex}
+.install-caution{margin:12px 0 0;font-size:8.5px;color:#a0a6b6}
+.review-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.review-grid .install-card{margin-bottom:0}
+.review-list{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:9px 14px;font-size:9.5px}
+.review-list dt{color:#8d94a6;font-weight:500}
+.review-list dd{margin:0;color:#2d3447;font-weight:600;text-align:right;word-break:break-word}
+.review-list.wide{grid-template-columns:190px minmax(0,1fr)}
+.review-list.wide dd{text-align:left}
+.review-empty{margin:0;font-size:9.5px;line-height:1.7;color:#8d94a6}
+.install-commit{margin-top:14px}
+.commit-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.commit-list li{display:flex;gap:11px;align-items:flex-start}
+.commit-list>li>span{width:22px;height:22px;flex:none;border-radius:50%;background:#eef0ff;color:#5367d8;display:grid;place-items:center;font-size:9px;font-weight:700}
+.commit-list b{display:block;font-size:10px;color:#333a4c}
+.commit-list small{display:block;margin-top:3px;font-size:9px;line-height:1.6;color:#8f96a8}
+.done-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.done-grid .install-card{margin-bottom:0}
+.span-all{grid-column:1/-1}
+.done-hero{display:flex;flex-direction:column;align-items:flex-start;gap:8px;background:linear-gradient(140deg,#fff 20%,#f4f5ff)}
+.done-orb{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:#eef0ff;color:#586be1;font-size:17px}
+.done-hero h2{font-size:16px}
+.done-hero p{margin:0 0 8px;font-size:10px;line-height:1.7;color:#8b92a4}
+.done-status{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+.done-status li{display:flex;gap:10px;align-items:flex-start}
+.done-status>li>span{width:19px;height:19px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:700;background:#f2f3f8;color:#8b93a8}
+.done-status li.on>span{background:#eaf8f2;color:#1c9a74}
+.done-status li.warn>span{background:#fff5e6;color:#b98423}
+.done-status b{display:block;font-size:9.5px;color:#333a4c}
+.done-status small{display:block;margin-top:2px;font-size:8.5px;line-height:1.6;color:#9298a9;word-break:break-word}
+.install-footer{margin-top:30px;padding-top:16px;border-top:1px solid #e7e9f2;font-size:8.5px;color:#a2a8b7}
+.install-body .error-alert{font-size:10px}
+@media(max-width:1000px){.install-shell{grid-template-columns:1fr}.install-rail{padding:26px 24px;gap:18px}.install-steps{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.install-steps li{flex-direction:column;gap:6px;padding:9px}.rail-foot{display:none}.rail-intro{max-width:520px}.review-grid,.done-grid{grid-template-columns:1fr}.span-all{grid-column:auto}}
+@media(max-width:700px){.install-main{padding:22px 16px 40px}.span-3,.span-4,.span-5,.span-6{grid-column:span 12}.install-steps b{font-size:9px}.install-steps small{display:none}.install-actions{flex-direction:column-reverse;align-items:stretch}.install-submit,.install-cancel-form .button{width:100%}.review-list,.review-list.wide{grid-template-columns:1fr;gap:4px 0}.review-list dd,.review-list.wide dd{text-align:left;margin-bottom:7px}.install-card{padding:17px 15px}}

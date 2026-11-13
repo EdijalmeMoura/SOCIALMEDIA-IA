@@ -1,0 +1,29 @@
+{% extends 'install_base.html' %}{% set step = 1 %}
+{% block title %}Acesso restrito{% endblock %}
+{% block top_note %}Token necessário{% endblock %}
+{% block content %}
+<div class="install-head">
+  <div class="install-kicker">ACESSO RESTRITO</div>
+  <h1>O instalador pede um token.</h1>
+  <p>Esta instância exige <code>SOCIALMEDIA_INSTALL_TOKEN</code> para abrir o instalador. Abra o link completo com <code>?access_token=…</code> ou cole o token abaixo.</p>
+</div>
+
+{% if error %}<div class="alert error-alert" role="alert">{{ error }}</div>{% endif %}
+
+<section class="install-card">
+  <form method="get" action="{{ url_for('installer.installer_page') }}" class="install-form">
+    <div class="field-grid">
+      <label class="install-field span-12">Token de instalação
+        <input type="password" name="access_token" required autocomplete="off" spellcheck="false" placeholder="valor de SOCIALMEDIA_INSTALL_TOKEN">
+        <small>Definido pelo operador no servidor. Depois de instalada, a rota fecha mesmo com o token correto.</small>
+      </label>
+    </div>
+    <div class="install-actions">
+      <p>Um token evita que terceiros criem a conta antes de você.</p>
+      <button class="button primary install-submit" type="submit">Abrir instalador <span>→</span></button>
+    </div>
+  </form>
+</section>
+
+<p class="install-caution">Não sabe o token? Peça ao responsável pelo servidor ou reinicie a aplicação com <code>SOCIALMEDIA_INSTALL_TOKEN</code> definido.</p>
+{% endblock %}

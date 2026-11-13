@@ -1,0 +1,53 @@
+{% extends 'install_base.html' %}{% set step = 3 %}
+{% block title %}Instância pronta{% endblock %}
+{% block top_note %}Instalação concluída{% endblock %}
+{% block content %}
+<div class="install-head">
+  <div class="install-kicker install-kicker-ok"><span>✓</span> INSTALAÇÃO CONCLUÍDA EM {{ record.installed_at }}</div>
+  <h1>Sua instância está protegida e pronta.</h1>
+  <p>O instalador foi encerrado. Guarde as informações abaixo: elas não aparecem novamente.</p>
+</div>
+
+<div class="done-grid">
+  <section class="install-card done-hero">
+    <span class="done-orb">✦</span>
+    <h2>{{ record.agency_name }}</h2>
+    <p>Workspace criado com o proprietário <b>{{ record.owner_email }}</b>. Entre com a senha que você acabou de definir.</p>
+    <a class="button primary install-submit" href="{{ login_url }}">Entrar no workspace <span>→</span></a>
+  </section>
+
+  <section class="install-card">
+    <div class="install-card-head"><div><h2>Estado da instância</h2><p>Resumo do que ficou configurado.</p></div></div>
+    <ul class="done-status">
+      <li class="{{ 'on' if configured.secret_key else 'off' }}"><span>{% if configured.secret_key %}✓{% else %}×{% endif %}</span><div><b>Chave de sessão</b><small>Gerada e persistente em <code>{{ env_file.name }}</code>.</small></div></li>
+      <li class="{{ 'on' if cookie_secure else 'warn' }}"><span>{% if cookie_secure %}✓{% else %}!{% endif %}</span><div><b>Cookies Secure</b><small>{{ 'Ativos para uso atrás de HTTPS.' if cookie_secure else 'Inativos: a instalação foi feita por HTTP. Configure TLS e reinicie com COOKIE_SECURE=1.' }}</small></div></li>
+      <li class="{{ 'on' if ai_configured else 'off' }}"><span>{% if ai_configured %}✓{% else %}○{% endif %}</span><div><b>Inteligência artificial</b><small>{{ 'Chave da OpenAI configurada.' if ai_configured else 'Desligada — defina OPENAI_API_KEY no arquivo privado e reinicie.' }}</small></div></li>
+      <li class="{{ 'on' if meta_configured else 'off' }}"><span>{% if meta_configured %}✓{% else %}○{% endif %}</span><div><b>Conexões Meta</b><small>{{ 'App configurado; conclua o OAuth em Conexões Meta.' if meta_configured else 'Pendente — nenhuma publicação acontece sem OAuth autorizado.' }}</small></div></li>
+    </ul>
+  </section>
+
+  <section class="install-card span-all">
+    <div class="install-card-head"><div><h2>Para guardar em local seguro</h2><p>O arquivo privado é a única cópia persistente destes valores.</p></div><span class="install-badge badge-ok">0600</span></div>
+    <dl class="review-list wide">
+      <dt>Arquivo de configuração</dt><dd><code>{{ env_file }}</code></dd>
+      <dt>Origem pública</dt><dd>{{ record.public_origin }}</dd>
+      {% if meta_configured %}
+      <dt>Callback OAuth</dt><dd><code>{{ callback_url }}</code></dd>
+      <dt>URL pública de mídia</dt><dd><code>{{ public_media_url }}</code></dd>
+      {% endif %}
+      <dt>Próximo passo</dt><dd>Inclua o arquivo privado no backup seguro junto do volume de dados.</dd>
+    </dl>
+    {% if meta_configured %}
+    <div class="install-note subtle">
+      <span>∞</span>
+      <div><b>Meta ainda exige revisão externa</b><p>Cadastre o callback exato no App Meta, conclua o OAuth em <b>Conexões Meta</b> e siga o roteiro de validação ao vivo. Nenhum post é enviado pelo instalador.</p></div>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<div class="install-actions">
+  <p>Rodando em {{ origin }} · instalador bloqueado a partir de agora.</p>
+  <a class="button outline" href="{{ login_url }}">Ir para o login <span>→</span></a>
+</div>
+{% endblock %}

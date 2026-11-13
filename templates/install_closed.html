@@ -1,0 +1,32 @@
+{% extends 'install_base.html' %}{% set step = 3 %}
+{% block title %}Instalador encerrado{% endblock %}
+{% block top_note %}Rota bloqueada{% endblock %}
+{% block content %}
+<div class="install-head">
+  <div class="install-kicker">INSTALADOR ENCERRADO</div>
+  <h1>Esta instância já está instalada.</h1>
+  <p>O instalador pelo navegador funciona apenas uma vez, enquanto não existe conta. A partir daqui, acesse o workspace ou ajuste a configuração no servidor.</p>
+</div>
+
+<section class="install-card">
+  {% if state %}
+  <dl class="review-list">
+    <dt>Agência</dt><dd>{{ state.agency_name }}</dd>
+    <dt>Proprietário</dt><dd>{{ state.owner_email }}</dd>
+    <dt>Instalada em</dt><dd>{{ state.installed_at }}</dd>
+    <dt>Arquivo privado</dt><dd><code>{{ state.env_file }}</code></dd>
+  </dl>
+  {% else %}
+  <p class="review-empty">Já existe uma conta nesta instância, mas não há registro do instalador. Nada mais pode ser instalado por esta rota.</p>
+  {% endif %}
+  <div class="install-note">
+    <span>♧</span>
+    <div><b>Precisa reconfigurar?</b><p>Altere o arquivo privado no servidor (ou as variáveis de ambiente) e reinicie a aplicação. Para recomeçar do zero, remova o banco, os uploads e o arquivo de configuração — com backup antes.</p></div>
+  </div>
+</section>
+
+<div class="install-actions">
+  <p>Nenhuma conta, chave ou banco foi alterado por esta página.</p>
+  <a class="button primary" href="{{ login_url }}">Entrar no workspace <span>→</span></a>
+</div>
+{% endblock %}

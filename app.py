@@ -23,12 +23,29 @@ from flask import Flask, abort, g, jsonify, make_response, redirect, render_temp
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
+from installer import (
+    ENV_FILENAME,
+    InstallerPaths,
+    apply_env_file,
+    create_installer_blueprint,
+    installer_needed,
+    load_state,
+)
 from meta_integration import META_SCOPES, MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, fetch_permissions, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image, check_graph_tls_connectivity
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SOCIALMEDIA_DATA", BASE_DIR / "instance"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = Path(os.environ.get("SOCIALMEDIA_DB", DATA_DIR / "socialmedia.db"))
+# Configuration written by the browser installer is a fallback only: real
+# environment variables always take precedence. SOCIALMEDIA_INSTALLER_ENV
+# overrides the write location; SOCIALMEDIA_ENV_FILE still points at an
+# existing secrets file (for example a Docker env file) to be reused.
+INSTALLER_ENV_PATH = Path(os.environ.get(
+    "SOCIALMEDIA_INSTALLER_ENV",
+    os.environ.get("SOCIALMEDIA_ENV_FILE", DATA_DIR / ENV_FILENAME),
+))
+apply_env_file(INSTALLER_ENV_PATH)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 ROLES = {"owner", "admin", "editor", "viewer"}
 AI_REQUESTS = {}
@@ -385,8 +402,30 @@ def csrf_token():
 app.jinja_env.globals["csrf_token"] = csrf_token
 
 
+def installer_paths():
+    return InstallerPaths(data_dir=DATA_DIR, db_path=DB_PATH, env_path=INSTALLER_ENV_PATH)
+
+
+def apply_installed_configuration(values):
+    """Expose the freshly installed configuration to the running process."""
+    if values.get("SECRET_KEY"):
+        app.config["SECRET_KEY"] = values["SECRET_KEY"]
+    app.config["SESSION_COOKIE_SECURE"] = values.get("COOKIE_SECURE") == "1"
+
+
+app.register_blueprint(create_installer_blueprint(
+    paths=installer_paths,
+    apply_runtime_config=apply_installed_configuration,
+    login_endpoint="login",
+))
+
+
 @app.before_request
 def security_and_csrf():
+    # The installer renders its own form and validates its own CSRF token, so
+    # it must run before the session CSRF gate.
+    if request.blueprint == "installer":
+        return None
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         token = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
         expected = session.get("csrf_token", "")
@@ -866,7 +905,14 @@ def save_ai_usage(client_id, feature, usage, model):
 
 @app.route("/")
 def index():
-    return redirect(url_for("portal_approvals") if getattr(g, "portal_user", None) else (url_for("dashboard") if getattr(g, "user", None) else url_for("login")))
+    if getattr(g, "portal_user", None):
+        return redirect(url_for("portal_approvals"))
+    if getattr(g, "user", None):
+        return redirect(url_for("dashboard"))
+    # A brand-new instance sends the operator straight to the browser installer.
+    if installer_needed(installer_paths()):
+        return redirect(url_for("installer.installer_page"))
+    return redirect(url_for("login"))
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -955,7 +1001,9 @@ def dashboard():
     weekdays = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
     months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
     date_label = f"{weekdays[today.weekday()]}, {today.day:02d} de {months[today.month - 1]}"
-    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count, feed_count=feed_count, approval_pending_count=approval_pending_count, approval_total_count=approval_total_count, scheduled_count=scheduled_count)
+    install_record = load_state(installer_paths().state_path)
+    configured = (install_record or {}).get("configured", {})
+    return render_template("dashboard.html", counts=counts, clients=clients, date_label=date_label, post_count=post_count, ai_count=ai_count, plan_count=plan_count, studio_count=studio_count, feed_count=feed_count, approval_pending_count=approval_pending_count, approval_total_count=approval_total_count, scheduled_count=scheduled_count, install_record=install_record, install_configured=configured, install_env_file=INSTALLER_ENV_PATH)
 
 
 @app.get("/clients")

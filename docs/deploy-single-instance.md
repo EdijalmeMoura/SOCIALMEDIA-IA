@@ -4,6 +4,8 @@ Este caminho Docker é para uma **instância única** com SQLite e armazenamento
 
 ## Construir e iniciar
 
+> Alternativa sem segredos manuais: suba o serviço e abra `/install` no navegador — o [instalador pelo navegador](instalador-navegador.md) verifica o ambiente, grava `/data/installer.env` com permissão `0600` e cria o proprietário. Defina `SOCIALMEDIA_INSTALL_TOKEN` antes de expor a URL. Os passos abaixo continuam sendo o caminho com segredos provisionados fora da aplicação.
+
 1. Construa a imagem na raiz do repositório:
 
    ```sh

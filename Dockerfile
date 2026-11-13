@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /data \
     && chown app:app /data
 
-COPY app.py meta_integration.py ./
+COPY app.py meta_integration.py installer.py ./
 COPY templates ./templates
 COPY static ./static
 COPY docs ./docs

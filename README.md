@@ -13,14 +13,14 @@ Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 07*
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-SECRET_KEY="substitua-por-uma-chave-aleatoria-longa" python app.py
+python app.py
 ```
 
-Abra `http://localhost:5000`. O primeiro acesso começa pela criação de uma conta e agência. O banco SQLite e os uploads ficam em `instance/` (ignorado pelo Git). Para persistência em outro local, configure `SOCIALMEDIA_DB` e `SOCIALMEDIA_DATA`. O servidor usa a porta definida em `PORT` (padrão 5000) e escuta em `0.0.0.0` para permitir preview em sandbox.
+Abra `http://localhost:5000`. Em uma instância nova, a raiz redireciona para o **instalador pelo navegador** (`/install`), que verifica o ambiente, gera os segredos locais, cria a conta proprietária e grava a configuração privada em `$SOCIALMEDIA_DATA/installer.env` (permissão `0600`). Depois disso o instalador se fecha para sempre. Detalhes, proteção por token e diagnóstico estão em [`docs/instalador-navegador.md`](docs/instalador-navegador.md). O banco SQLite e os uploads ficam em `instance/` (ignorado pelo Git). Para persistência em outro local, configure `SOCIALMEDIA_DB` e `SOCIALMEDIA_DATA`. O servidor usa a porta definida em `PORT` (padrão 5000) e escuta em `0.0.0.0` para permitir preview em sandbox.
 
 ### Configuração para produção
 
-- **Obrigatório:** configurar um `SECRET_KEY` aleatório, forte e persistente.
+- **Obrigatório:** configurar um `SECRET_KEY` aleatório, forte e persistente — ou instalar pelo navegador, que gera e persiste um `SECRET_KEY` próprio. Variáveis de ambiente sempre têm precedência sobre o arquivo gerado.
 - Servir atrás de HTTPS e configurar `COOKIE_SECURE=1`.
 - Usar servidor WSGI de produção (ex.: Gunicorn), proxy reverso e armazenamento persistente/backup para banco e arquivos.
 - O limitador simples de tentativas de login está em memória e é voltado a uma instância. Em produção com múltiplos processos/instâncias, substituir por rate limiting compartilhado (Redis ou equivalente).
@@ -32,7 +32,7 @@ Abra `http://localhost:5000`. O primeiro acesso começa pela criação de uma co
 python -m unittest discover -s tests -v
 ```
 
-Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação, aprovações, notificações internas, agenda com fuso/auditoria, relatórios CSV e o protocolo OAuth/Graph Meta via mocks.
+Os testes criam banco e arquivos temporários e cobrem autenticação/CSRF, clientes, identidade de marca, isolamento multi-tenant, permissões, planejamento editorial, chamadas de API controladas, editor, versões, uploads/exportação, aprovações, notificações internas, agenda com fuso/auditoria, relatórios CSV, o protocolo OAuth/Graph Meta via mocks e o instalador pelo navegador (CSRF próprio, token de acesso, segredos mascarados, arquivo `0600`, fechamento após instalação e modo instalador do entrypoint).
 
 ## Etapa 01 implementada
 
@@ -105,7 +105,9 @@ Publicação automática em redes sociais, métricas de desempenho externo e bil
 
 ## Deploy para validação
 
-Há um caminho Docker/Docker Compose de instância única com Waitress, volume persistente e verificações de `SECRET_KEY`/cookie seguro no entrypoint: [`docs/deploy-single-instance.md`](docs/deploy-single-instance.md). A CI executa a suíte, constrói a imagem e faz um smoke test do contêiner em pushes e pull requests. O deploy não configura domínio, TLS, segredos ou permissões Meta, nem substitui o roteiro de validação ao vivo.
+Há um caminho Docker/Docker Compose de instância única com Waitress, volume persistente e verificações de `SECRET_KEY`/cookie seguro no entrypoint: [`docs/deploy-single-instance.md`](docs/deploy-single-instance.md).
+
+O **instalador pelo navegador** (`/install`) é o caminho mais curto: publica-se a instância, abre-se o endereço e conclui-se a configuração em três telas — sem editar `.env` nem rodar comandos. Ele só existe enquanto não há conta, gera os segredos, cria o proprietário e encerra a rota (`410`). Em Docker, se `SOCIALMEDIA_ENV_FILE` não existir, o entrypoint entra em modo instalador com um segredo efêmero de bootstrap e passa a exigir `SECRET_KEY` persistente após a instalação. Recomenda-se definir `SOCIALMEDIA_INSTALL_TOKEN` e abrir `/install?access_token=…`. Roteiro completo em [`docs/instalador-navegador.md`](docs/instalador-navegador.md). A CI executa a suíte, constrói a imagem e faz um smoke test do contêiner em pushes e pull requests. O deploy não configura domínio, TLS, segredos ou permissões Meta, nem substitui o roteiro de validação ao vivo.
 
 ## Etapa 08 em andamento — fundação Meta e notificações internas
 

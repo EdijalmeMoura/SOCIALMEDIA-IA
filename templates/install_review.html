@@ -1,0 +1,56 @@
+{% extends 'install_base.html' %}{% set step = 2 %}
+{% block title %}Revisar instalação{% endblock %}
+{% block top_note %}Nada foi gravado ainda{% endblock %}
+{% block content %}
+<div class="install-head">
+  <div class="install-kicker">REVISÃO</div>
+  <h1>Confira antes de criar a instância.</h1>
+  <p>Nada foi gravado até agora. Segredos aparecem mascarados; o valor completo nunca volta para o navegador.</p>
+</div>
+
+{% if errors %}<div class="alert error-alert install-errors" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+
+<div class="review-grid">
+  <section class="install-card">
+    <div class="install-card-head"><div><h2>Workspace</h2><p>Acesso do proprietário criado nesta confirmação.</p></div><span class="install-badge badge-ok">Pronto</span></div>
+    <dl class="review-list">{% for item in summary.workspace %}<dt>{{ item.label }}</dt><dd>{{ item.value }}</dd>{% endfor %}</dl>
+  </section>
+  <section class="install-card">
+    <div class="install-card-head"><div><h2>Segurança e arquivos</h2><p>Gerado no servidor durante a confirmação.</p></div></div>
+    <dl class="review-list">{% for item in summary.security %}<dt>{{ item.label }}</dt><dd>{{ item.value }}</dd>{% endfor %}</dl>
+  </section>
+  <section class="install-card">
+    <div class="install-card-head"><div><h2>Inteligência artificial</h2><p>{{ 'Chave ativa para planejamento e estúdio.' if summary.ai else 'Não configurada: recursos de IA ficam desabilitados.' }}</p></div><span class="install-badge {{ 'badge-ok' if summary.ai else 'badge-off' }}">{{ 'Ativa' if summary.ai else 'Desligada' }}</span></div>
+    {% if summary.ai %}<dl class="review-list">{% for item in summary.ai %}<dt>{{ item.label }}</dt><dd>{{ item.value }}</dd>{% endfor %}</dl>{% else %}<p class="review-empty">Você pode informar <code>OPENAI_API_KEY</code> depois no servidor e reiniciar a aplicação.</p>{% endif %}
+  </section>
+  <section class="install-card">
+    <div class="install-card-head"><div><h2>Conexões Meta</h2><p>{{ 'OAuth pronto para conectar Páginas.' if summary.meta else 'Integração desativada até configurar META_*.' }}</p></div><span class="install-badge {{ 'badge-ok' if summary.meta else 'badge-off' }}">{{ 'Configurada' if summary.meta else 'Pendente' }}</span></div>
+    {% if summary.meta %}<dl class="review-list">{% for item in summary.meta %}<dt>{{ item.label }}</dt><dd>{{ item.value }}</dd>{% endfor %}</dl>{% else %}<p class="review-empty">Sem App Meta nesta etapa. Nenhuma publicação acontece sem OAuth autorizado.</p>{% endif %}
+  </section>
+</div>
+
+<section class="install-card install-commit">
+  <h2>O que acontece ao confirmar</h2>
+  <ul class="commit-list">
+    <li><span>1</span><div><b>Configuração privada</b><small><code>{{ summary.security[0].value }}</code> escrito com permissão 0600.</small></div></li>
+    <li><span>2</span><div><b>Conta proprietária</b><small>Agência e usuário criados em uma única transação no SQLite.</small></div></li>
+    <li><span>3</span><div><b>Instalador encerrado</b><small>A rota <code>/install</code> fecha e passa a responder 410 nesta instância.</small></div></li>
+  </ul>
+</section>
+
+<div class="install-actions">
+  <form method="post" action="{{ url_for('installer.installer_cancel') }}" class="install-cancel-form">
+    <input type="hidden" name="install_csrf" value="{{ install_csrf }}">
+    {% if access_token_required %}<input type="hidden" name="access_token" value="{{ access_token }}">{% endif %}
+    <input type="hidden" name="draft" value="{{ draft_id }}">
+    <button class="button outline" type="submit">← Corrigir dados</button>
+  </form>
+  <form method="post" action="{{ url_for('installer.installer_run') }}" data-installer-form>
+    <input type="hidden" name="install_csrf" value="{{ install_csrf }}">
+    {% if access_token_required %}<input type="hidden" name="access_token" value="{{ access_token }}">{% endif %}
+    <input type="hidden" name="draft" value="{{ draft_id }}">
+    <button class="button primary install-submit" type="submit">Criar instância agora <span>→</span></button>
+  </form>
+</div>
+<p class="install-caution">Esta ação grava configuração e cria a conta. Revise o e-mail e a senha antes de prosseguir.</p>
+{% endblock %}
