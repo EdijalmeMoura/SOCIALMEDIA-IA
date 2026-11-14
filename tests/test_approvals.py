@@ -9,6 +9,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 TEST_ROOT = tempfile.TemporaryDirectory()
+# Sem .env real: a suíte pressupõe raiz "/" e ambiente limpo.
+os.environ["SOCIALMEDIA_DOTENV"] = str(Path(TEST_ROOT.name) / "sem-dotenv.env")
+os.environ.pop("SOCIALMEDIA_BASE_PATH", None)
 os.environ.setdefault("SOCIALMEDIA_DATA", TEST_ROOT.name)
 os.environ.setdefault("SOCIALMEDIA_DB", str(Path(TEST_ROOT.name) / "bootstrap.db"))
 import app as app_module  # noqa: E402

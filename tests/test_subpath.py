@@ -9,6 +9,9 @@ from pathlib import Path
 from unittest import mock
 
 TEST_ROOT = tempfile.TemporaryDirectory()
+# A suíte pressupõe raiz "/": neutraliza um .env real na pasta do projeto
+os.environ["SOCIALMEDIA_DOTENV"] = str(Path(TEST_ROOT.name) / "sem-dotenv.env")
+os.environ.pop("SOCIALMEDIA_BASE_PATH", None)
 os.environ["SOCIALMEDIA_DATA"] = TEST_ROOT.name
 os.environ["SOCIALMEDIA_DB"] = str(Path(TEST_ROOT.name) / "bootstrap.db")
 os.environ.pop("SOCIALMEDIA_AUTO_INSTALL", None)
@@ -254,6 +257,8 @@ class CgiEntryPointTests(unittest.TestCase):
             "SOCIALMEDIA_DATA": data,
             "SOCIALMEDIA_DB": str(Path(data) / "db.sqlite"),
             "SOCIALMEDIA_AUTO_INSTALL": "0",
+            # o CGI herda este env montado à mão: nada de .env do projeto
+            "SOCIALMEDIA_DOTENV": str(Path(data) / "sem-dotenv.env"),
             "REQUEST_METHOD": "GET",
             "QUERY_STRING": "",
             "SCRIPT_NAME": script_name,

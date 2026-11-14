@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 
 TEST_ROOT = tempfile.TemporaryDirectory()
+# A suíte pressupõe raiz "/": neutraliza um .env real na pasta do projeto
+os.environ["SOCIALMEDIA_DOTENV"] = str(Path(TEST_ROOT.name) / "sem-dotenv.env")
+os.environ.pop("SOCIALMEDIA_BASE_PATH", None)
 os.environ["SOCIALMEDIA_DATA"] = TEST_ROOT.name
 os.environ["SOCIALMEDIA_DB"] = str(Path(TEST_ROOT.name) / "bootstrap.db")
 import app as app_module  # noqa: E402

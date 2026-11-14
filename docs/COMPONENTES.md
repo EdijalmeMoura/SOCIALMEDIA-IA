@@ -1,6 +1,6 @@
 # Componentes do SocialMedia IA
 
-> Documento gerado a partir do código em 2026-11-14 00:53 UTC. Regere com `python component_map.py`.
+> Documento gerado a partir do código em 2026-11-14 00:59 UTC. Regere com `python component_map.py`.
 
 ## Índice
 
@@ -40,7 +40,7 @@ o que precisa existir para a aplicação rodar, o que é gerado em runtime, o qu
 | Templates | 32 |
 | Dependências Python | 4 |
 
-Documento gerado automaticamente em 2026-11-14 00:53 UTC por `python component_map.py`.
+Documento gerado automaticamente em 2026-11-14 00:59 UTC por `python component_map.py`.
 
 ## Arquitetura em uma tela
 

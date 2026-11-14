@@ -6,6 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 TEST_ROOT = tempfile.TemporaryDirectory()
+# A suíte pressupõe raiz "/": neutraliza um .env real na pasta do projeto
+os.environ["SOCIALMEDIA_DOTENV"] = str(Path(TEST_ROOT.name) / "sem-dotenv.env")
+os.environ.pop("SOCIALMEDIA_BASE_PATH", None)
 os.environ["SOCIALMEDIA_DATA"] = TEST_ROOT.name
 os.environ["SOCIALMEDIA_DB"] = str(Path(TEST_ROOT.name) / "bootstrap.db")
 import app as app_module  # noqa: E402
@@ -218,7 +221,10 @@ class AutomaticInstallationBootTests(unittest.TestCase):
         data = Path(self.temp.name)
         env = os.environ.copy()
         env.update(AUTO_ENV)
-        for key in ("SECRET_KEY", "SOCIALMEDIA_INSTALLER_ENV", "SOCIALMEDIA_ENV_FILE"):
+        # Sem .env real do projeto: o teste assume raiz "/" e segredos isolados.
+        env["SOCIALMEDIA_DOTENV"] = str(data / "sem-dotenv.env")
+        for key in ("SECRET_KEY", "SOCIALMEDIA_INSTALLER_ENV", "SOCIALMEDIA_ENV_FILE",
+                    "SOCIALMEDIA_BASE_PATH"):
             env.pop(key, None)
         env.update({
             "SOCIALMEDIA_DATA": str(data),
@@ -278,6 +284,7 @@ class EntrypointAutomaticInstallTests(unittest.TestCase):
         # The ephemeral bootstrap secret is only minted for ISO-formatted dates;
         # the real container runs on python:3.12-slim. Give the test one.
         env.update({"COOKIE_SECURE": "1", "PORT": "5000", "SOCIALMEDIA_DATA": str(self.data),
+                    "SOCIALMEDIA_DOTENV": str(self.data / "sem-dotenv.env"),
                     "SOCIALMEDIA_DB": str(self.data / "socialmedia.db"),
                     "SECRET_KEY": "bootstrap-test-secret-0123456789abcdef"})
         env.update(extra)
