@@ -40,6 +40,7 @@ ENV_GROUPS = (
         ("SOCIALMEDIA_DB", "caminho do arquivo SQLite (padrão $SOCIALMEDIA_DATA/socialmedia.db)", "opcional"),
         ("SOCIALMEDIA_INSTALLER_ENV", "caminho do arquivo privado de configuração gerado pelo instalador", "opcional"),
         ("SOCIALMEDIA_ENV_FILE", "arquivo de segredos já existente, reaproveitado pelo instalador", "opcional"),
+        ("SOCIALMEDIA_DOTENV", "caminho alternativo do .env carregado no boot (padrão: ./.env)", "opcional"),
     )),
     ("Servidor e segurança", (
         ("SECRET_KEY", "chave de assinatura de sessão; 32+ caracteres, persistente", "obrigatório em produção"),
@@ -102,6 +103,7 @@ def load_app_module(data_dir: Path | None = None):
     os.environ["SOCIALMEDIA_DATA"] = str(root)
     os.environ["SOCIALMEDIA_DB"] = str(root / "components.db")
     for key in ("SOCIALMEDIA_AUTO_INSTALL", "SOCIALMEDIA_INSTALLER_ENV", "SOCIALMEDIA_ENV_FILE",
+                "SOCIALMEDIA_DOTENV",
                 "SECRET_KEY", "SOCIALMEDIA_INSTALL_TOKEN"):
         os.environ.pop(key, None)
     sys.path.insert(0, str(ROOT))

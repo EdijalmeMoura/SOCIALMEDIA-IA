@@ -124,6 +124,34 @@ Somente as chaves da lista `CONFIG_ENV_KEYS` (`installer.py`) são lidas de
 volta; linhas desconhecidas, valores com espaços ou aspas são ignorados, então
 um arquivo adulterado não injeta configuração arbitrária no processo.
 
+### Arquivo `.env` na raiz do projeto
+
+Além do `installer.env` gerado, a aplicação lê um `.env` opcional **na mesma
+pasta do `app.py`** (ou no caminho de `SOCIALMEDIA_DOTENV`) no momento do boot,
+antes de qualquer configuração ser lida. Ele é útil no cPanel/VPS, onde o mais
+natural é editar um arquivo em vez de mexer no painel.
+
+Ordem de precedência, da mais forte para a mais fraca:
+
+1. variáveis reais do ambiente (cPanel, Docker, systemd);
+2. `.env` ao lado do código;
+3. `$SOCIALMEDIA_DATA/installer.env` gravado pelo instalador.
+
+Como só vale o que ainda não existe no ambiente, um `.env` nunca sobrescreve
+uma variável definida pelo painel da hospedagem. O formato aceito é
+`CHAVE=valor`, com `#` para comentários, `export` opcional e aspas opcionais.
+Use `chmod 600 .env` e mantenha o arquivo fora do Git (`.env` já é ignorado).
+
+```sh
+# ~/socialai/.env
+SOCIALMEDIA_BASE_PATH=/edijalmemoura/socialai
+SOCIALMEDIA_PUBLIC_ORIGIN=https://projetoredesnordeste.com.br/edijalmemoura/socialai
+SECRET_KEY=<48+ caracteres aleatórios>
+META_TOKEN_ENCRYPTION_KEY=<chave Fernet>
+COOKIE_SECURE=1
+SOCIALMEDIA_INSTALL_TOKEN=<token para abrir /install>
+```
+
 ## Proteção do primeiro acesso
 
 Enquanto não existe conta, quem abrir a URL pode instalar. Duas defesas:

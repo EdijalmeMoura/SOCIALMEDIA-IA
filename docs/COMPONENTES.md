@@ -1,6 +1,6 @@
 # Componentes do SocialMedia IA
 
-> Documento gerado a partir do código em 2026-11-14 00:23 UTC. Regere com `python component_map.py`.
+> Documento gerado a partir do código em 2026-11-14 00:53 UTC. Regere com `python component_map.py`.
 
 ## Índice
 
@@ -40,7 +40,7 @@ o que precisa existir para a aplicação rodar, o que é gerado em runtime, o qu
 | Templates | 32 |
 | Dependências Python | 4 |
 
-Documento gerado automaticamente em 2026-11-14 00:23 UTC por `python component_map.py`.
+Documento gerado automaticamente em 2026-11-14 00:53 UTC por `python component_map.py`.
 
 ## Arquitetura em uma tela
 
@@ -64,10 +64,10 @@ Waitress ──► app.py (Flask: rotas, sessão, CSRF, multi-tenant)
 
 | Arquivo | Linhas | Funções | Papel |
 | --- | --- | --- | --- |
-| `app.py` | 2894 | 141 |  |
-| `installer.py` | 1003 | 58 | First-run installation, automatic or through the browser. |
+| `app.py` | 2903 | 141 |  |
+| `installer.py` | 1049 | 60 | First-run installation, automatic or through the browser. |
 | `meta_integration.py` | 318 | 16 | Server-side Meta OAuth and Graph API helpers. |
-| `component_map.py` | 496 | 14 | Gera o mapa completo de componentes da instância. |
+| `component_map.py` | 498 | 14 | Gera o mapa completo de componentes da instância. |
 
 - **app.py** — tudo que é produto: autenticação, clientes, planejamento, estúdio,
   feed, aprovações, agenda, relatórios, notificações, Meta e health check.
@@ -283,6 +283,7 @@ são exibidos, logados ou versionados.
 | `SOCIALMEDIA_DB` | opcional | caminho do arquivo SQLite (padrão $SOCIALMEDIA_DATA/socialmedia.db) |
 | `SOCIALMEDIA_INSTALLER_ENV` | opcional | caminho do arquivo privado de configuração gerado pelo instalador |
 | `SOCIALMEDIA_ENV_FILE` | opcional | arquivo de segredos já existente, reaproveitado pelo instalador |
+| `SOCIALMEDIA_DOTENV` | opcional | caminho alternativo do .env carregado no boot (padrão: ./.env) |
 
 ### Servidor e segurança
 | Variável | Nível | Para que serve |
@@ -380,6 +381,7 @@ Meta.
 | `tests/test_backup_script.py` | 2 |
 | `tests/test_component_map.py` | 9 |
 | `tests/test_deployment.py` | 7 |
+| `tests/test_dotenv.py` | 7 |
 | `tests/test_feed.py` | 3 |
 | `tests/test_installer.py` | 23 |
 | `tests/test_installer_auto.py` | 18 |
@@ -388,8 +390,8 @@ Meta.
 | `tests/test_planner.py` | 6 |
 | `tests/test_reports.py` | 3 |
 | `tests/test_studio.py` | 6 |
-| `tests/test_subpath.py` | 17 |
-| **Total** | **141** |
+| `tests/test_subpath.py` | 23 |
+| **Total** | **154** |
 
 Cobrem autenticação/CSRF, isolamento multi-tenant, permissões, planejamento,
 estúdio, feed, aprovações, agenda, relatórios, Meta via mocks, instalador

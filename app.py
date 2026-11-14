@@ -25,18 +25,27 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
 from installer import (
+    DOTENV_ENV,
+    DOTENV_FILENAME,
     ENV_FILENAME,
     InstallerPaths,
     apply_env_file,
     create_installer_blueprint,
     installation_banner,
     installer_needed,
+    load_dotenv_file,
     load_state,
     run_automatic_installation,
 )
 from meta_integration import META_SCOPES, MetaIntegrationError, authorization_url, decrypt_token, encrypt_token, exchange_code, exchange_long_lived_token, fetch_pages, fetch_permissions, load_meta_settings, check_page_connection, publish_facebook_photo, publish_facebook_text, publish_instagram_image, check_graph_tls_connectivity
 
 BASE_DIR = Path(__file__).resolve().parent
+# `.env` opcional ao lado do código (ou em $SOCIALMEDIA_DOTENV). É carregado
+# ANTES de qualquer leitura de configuração e vale apenas como fallback:
+# variáveis reais do ambiente — cPanel, Docker, systemd — sempre vencem.
+DOTENV_PATH = Path(os.environ.get(DOTENV_ENV) or (BASE_DIR / DOTENV_FILENAME))
+if DOTENV_PATH.is_file():
+    load_dotenv_file(DOTENV_PATH)
 DATA_DIR = Path(os.environ.get("SOCIALMEDIA_DATA", BASE_DIR / "instance"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = Path(os.environ.get("SOCIALMEDIA_DB", DATA_DIR / "socialmedia.db"))

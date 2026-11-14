@@ -49,6 +49,8 @@ ENV_FILENAME = "installer.env"
 CSRF_COOKIE = "smia_install_csrf"
 CSRF_FIELD = "install_csrf"
 ACCESS_TOKEN_ENV = "SOCIALMEDIA_INSTALL_TOKEN"
+DOTENV_ENV = "SOCIALMEDIA_DOTENV"
+DOTENV_FILENAME = ".env"
 AUTO_INSTALL_ENV = "SOCIALMEDIA_AUTO_INSTALL"
 AUTO_INSTALL_KEYS = (
     "SOCIALMEDIA_AGENCY_NAME",
@@ -196,6 +198,50 @@ def apply_env_file(path, env=None) -> dict[str, str]:
     """Load generated configuration as a fallback: real env vars always win."""
     env = os.environ if env is None else env
     values = load_env_file(path)
+    for key, value in values.items():
+        env.setdefault(key, value)
+    return values
+
+
+DOTENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,80}")
+
+
+def parse_dotenv_text(text: str) -> dict[str, str]:
+    """Lê um ``.env`` no formato KEY=VALUE (aceita aspas, ``export`` e comentários).
+
+    Diferente de :func:`parse_env_text`, que aceita apenas as chaves que o
+    instalador grava, aqui vale qualquer variável conhecida da aplicação — é o
+    arquivo que o operador edita à mão.
+    """
+    values: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower().startswith("export "):
+            line = line[7:].strip()
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if not sep or not DOTENV_KEY_RE.fullmatch(key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        else:  # comentário no fim da linha: KEY=valor  # observação
+            valor_sem_comentario = value.split(" #", 1)[0].strip()
+            value = valor_sem_comentario
+        values[key] = value
+    return values
+
+
+def load_dotenv_file(path, env=None) -> dict[str, str]:
+    """Carrega ``.env`` como *fallback*: variáveis reais do ambiente vencem."""
+    env = os.environ if env is None else env
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    values = parse_dotenv_text(text)
     for key, value in values.items():
         env.setdefault(key, value)
     return values
