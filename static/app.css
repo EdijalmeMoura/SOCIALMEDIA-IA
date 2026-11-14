@@ -24,3 +24,14 @@
 .auth-install-note{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;background:#f4f6ff;border:1px solid #e6e9fb;border-radius:7px;padding:9px 11px;margin:0 0 13px;font-size:9px;color:#858db0}
 .auth-install-note b{font-size:9.5px;color:#4a5590}
 .auth-install-note span{line-height:1.6}
+
+/* Component inventory (owner/admin) */
+.components-hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 14px}
+.components-hero>div{display:flex;align-items:flex-start;gap:9px;background:#fff;border:1px solid #e9ebf3;border-radius:9px;padding:13px 14px}
+.components-hero b{display:block;font-size:11px}
+.components-hero small{display:block;margin-top:3px;font-size:8.5px;color:#949bab;line-height:1.5}
+.components-panel{padding-bottom:8px}
+.components-doc{margin:14px 0 6px;max-height:65vh;overflow:auto;background:#fbfcff;border:1px solid #eceff7;border-radius:8px;padding:16px 18px;font:400 10.5px/1.75 ui-monospace,'SFMono-Regular',Menlo,monospace;color:#3a4257;white-space:pre-wrap;word-break:break-word}
+.components-doc::selection{background:#dfe4ff}
+@media(max-width:1100px){.components-hero{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.components-hero{grid-template-columns:1fr}.components-doc{font-size:9.5px;padding:12px}}

@@ -31,11 +31,32 @@ jobs:
 
       - name: Validate Python, JavaScript, and container entrypoint syntax
         run: |
-          python -m py_compile app.py meta_integration.py installer.py tests/*.py
+          python -m py_compile app.py meta_integration.py installer.py component_map.py tests/*.py
           node --check static/app.js
           node --check static/install.js
           sh -n docker-entrypoint.sh
           sh -n scripts/backup-data.sh
+
+      - name: Verify component map is up to date
+        run: |
+          python component_map.py --output /tmp/COMPONENTES.md
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          def normalize(path):
+              text = Path(path).read_text(encoding="utf-8")
+              return re.sub(r"em .*? UTC", "em <gerado> UTC", text)
+
+          expected = normalize("docs/COMPONENTES.md")
+          actual = normalize("/tmp/COMPONENTES.md")
+          if expected != actual:
+              import difflib
+              diff = "".join(difflib.unified_diff(expected.splitlines(True), actual.splitlines(True),
+                                                  "docs/COMPONENTES.md", "gerado"))
+              raise SystemExit("docs/COMPONENTES.md está desatualizado. Rode: python component_map.py\n" + diff[:4000])
+          print("docs/COMPONENTES.md está atualizado.")
+          PY
 
       - name: Run test suite
         run: python -m unittest discover -s tests -v

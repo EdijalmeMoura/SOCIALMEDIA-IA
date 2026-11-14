@@ -1,0 +1,14 @@
+{% extends 'base.html' %}{% block title %}Componentes do sistema · SocialMedia IA{% endblock %}{% block breadcrumb %}Componentes{% endblock %}{% block content %}
+<div class="page-title-row"><div><div class="eyebrow muted-eyebrow">INVENTÁRIO TÉCNICO</div><h1>Componentes do sistema</h1><p class="page-subtitle">Gerado a partir do código em execução · {{ generated_at }}</p></div><div class="detail-actions"><a class="button outline" href="{{ url_for('component_map_download') }}">Baixar .md</a></div></div>
+<section class="components-hero">
+  <div><span class="stat-icon indigo">▦</span><div><b>{{ route_count }} rotas</b><small>Aplicação, portal e instalador</small></div></div>
+  <div><span class="stat-icon mint">⌘</span><div><b>Flask 3 + Waitress</b><small>sem build de front-end</small></div></div>
+  <div><span class="stat-icon amber">◫</span><div><b>SQLite + arquivos</b><small>volume persistente único</small></div></div>
+  <div><span class="stat-icon coral">♧</span><div><b>{{ 'Instância instalada' if state else 'Aguardando instalação' }}</b><small>{{ env_file.name }} · permissão 0600</small></div></div>
+</section>
+<section class="panel components-panel">
+  <div class="panel-heading"><div><h3>Documento completo</h3><p>Mesmo conteúdo de <code>docs/COMPONENTES.md</code>, sempre atualizado com o código em execução.</p></div></div>
+  <pre class="components-doc" aria-label="Mapa de componentes">{{ document }}</pre>
+</section>
+<p class="install-status-note">Para regenerar o arquivo versionado: <code>python component_map.py</code>. Este inventário não lê nem imprime segredos.</p>
+{% endblock %}

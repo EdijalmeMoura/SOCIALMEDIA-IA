@@ -2782,6 +2782,39 @@ def team_page():
     return render_template("team.html", members=members, error=error)
 
 
+@app.get("/admin/componentes")
+@roles_required("owner", "admin")
+def component_map_page():
+    """Live component inventory, generated from the running app."""
+    from component_map import build_document
+
+    document = build_document(app)
+    response = make_response(render_template(
+        "component_map.html",
+        document=document,
+        generated_at=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC"),
+        route_count=len([rule for rule in app.url_map.iter_rules() if rule.endpoint != "static"]),
+        state=load_state(installer_paths().state_path),
+        env_file=INSTALLER_ENV_PATH,
+    ))
+    response.headers["Content-Type"] = "text/html; charset=utf-8"
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@app.get("/admin/componentes.md")
+@roles_required("owner", "admin")
+def component_map_download():
+    """Same inventory as a Markdown file, for `curl`/backup/CI."""
+    from component_map import build_document
+
+    response = make_response(build_document(app))
+    response.headers["Content-Type"] = "text/markdown; charset=utf-8"
+    response.headers["Content-Disposition"] = 'inline; filename="COMPONENTES.md"'
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 @app.get("/health")
 def health():
     try:

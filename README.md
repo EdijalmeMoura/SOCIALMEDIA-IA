@@ -26,6 +26,22 @@ Abra `http://localhost:5000`. Em uma instância nova, a raiz redireciona para o 
 - O limitador simples de tentativas de login está em memória e é voltado a uma instância. Em produção com múltiplos processos/instâncias, substituir por rate limiting compartilhado (Redis ou equivalente).
 - A criação de colaborador define uma senha temporária manualmente. Não há envio de convite/e-mail nem recuperação de senha nesta etapa.
 
+## Componentes do sistema
+
+A lista completa de componentes — rotas, tabelas, templates, assets, dependências,
+variáveis de ambiente, arquivos em runtime, caminhos de instalação e checklist —
+está em [`docs/COMPONENTES.md`](docs/COMPONENTES.md). O documento é **gerado a
+partir do código** e pode ser refeito a qualquer momento:
+
+```bash
+python component_map.py            # regrava docs/COMPONENTES.md
+python component_map.py --stdout   # vê sem gravar
+```
+
+Com a instância instalada, owner/admin acessam a mesma visão sempre atualizada em
+**/admin/componentes** (ou `/admin/componentes.md` para baixar o Markdown). A CI
+falha se o arquivo versionado ficar desatualizado.
+
 ## Testes
 
 ```bash
