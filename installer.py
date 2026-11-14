@@ -255,6 +255,11 @@ def installer_needed(paths: InstallerPaths) -> bool:
     return count_accounts(paths.db_path) == 0
 
 
+def base_path(env=None) -> str:
+    env = os.environ if env is None else env
+    return (env.get("SOCIALMEDIA_BASE_PATH") or "").strip().rstrip("/")
+
+
 def access_token_configured(env=None) -> str:
     env = os.environ if env is None else env
     return (env.get(ACCESS_TOKEN_ENV) or "").strip()
@@ -299,6 +304,10 @@ def environment_checks(paths: InstallerPaths, secure_request: bool, env=None) ->
         else "Sem HTTPS confirmado: os cookies serão gravados sem o atributo Secure.",
     })
 
+    configured_base = base_path(env)
+    if configured_base:
+        checks.append({"label": "Subpasta da aplicação", "status": "ok",
+                       "detail": f"Rotas servidas sob {configured_base} (SOCIALMEDIA_BASE_PATH)."})
     checks.append({
         "label": "Proteção do instalador",
         "status": "ok" if access_token_configured(env) else "warn",
@@ -322,15 +331,29 @@ def request_is_secure(request_obj) -> bool:
     return proto == "https" or request_obj.is_secure
 
 
-def validate_public_origin(raw: str) -> str:
-    parsed = urlsplit(raw or "")
+def public_origin_parts(raw: str) -> tuple[str, str]:
+    """Split a public URL into ``(origin, base_path)``.
+
+    Subdirectory deployments are supported (``https://host/pasta``), because
+    cPanel-style hosting usually mounts the app under a folder.
+    """
+    parsed = urlsplit((raw or "").strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise InstallerError("Informe a URL pública com esquema e domínio, por exemplo https://app.suaagencia.com.")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
-        raise InstallerError("A URL pública deve ter apenas esquema e domínio, sem caminho, parâmetros ou credenciais.")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise InstallerError("A URL pública deve ter apenas esquema, domínio e caminho, sem parâmetros ou credenciais.")
+    path = (parsed.path or "").rstrip("/")
+    if path and (not path.startswith("/") or ".." in path or " " in path):
+        raise InstallerError("O caminho da URL pública é inválido.")
     if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1"}:
         raise InstallerError("A URL pública precisa usar HTTPS (HTTP só é aceito em localhost para desenvolvimento).")
-    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}", path
+
+
+def validate_public_origin(raw: str) -> str:
+    """Normalised public origin, keeping any subdirectory path."""
+    origin, path = public_origin_parts(raw)
+    return f"{origin}{path}".rstrip("/")
 
 
 def _register_access_failure(bucket: str) -> bool:
@@ -799,7 +822,7 @@ def create_installer_blueprint(*, paths, apply_runtime_config, login_endpoint: s
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
         response.set_cookie(CSRF_COOKIE, nonce, max_age=DRAFT_TTL_SECONDS, httponly=True,
-                            samesite="Lax", secure=False, path="/install")
+                            samesite="Lax", secure=False, path=f"{request.script_root or ''}/install" or "/install")
         return response
 
     def closed_page(status: int = 410):

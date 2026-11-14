@@ -1,0 +1,61 @@
+# SocialMedia IA — cPanel / LiteSpeed / Apache
+#
+# Serve a aplicação para QUALQUER caminho desta pasta (inclusive "/"), o que
+# resolve o 403 de diretório sem índice. Modo CGI: não precisa de Passenger.
+#
+# Ajuste apenas `RewriteBase` se a pasta pública tiver outro nome:
+#
+#   https://projetoredesnordeste.com.br/edijalmemoura/socialai/
+#   → RewriteBase /edijalmemoura/socialai/
+#
+# O `app.cgi` NÃO pode ser bloqueado por engano: ele é o programa que responde
+# às requisições. As regras de negação abaixo valem só para código e dados.
+
+Options -Indexes
+DirectoryIndex app.cgi
+
+<IfModule mod_cgi.c>
+    # Necessário em muitas hospedagens para executar .cgi
+    Options +ExecCGI
+    AddHandler cgi-script .cgi
+</IfModule>
+<IfModule mod_cgid.c>
+    AddHandler cgi-script .cgi
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /edijalmemoura/socialai/
+
+    # Nunca reescrever código, dados, logs ou diretórios internos.
+    RewriteRule ^(dados|instance|tests|docs|deploy|backups)(/|$) - [F,L]
+    RewriteRule ^(requirements\.txt|component_map\.py|passenger_wsgi\.py)$ - [F,L]
+    RewriteRule ^.*\.(py|pyc|env|db|sqlite|log|md|bak)$ - [F,L]
+    RewriteRule ^\. - [F,L]
+
+    # Arquivos reais (CSS, JS, uploads públicos) são servidos pelo servidor web.
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Todo o resto entra na aplicação preservando o caminho como PATH_INFO,
+    # para que /install, /dashboard, /static/... cheguem às rotas certas.
+    RewriteRule ^(.*)$ app.cgi/$1 [L,QSA]
+</IfModule>
+
+# Sem mod_rewrite, ao menos a raiz da pasta deixa de dar 403.
+<Files "app.cgi">
+    <IfModule mod_cgi.c>
+        SetHandler cgi-script
+    </IfModule>
+</Files>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Bloqueio do .env privado caso ele esteja dentro da pasta pública.
+<FilesMatch "^\.env">
+    Require all denied
+</FilesMatch>

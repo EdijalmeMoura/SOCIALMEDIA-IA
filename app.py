@@ -20,6 +20,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, abort, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -60,6 +61,43 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
 )
+# Behind a reverse proxy that mounts the app in a subdirectory (cPanel + Pass
+# through cPanel's "Application Manager"/.htaccess), the prefix arrives as
+# SCRIPT_NAME/X-Forwarded-Prefix. Honouring it keeps url_for, redirects and the
+# signed Meta media URLs correct under https://host/subpasta/.
+SCRIPT_BASE = (os.environ.get("SOCIALMEDIA_BASE_PATH", "") or "").strip().rstrip("/")
+if SCRIPT_BASE:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.config["APPLICATION_ROOT"] = SCRIPT_BASE or "/"
+
+
+class MountedPathFix:
+    """Normalise the root request when the app is mounted in a subdirectory.
+
+    A proxy in front of the app (Passenger on cPanel, Apache with
+    ``SetEnvIf``/mod_proxy) announces the mount point in ``SCRIPT_NAME`` while
+    forwarding the *inner* path.  Some servers forward ``PATH_INFO = "/"`` and
+    some forward ``""`` for the same page; both must reach the ``/`` route.
+
+    Werkzeug 3.1 treats ``PATH_INFO == ""`` as "the root URL without the
+    trailing slash" and answers with a 308 to ``/subpasta/`` — a redirect the
+    client follows, so the page still loads.  Keeping ``"/"`` untouched gives
+    the plain 302 the app builds itself, so this only makes sure a mounted
+    request never degrades into a routing redirect.
+    """
+
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        script_name = environ.get("SCRIPT_NAME") or ""
+        if script_name.rstrip("/") and environ.get("PATH_INFO") in ("", "/"):
+            environ["PATH_INFO"] = "/"
+        return self.wsgi_app(environ, start_response)
+
+
+app.wsgi_app = MountedPathFix(app.wsgi_app)
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1927,9 +1965,15 @@ def meta_callback_uri_matches(redirect_uri, current_host):
 
 
 def meta_public_base_url():
+    """Public HTTPS origin used by Meta to fetch media.
+
+    A subdirectory is allowed (``https://host/pasta``) because cPanel-style
+    hosting mounts the app under a folder; the signed URL is built from it.
+    """
     base_url = os.environ.get("META_PUBLIC_BASE_URL", "").strip().rstrip("/")
     parsed = urllib.parse.urlsplit(base_url)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path:
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or ".." in (parsed.path or "")):
         raise MetaIntegrationError("Configure META_PUBLIC_BASE_URL com a origem HTTPS pública desta aplicação para que a Meta possa buscar imagens aprovadas.")
     return base_url
 

@@ -1,6 +1,6 @@
 # Componentes do SocialMedia IA
 
-> Documento gerado a partir do código em 2026-11-14 00:01 UTC. Regere com `python component_map.py`.
+> Documento gerado a partir do código em 2026-11-14 00:23 UTC. Regere com `python component_map.py`.
 
 ## Índice
 
@@ -40,7 +40,7 @@ o que precisa existir para a aplicação rodar, o que é gerado em runtime, o qu
 | Templates | 32 |
 | Dependências Python | 4 |
 
-Documento gerado automaticamente em 2026-11-14 00:01 UTC por `python component_map.py`.
+Documento gerado automaticamente em 2026-11-14 00:23 UTC por `python component_map.py`.
 
 ## Arquitetura em uma tela
 
@@ -64,8 +64,8 @@ Waitress ──► app.py (Flask: rotas, sessão, CSRF, multi-tenant)
 
 | Arquivo | Linhas | Funções | Papel |
 | --- | --- | --- | --- |
-| `app.py` | 2850 | 139 |  |
-| `installer.py` | 980 | 56 | First-run installation, automatic or through the browser. |
+| `app.py` | 2894 | 141 |  |
+| `installer.py` | 1003 | 58 | First-run installation, automatic or through the browser. |
 | `meta_integration.py` | 318 | 16 | Server-side Meta OAuth and Graph API helpers. |
 | `component_map.py` | 496 | 14 | Gera o mapa completo de componentes da instância. |
 
@@ -388,7 +388,8 @@ Meta.
 | `tests/test_planner.py` | 6 |
 | `tests/test_reports.py` | 3 |
 | `tests/test_studio.py` | 6 |
-| **Total** | **124** |
+| `tests/test_subpath.py` | 17 |
+| **Total** | **141** |
 
 Cobrem autenticação/CSRF, isolamento multi-tenant, permissões, planejamento,
 estúdio, feed, aprovações, agenda, relatórios, Meta via mocks, instalador

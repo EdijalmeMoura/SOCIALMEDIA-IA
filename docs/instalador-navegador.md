@@ -171,6 +171,41 @@ instalada **sem** `SECRET_KEY` persistente falha fechado, como antes.
 
 `COOKIE_SECURE=1` continua obrigatório nesse caminho (o Compose já define).
 
+### cPanel / hospedagem compartilhada (app dentro de uma subpasta)
+
+Quando o endereço é `https://seu-dominio.com.br/edijalmemoura/socialai/`, a
+aplicação **é servida dentro de uma pasta**: o servidor web (LiteSpeed/Apache
+do cPanel) entrega o prefixo em `SCRIPT_NAME`/`X-Forwarded-Prefix` e a app
+precisa montar todas as URLs sob essa pasta. Um `403 Forbidden` nesse endereço
+significa apenas que nenhuma aplicação Python está atendendo a pasta — só
+enviar os arquivos não resolve. O roteiro completo (Passenger e CGI) está em
+[`deploy/cpanel/INSTALAR.md`](../deploy/cpanel/INSTALAR.md).
+
+```sh
+# variável de ambiente da aplicação no cPanel (Setup Python App → Environment variables)
+SOCIALMEDIA_BASE_PATH=/edijalmemoura/socialai
+```
+
+Com ela, `app.py` ativa o `ProxyFix`, define `APPLICATION_ROOT` e normaliza a
+requisição raiz, de modo que:
+
+- `GET /edijalmemoura/socialai/` → `302` para `…/socialai/install`
+  (a tela de instalação aparece em vez do 403);
+- CSS, JS e todos os formulários saem com o prefixo (`…/socialai/static/app.css`);
+- o cookie de sessão e o CSRF do instalador usam o caminho da subpasta;
+- o callback Meta vira `…/socialai/integrations/meta/callback`.
+
+No assistente, informe a **URL pública com a subpasta** — é ela que alimenta
+`META_REDIRECT_URI` e `META_PUBLIC_BASE_URL`:
+
+```
+https://projetoredesnordeste.com.br/edijalmemoura/socialai
+```
+
+Se o ambiente já injeta `X-Forwarded-Prefix` (Passenger e alguns proxies
+fazem isso sozinhos), `SOCIALMEDIA_BASE_PATH` pode ficar vazio: o prefixo
+repassado é respeitado do mesmo jeito.
+
 ## Escolhas de segurança (e seus limites)
 
 - **Um processo só**: os rascunhos da revisão e o ticket da tela final ficam em
