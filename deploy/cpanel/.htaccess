@@ -1,21 +1,27 @@
 # SocialMedia IA — cPanel / LiteSpeed / Apache
 #
-# Serve a aplicação para QUALQUER caminho desta pasta (inclusive "/"), o que
-# resolve o 403 de diretório sem índice. Modo CGI: não precisa de Passenger.
+# Coloque este arquivo em ~/public_html/edijalmemoura/socialai/.htaccess
+# (junto de app.cgi e do projeto).
 #
-# Ajuste apenas `RewriteBase` se a pasta pública tiver outro nome:
+# Ele faz o endereço abaixo entregar a APLICAÇÃO em vez do 403 de "diretório
+# sem índice". Modo CGI: não precisa de "Setup Python App" (Passenger).
 #
 #   https://projetoredesnordeste.com.br/edijalmemoura/socialai/
-#   → RewriteBase /edijalmemoura/socialai/
+#      → redireciona para …/socialai/install → tela de instalação
 #
-# O `app.cgi` NÃO pode ser bloqueado por engano: ele é o programa que responde
-# às requisições. As regras de negação abaixo valem só para código e dados.
+# IMPORTANTE: se `Options +ExecCGI` ou o rewrite não valerem nesta pasta, a
+# hospedagem pode exigir que você libere CGI no diretório pai (ou abra ticket).
 
+# ---------------------------------------------------------------------------
+# 1. Nada de listagem de diretório e app.cgi como índice (mata o 403)
+# ---------------------------------------------------------------------------
 Options -Indexes
 DirectoryIndex app.cgi
 
+# ---------------------------------------------------------------------------
+# 2. CGI habilitado para o app.cgi
+# ---------------------------------------------------------------------------
 <IfModule mod_cgi.c>
-    # Necessário em muitas hospedagens para executar .cgi
     Options +ExecCGI
     AddHandler cgi-script .cgi
 </IfModule>
@@ -23,39 +29,57 @@ DirectoryIndex app.cgi
     AddHandler cgi-script .cgi
 </IfModule>
 
+# ---------------------------------------------------------------------------
+# 3. Roteamento: tudo entra no app.cgi preservando o caminho
+# ---------------------------------------------------------------------------
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteBase /edijalmemoura/socialai/
 
-    # Nunca reescrever código, dados, logs ou diretórios internos.
-    RewriteRule ^(dados|instance|tests|docs|deploy|backups)(/|$) - [F,L]
-    RewriteRule ^(requirements\.txt|component_map\.py|passenger_wsgi\.py)$ - [F,L]
-    RewriteRule ^.*\.(py|pyc|env|db|sqlite|log|md|bak)$ - [F,L]
-    RewriteRule ^\. - [F,L]
+    # RewriteBase relativo: NÃO fixe "/edijalmemoura/socialai/" aqui. A regra
+    # abaixo funciona subindo do arquivo até a raiz do site, então o mesmo
+    # .htaccess serve em qualquer pasta, domínio ou subdomínio.
+    RewriteBase /
 
-    # Arquivos reais (CSS, JS, uploads públicos) são servidos pelo servidor web.
-    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    # Bloqueios de segurança vêm ANTES do roteamento.
+    RewriteRule (^|/)(dados|instance|tests|docs|deploy|backups)(/|$) - [F,L]
+    RewriteRule (^|/)\.(git|env|htaccess|gitignore) - [F,L]
+    RewriteRule \.(py|pyc|pyo|env|db|sqlite|sqlite3|log|bak|md|ini|cfg|yaml|yml)$ - [F,L]
+    RewriteRule (^|/)(requirements\.txt|component_map\.py|passenger_wsgi\.py|docker-compose\.yml|compose\.yaml)$ - [F,L]
+
+    # Arquivos e pastas reais (static/, uploads públicos) continuam sendo
+    # servidos pelo servidor web — mais rápido e sem passar pelo CGI.
+    RewriteCond %{REQUEST_FILENAME} -f
+    RewriteRule ^ - [L]
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
-    # Todo o resto entra na aplicação preservando o caminho como PATH_INFO,
-    # para que /install, /dashboard, /static/... cheguem às rotas certas.
+    # Todo o resto é da aplicação: /install, /dashboard, /login, /api/...
     RewriteRule ^(.*)$ app.cgi/$1 [L,QSA]
 </IfModule>
 
-# Sem mod_rewrite, ao menos a raiz da pasta deixa de dar 403.
+# ---------------------------------------------------------------------------
+# 4. Sem mod_rewrite: a raiz da pasta ainda deixa de dar 403
+# ---------------------------------------------------------------------------
 <Files "app.cgi">
     <IfModule mod_cgi.c>
         SetHandler cgi-script
     </IfModule>
 </Files>
 
+# ---------------------------------------------------------------------------
+# 5. Cabeçalhos básicos (a aplicação também envia os seus)
+# ---------------------------------------------------------------------------
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
-# Bloqueio do .env privado caso ele esteja dentro da pasta pública.
+# ---------------------------------------------------------------------------
+# 6. Cinto e suspensório: nada de .env/senhas servidos por engano
+# ---------------------------------------------------------------------------
 <FilesMatch "^\.env">
+    Require all denied
+</FilesMatch>
+<FilesMatch "\.(py|db|sqlite3?|log|env)$">
     Require all denied
 </FilesMatch>

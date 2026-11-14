@@ -313,5 +313,109 @@ class CgiEntryPointTests(unittest.TestCase):
         self.assertIn("+ExecCGI", htaccess)
 
 
+class HtaccessRuleTests(unittest.TestCase):
+    """As regras do `.htaccess` do cPanel, avaliadas como o Apache faria.
+
+    O bug original era o oposto: o `<FilesMatch>` negava `app.cgi`, então todo
+    acesso virava 403. Aqui as regras são lidas do arquivo e aplicadas a URIs
+    reais, para garantir que (a) o entry point e os assets passam e (b) código
+    e dados continuam bloqueados.
+    """
+
+    HTACCESS = Path(__file__).resolve().parents[1] / "deploy/cpanel/.htaccess"
+
+    @classmethod
+    def setUpClass(cls):
+        """Lê as regras na ordem do arquivo, com as RewriteCond que as guardam."""
+        cls.rules = []
+        condicoes = []
+        for line in cls.HTACCESS.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("RewriteCond"):
+                condicoes.append(" ".join(line.split()[1:]))
+                continue
+            if not line.startswith("RewriteRule"):
+                condicoes = []
+                continue
+            parts = line.split()
+            pattern, target = parts[1], parts[2]
+            flags = parts[3] if len(parts) > 3 else ""
+            cls.rules.append((re.compile(pattern), target, flags, tuple(condicoes)))
+            condicoes = []
+        cls.deny_files = re.findall(
+            r'<FilesMatch\s+"([^"]+)"\s*>(.*?)</FilesMatch>',
+            cls.HTACCESS.read_text(), re.DOTALL,
+        )
+
+    def simulate(self, uri, arquivos_existentes=(), pastas_existentes=()):
+        """Primeira regra que casa, como o Apache avalia no diretório.
+
+        Em contexto de diretório o caminho chega sem a barra inicial; as
+        condições `-f`/`-d` só passam quando o alvo existe de fato.
+        """
+        caminho = uri.lstrip("/")
+        for pattern, target, flags, condicoes in self.rules:
+            if not pattern.search(caminho):
+                continue
+            casa = True
+            if any(cond.endswith(" -f") for cond in condicoes) and caminho not in arquivos_existentes:
+                casa = False
+            if any(cond.endswith(" -d") for cond in condicoes) and caminho not in pastas_existentes:
+                casa = False
+            if not casa:
+                continue
+            if "[F" in flags:
+                return "403", None
+            if target.startswith("app.cgi"):
+                return "app", "app.cgi/" + caminho
+            if target.startswith("-"):
+                return "static", None
+        return "static", None
+
+    def test_install_and_dashboard_go_to_the_entry_point(self):
+        for uri in ("/", "/install", "/install/review", "/dashboard", "/login", "/api/health"):
+            action, destino = self.simulate(uri)
+            self.assertEqual(action, "app", f"{uri} deveria entrar no app.cgi")
+            self.assertEqual(destino, "app.cgi" + uri)
+
+    def test_real_files_and_folders_bypass_the_entry_point(self):
+        action, _ = self.simulate("/static/app.css", arquivos_existentes=("static/app.css",))
+        self.assertEqual(action, "static", "assets reais devem ser servidos direto")
+        action, _ = self.simulate("/static", pastas_existentes=("static",))
+        self.assertEqual(action, "static", "pastas reais devem ser servidas direto")
+
+    def test_private_code_and_data_are_denied(self):
+        for uri in ("/app.py", "/installer.py", "/dados/socialmedia.db",
+                    "/dados/installer.env", "/.env", "/.git/config",
+                    "/requirements.txt", "/tests/test_subpath.py",
+                    "/docs/COMPONENTES.md", "/deploy/cpanel/app.cgi"):
+            action, _ = self.simulate(uri)
+            self.assertEqual(action, "403", f"{uri} deveria ser bloqueado")
+
+    def test_entry_point_and_assets_are_never_denied_by_filesmatch(self):
+        for pattern, body in self.deny_files:
+            if "denied" not in body:
+                continue
+            compiled = re.compile(pattern)
+            self.assertIsNone(compiled.search("app.cgi"), f"FilesMatch bloqueia o app.cgi: {pattern}")
+            self.assertIsNone(compiled.search("index.cgi"), f"FilesMatch bloqueia index.cgi: {pattern}")
+
+    def test_rewrite_base_is_not_hardcoded_to_a_folder(self):
+        """RewriteBase fixo quebra o pacote em qualquer outra pasta/domínio."""
+        codigo = [linha for linha in self.HTACCESS.read_text().splitlines()
+                  if linha.strip() and not linha.strip().startswith("#")]
+        bases = [linha.split()[1] for linha in codigo if linha.strip().startswith("RewriteBase")]
+        self.assertEqual(bases, ["/"], f"RewriteBase deve ser relativo, veio {bases}")
+        self.assertFalse([linha for linha in codigo if "/edijalmemoura/socialai" in linha],
+                         "nenhuma diretiva pode fixar a pasta do cliente")
+
+    def test_cgi_is_enabled_and_directory_index_points_to_the_entry_point(self):
+        texto = self.HTACCESS.read_text()
+        self.assertIn("Options +ExecCGI", texto)
+        self.assertIn("AddHandler cgi-script .cgi", texto)
+        self.assertIn("DirectoryIndex app.cgi", texto)
+        self.assertIn("Options -Indexes", texto)
+
+
 if __name__ == "__main__":
     unittest.main()
