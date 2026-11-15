@@ -1,0 +1,54 @@
+SocialMedia IA — versão PHP (cPanel)
+====================================
+
+PHP puro: sobe e funciona. Sem Passenger, sem Composer, sem comandos.
+
+ARQUIVOS JÁ PRONTOS
+  .env .................. configuração do SEU endereço, com segredos gerados
+  public/ ............... única pasta pública (index.php + assets + .htaccess)
+  app/ .................. código (rotas, banco, instalador, views)
+  data/ ................. banco e segredos gerados pela instalação
+
+CAMINHO 1 — subpasta dentro de public_html (mais simples)
+--------------------------------------------------------
+1. Envie TODO o conteúdo desta pasta para:
+      ~/public_html/edijalmemoura/socialai/
+2. Crie ~/public_html/edijalmemoura/socialai/.htaccess com:
+
+      RewriteEngine On
+      RewriteRule ^$ public/ [L]
+      RewriteRule ^(.*)$ public/$1 [L]
+
+3. chmod 600 .env    ·    chmod 755 data
+4. Abra:
+      https://projetoredesnordeste.com.br/edijalmemoura/socialai/install?access_token=<SEU_TOKEN_AQUI>
+
+CAMINHO 2 — document root apontando para public/ (mais limpo)
+-------------------------------------------------------------
+1. Envie a pasta para ~/socialai-php (FORA de public_html).
+2. Aponte o domínio/subdomínio para ~/socialai-php/public.
+3. chmod 600 .env · chmod 755 data
+4. Abra o endereço com ?access_token=... como acima.
+
+DEPOIS DE INSTALAR
+  - /install passa a responder 410 (instalador encerrado).
+  - Entre por /login com o e-mail e a senha cadastrados.
+  - Apague SOCIALMEDIA_INSTALL_TOKEN do .env.
+
+O QUE ESTA VERSÃO JÁ FAZ
+  Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
+  Workspace + proprietário em transação única no SQLite
+  Senha só como hash (Argon2id), segredos em arquivo 0600
+  Login com trava de tentativas, logout com CSRF
+  Dashboard com estado da instância e auditoria
+  Funciona em subpasta (URLs, cookies e redirects prefixados)
+
+PRÓXIMOS MÓDULOS
+  clientes → planejamento → estúdio → aprovações → feed → relatórios → Meta
+
+PROBLEMAS COMUNS
+  500 .............. log de erros do cPanel; falta permissão em data/
+  403 .............. token ausente/errado, ou .htaccess do caminho 1 ausente
+  página em branco . PHP 8.0+ e extensões pdo_sqlite, mbstring ativas
+
+Documentação completa: README.md

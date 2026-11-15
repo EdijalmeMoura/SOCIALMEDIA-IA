@@ -20,9 +20,10 @@ dependência para instalar.
 1. Envie o conteúdo desta pasta (`php/`) para `~/socialai-php` — **fora** de
    `public_html` — e aponte o domínio/subpasta para `~/socialai-php/public`.
 
-   Se preferir o caminho tradicional do cPanel, envie direto para
-   `~/public_html/edijalmemoura/socialai/` mantendo `public/` como pasta
-   pública; o `public/.htaccess` já cuida do roteamento.
+   Se preferir o caminho tradicional do cPanel, envie a pasta inteira para
+   `~/public_html/edijalmemoura/socialai/`. O `.htaccess` da raiz do projeto
+   (versionado) manda tudo para `public/` e bloqueia `.env`, `data/`, `app/`
+   e `tests/`, então nada fica exposto nem precisa ser configurado à mão.
 
 2. Copie `.env.example` para `.env` e ajuste:
 
@@ -43,11 +44,10 @@ dependência para instalar.
 5. Conclua o assistente. O instalador **se fecha** (`410`) e você entra por
    `/login` com o e-mail e a senha cadastrados.
 
-### Alternativa: subpasta real dentro de public_html
+### Alternativa: sem rewrite na raiz
 
-Quer manter o endereço exatamente `/edijalmemoura/socialai/` sem mudar o
-document root? Envie o projeto para `public_html/edijalmemoura/socialai/` e
-crie, em `public_html/edijalmemoura/socialai/index.php`, apenas:
+Se o servidor não honrar o `.htaccess` da raiz (raro no cPanel), crie
+`public_html/edijalmemoura/socialai/index.php` apenas com:
 
 ```php
 <?php require __DIR__ . '/public/index.php';
@@ -72,7 +72,9 @@ php/
 │   ├── Auth/                ← login, trava de tentativas, rehash
 │   ├── Controllers/         ← instalador, autenticação, dashboard
 │   └── views/               ← templates PHP com escape obrigatório
-├── data/              ← SQLite, .env gerado e rascunhos (ignorado no Git)
+├── .htaccess          ← raiz: manda para public/ e bloqueia app/, data/, tests/
+├── data/              ← SQLite, .env gerado e rascunhos (conteúdo ignorado no Git;
+│                        o .htaccess que nega acesso é versionado)
 └── tests/             ← suíte que roda em PHP 8.3 real (php-wasm)
 ```
 

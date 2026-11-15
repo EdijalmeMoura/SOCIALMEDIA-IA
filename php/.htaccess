@@ -1,0 +1,41 @@
+# SocialMedia IA (PHP) — .htaccess da raiz do projeto.
+#
+# Use este arquivo quando enviar a pasta inteira para dentro de public_html
+# (cPanel sem apontar document root para public/). Ele faz duas coisas:
+#   1. manda todo o tráfego para public/ (o único lugar que deve ser público);
+#   2. bloqueia o que nunca pode ser baixado: .env, data/ (banco), app/, tests/.
+#
+# Se você apontou o document root direto para public/, este arquivo é inócuo
+# e pode ficar: o .htaccess de public/ faz o trabalho.
+
+Options -Indexes
+
+# --- Bloqueios (valem em Apache 2.4 e 2.2 do cPanel) ---
+<FilesMatch "(^\.env|^\.git|composer\.(json|lock)$|\.(sqlite|sqlite3|db|log|bak|ini|md)$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Nada de reescrever o que já está em public/ (evita public/public/...).
+    RewriteRule ^public/ - [L]
+
+    # Código, dados, documentação e testes nunca são servidos.
+    RewriteRule ^(app|data|tests)(/|$) - [F,L]
+
+    # O resto é a aplicação. NÃO fixe a subpasta: o index.php detecta sozinho,
+    # então o mesmo pacote serve em /, em /edijalmemoura/socialai ou em subdomínio.
+    RewriteRule ^$ public/ [L]
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+</IfModule>
