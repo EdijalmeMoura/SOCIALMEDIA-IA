@@ -10,12 +10,47 @@
  * Só é usado pelos testes — nunca é empacotado para o cPanel.
  */
 import { createServer } from 'node:http';
+import { crc32, deflateSync } from 'node:zlib';
 
 const cenarios = {
   401: { status: 401, body: { error: { message: 'Incorrect API key provided', type: 'invalid_request_error' } } },
   429: { status: 429, body: { error: { message: 'Rate limit reached for requests', type: 'requests' } } },
   500: { status: 500, body: { error: { message: 'The server had an error', type: 'server_error' } } },
 };
+
+/**
+ * PNG mínimo e válido (largura x altura, cor sólida), gerado sem dependências.
+ * É o "resultado" da API de imagens nos testes.
+ */
+function pngSolido(largura, altura, [r, g, b]) {
+  const assinatura = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const bloco = (tipo, dados) => {
+    const comprimento = Buffer.alloc(4);
+    comprimento.writeUInt32BE(dados.length);
+    const corpo = Buffer.concat([Buffer.from(tipo, 'ascii'), dados]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(corpo) >>> 0);
+    return Buffer.concat([comprimento, corpo, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(largura, 0);
+  ihdr.writeUInt32BE(altura, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const linha = Buffer.alloc(1 + largura * 3);
+  for (let x = 0; x < largura; x += 1) {
+    linha[1 + x * 3] = r;
+    linha[2 + x * 3] = g;
+    linha[3 + x * 3] = b;
+  }
+  const dados = Buffer.concat(Array.from({ length: altura }, () => linha));
+  return Buffer.concat([
+    assinatura,
+    bloco('IHDR', ihdr),
+    bloco('IDAT', deflateSync(dados)),
+    bloco('IEND', Buffer.alloc(0)),
+  ]);
+}
 
 /** Posts coerentes com o pedido recebido no prompt. */
 function gerarPosts(spec) {
@@ -60,7 +95,7 @@ const servidor = createServer((req, res) => {
     }
 
     const dados = JSON.parse(bruto || '{}');
-    if (cenario !== 'invalido' && !req.headers.authorization?.startsWith('Bearer chave-')) {
+    if (cenario !== 'invalido' && cenario !== 'imagem' && !req.headers.authorization?.startsWith('Bearer chave-')) {
       responder(401, { error: { message: 'Incorrect API key provided' } });
       return;
     }
@@ -70,17 +105,51 @@ const servidor = createServer((req, res) => {
       spec = JSON.parse(dados.messages?.[1]?.content ?? '{}').planejamento ?? spec;
     } catch { /* mantém o padrão */ }
 
+    if (url.pathname.endsWith('/images/generations')) {
+      if (cenario === 'imagem-401') {
+        responder(401, { error: { message: 'Incorrect API key provided' } });
+        return;
+      }
+      if (cenario === 'imagem-vazia') {
+        responder(200, { data: [{ b64_json: Buffer.from('nao sou png').toString('base64') }], usage: {} });
+        return;
+      }
+      const [largura, altura] = String(dados.size ?? '1024x1024').split('x').map(Number);
+      responder(200, {
+        created: 1,
+        data: [{ b64_json: pngSolido(largura || 1024, altura || 1024, [17, 34, 68]).toString('base64') }],
+        usage: { input_tokens: 12, output_tokens: 34 },
+      });
+      return;
+    }
+
     if (cenario === 'invalido') {
       // Conteúdo que não é JSON: o gerador deve recusar com mensagem tratada.
       responder(200, { choices: [{ message: { content: 'desculpe, não consegui gerar' } }], usage: {} });
       return;
     }
 
+    // Dois contratos no mesmo provedor: planejamento manda "planejamento",
+    // estúdio manda "assunto". A resposta segue o pedido recebido.
+    const pedido = JSON.parse(dados.messages?.[1]?.content ?? '{}');
+    const conteudo = pedido.planejamento
+      ? { posts: gerarPosts(pedido.planejamento) }
+      : {
+        title: 'Tema IA 1',
+        subtitle: 'Subtítulo da arte',
+        caption: 'Legenda gerada pela IA para a arte.',
+        hashtags: ['#ia', '#arte'],
+        cta: 'Fale com a gente',
+        visual_brief: 'Composição com área de respiro e cor da marca.',
+        image_suggestion: 'Foto real do ambiente.',
+        composition: 'Texto à esquerda, imagem ao fundo.',
+      };
+
     responder(200, {
       id: 'chatcmpl-teste',
       object: 'chat.completion',
       model: dados.model,
-      choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify({ posts: gerarPosts(spec) }) }, finish_reason: 'stop' }],
+      choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(conteudo) }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 1234, completion_tokens: 567, total_tokens: 1801 },
     });
   });

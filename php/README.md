@@ -3,16 +3,17 @@
 Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 (cPanel): sobe os arquivos e funciona. Sem Composer, sem Node, sem Passenger.
 
-> Estado atual: **base funcional + clientes + planejamento** — instalador de 3
-> telas, login, dashboard, banco SQLite, sessão/CSRF, tratamento de subpasta, o
-> portfólio de clientes (perfil, identidade visual, logo e referências) e o
-> calendário editorial com IA. Os demais módulos (estúdio, aprovações, feed,
+> Estado atual: **base funcional + clientes + planejamento + estúdio** —
+> instalador de 3 telas, login, dashboard, banco SQLite, sessão/CSRF, tratamento
+> de subpasta, portfólio de clientes (perfil, identidade visual, logo e
+> referências), calendário editorial com IA e criação de artes com prancheta,
+> histórico de versões e exportação. Os demais módulos (aprovações, feed,
 > relatórios, Meta) entram um a um, reaproveitando esta mesma base e o mesmo
 > esquema de dados.
 
 ## Baixar o pacote pronto
 
-`downloads/SOCIALMEDIA-IA-php-v1.2.zip` nesta pasta é o pacote completo (`.env`
+`downloads/SOCIALMEDIA-IA-php-v1.3.zip` nesta pasta é o pacote completo (`.env`
 com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
 publicada em
 [`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
@@ -164,11 +165,57 @@ Regras que valem a pena saber:
 - Escritas deixam evento no `audit_log` (`planner.created`, `planner.production`,
   `planner.deleted`).
 
+### Estúdio (pronto)
+
+Um assunto vira arte pronta: texto, imagem de fundo, ajuste na prancheta e
+arquivo final para publicar.
+
+| Rota | Método | O que faz | Quem pode |
+|---|---|---|---|
+| `/studio` | GET | formulário de criação + galeria de artes | todos |
+| `/studio/generate` | POST | cria a arte (IA ou rascunho local) | owner, admin, editor |
+| `/studio/posts/{id}` | GET | editor com prancheta, controles e versões | todos |
+| `/studio/posts/{id}/save` | POST | salva texto, layout e cor numa nova versão | owner, admin, editor |
+| `/studio/posts/{id}/image` | POST | gera a imagem de fundo com IA | owner, admin, editor |
+| `/studio/posts/{id}/image/upload` | POST | envia sua imagem (ajustada ao formato) | owner, admin, editor |
+| `/studio/posts/{id}/export` | POST | recebe o PNG/JPG renderizado e libera o download | owner, admin, editor |
+| `/studio/posts/{id}/download` | GET | baixa a arte exportada | todos |
+| `/studio/posts/{id}/variation` | POST | cria uma versão criativa alternativa | owner, admin, editor |
+| `/studio/posts/{id}/versions/{v}/restore` | POST | restaura uma versão anterior | owner, admin, editor |
+| `/studio/posts/{id}/delete` | POST | exclui a arte, as versões e os arquivos | owner, admin, editor |
+| `/studio/files?file=…` | GET | serve imagem/exportação **só da própria empresa** | todos |
+
+Sete formatos com as mesmas medidas do produto Python: post quadrado (1080×1080),
+post vertical e anúncio (1080×1350), stories (1080×1920), carrossel (1080×1350),
+banner (1200×628) e capa (1640×624).
+
+Regras que valem a pena saber:
+
+- **A prancheta desenha no navegador**, não no servidor: título, subtítulo, CTA e
+  assinatura da marca seguem um layout JSON validado no PHP (quatro elementos,
+  coordenadas dentro do canvas, cores `#rrggbb`). Sem biblioteca gráfica no
+  servidor — funciona em qualquer cPanel.
+- A exportação manda o PNG/JPG renderizado de volta ao PHP, que confere a
+  assinatura dos bytes, grava o arquivo e libera o download nomeado
+  (`socialmedia-ia-{id}.png`).
+- **Sem `OPENAI_API_KEY`** o estúdio cria um *rascunho local* marcado como tal e
+  deixa o botão de imagem desabilitado; enviar a própria imagem funciona.
+- Com chave: texto pelo Chat Completions e imagem pelo endpoint de imagens
+  (`OPENAI_IMAGE_MODEL`, padrão `gpt-image-1`). O consumo entra em
+  `ai_generations` (`studio_copy`, `studio_image`, `studio_variation`).
+- **Cada ação vira versão**: gerar, editar, trocar imagem, exportar e restaurar
+  guardam uma cópia do estado — dá para voltar atrás sem perder trabalho.
+- A imagem é sempre reenquadrada para o formato (cobre e corta o excesso,
+  centralizada) e validada pela assinatura dos bytes; limite de 8 MB.
+- Conteúdo da IA é entrada não confiável: escapado na tela e limitado no layout.
+- Isolamento por `company_id` em tudo, inclusive no arquivo servido; a exclusão
+  remove arte, versões em cascata e os arquivos do disco.
+
 ### Próximos
 
-estúdio → aprovações → feed → relatórios → Meta. Cada um entra por migração
-aditiva do `Schema` (versão 2 = clientes, versão 3 = planejamento), então
-atualizar o pacote nunca apaga dados de uma instalação em uso.
+aprovações → feed → relatórios → Meta. Cada um entra por migração aditiva do
+`Schema` (versão 2 = clientes, 3 = planejamento, 4 = estúdio), então atualizar o
+pacote nunca apaga dados de uma instalação em uso.
 
 ## Subpasta: como é resolvido
 

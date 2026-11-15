@@ -14,10 +14,11 @@ namespace Smia\Database;
  * Versões: 1 = base (empresa, usuários, instalação, auditoria)
  *           2 = clientes (perfil, identidade visual, biblioteca de imagens)
  *           3 = planejamento (calendário editorial e publicações)
+ *           4 = estúdio (artes, versões e itens de feed)
  */
 final class Schema
 {
-    public const VERSAO = 3;
+    public const VERSAO = 4;
 
     public static function migrate(Database $db): void
     {
@@ -179,6 +180,62 @@ CREATE TABLE IF NOT EXISTS ai_generations (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_ai_generations_tenant ON ai_generations(company_id, created_at);
+
+-- Estúdio: artes criadas a partir de um assunto, com histórico de versões.
+CREATE TABLE IF NOT EXISTS creative_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    subject TEXT NOT NULL,
+    format_key TEXT NOT NULL,
+    canvas_width INTEGER NOT NULL,
+    canvas_height INTEGER NOT NULL,
+    content_json TEXT NOT NULL,
+    layout_json TEXT NOT NULL,
+    background_color TEXT NOT NULL DEFAULT '#ffffff',
+    image_prompt TEXT NOT NULL DEFAULT '',
+    image_path TEXT,
+    export_path TEXT,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','exported')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_creatives_tenant ON creative_posts(company_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_creatives_client ON creative_posts(client_id, created_at);
+
+-- Cada salvamento guarda uma cópia: restaurar nunca perde trabalho.
+CREATE TABLE IF NOT EXISTS post_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    creative_id INTEGER NOT NULL REFERENCES creative_posts(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    content_json TEXT NOT NULL,
+    layout_json TEXT NOT NULL,
+    background_color TEXT NOT NULL,
+    image_path TEXT,
+    export_path TEXT,
+    version_label TEXT NOT NULL DEFAULT 'Salvamento',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_post_versions_creative ON post_versions(creative_id, created_at DESC);
+
+-- O feed do perfil monta artes e posts planejados na ordem escolhida.
+-- A tabela entra agora porque o estúdio já alimenta o feed; a tela vem depois.
+CREATE TABLE IF NOT EXISTS feed_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    creative_id INTEGER REFERENCES creative_posts(id) ON DELETE CASCADE,
+    planned_post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((creative_id IS NOT NULL AND planned_post_id IS NULL)
+        OR (creative_id IS NULL AND planned_post_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_feed_client_position ON feed_items(company_id, client_id, position);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_creative_unique ON feed_items(company_id, client_id, creative_id) WHERE creative_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_planned_unique ON feed_items(company_id, client_id, planned_post_id) WHERE planned_post_id IS NOT NULL;
 SQL);
 
         $versao = (int) ($db->scalar('SELECT MAX(version) FROM schema_version') ?? 0);

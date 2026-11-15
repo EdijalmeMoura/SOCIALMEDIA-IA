@@ -20,7 +20,7 @@ final class Modules
         return [
             ['slug' => 'clients', 'name' => 'Clientes', 'hint' => 'Contas, identidade visual e briefing', 'path' => '/clients', 'icon' => '◫', 'ready' => true],
             ['slug' => 'planner', 'name' => 'Planejamento', 'hint' => 'Calendário editorial e pautas', 'path' => '/planner', 'icon' => '▤', 'ready' => true],
-            ['slug' => 'studio', 'name' => 'Estúdio', 'hint' => 'Criação de artes e legendas', 'path' => '/studio', 'icon' => '✦', 'ready' => false],
+            ['slug' => 'studio', 'name' => 'Estúdio', 'hint' => 'Criação de artes e legendas', 'path' => '/studio', 'icon' => '✦', 'ready' => true],
             ['slug' => 'approvals', 'name' => 'Aprovações', 'hint' => 'Portal do cliente e revisões', 'path' => '/approvals', 'icon' => '◷', 'ready' => false],
             ['slug' => 'feed', 'name' => 'Feed', 'hint' => 'Prévia do perfil e grade', 'path' => '/feed', 'icon' => '▦', 'ready' => false],
             ['slug' => 'reports', 'name' => 'Relatórios', 'hint' => 'Métricas e entregas', 'path' => '/reports', 'icon' => '◑', 'ready' => false],

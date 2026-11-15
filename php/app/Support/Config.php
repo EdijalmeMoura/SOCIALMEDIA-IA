@@ -26,6 +26,8 @@ final class Config
         public readonly string $openaiKey = '',
         public readonly string $openaiModel = 'gpt-4o-mini',
         public readonly string $openaiEndpoint = '',
+        public readonly string $openaiImageModel = 'gpt-image-1',
+        public readonly string $openaiImageEndpoint = '',
     ) {
     }
 
@@ -51,6 +53,8 @@ final class Config
             openaiKey: self::env('OPENAI_API_KEY') ?? '',
             openaiModel: self::env('OPENAI_MODEL') ?: 'gpt-4o-mini',
             openaiEndpoint: self::env('OPENAI_ENDPOINT') ?: '',
+            openaiImageModel: self::env('OPENAI_IMAGE_MODEL') ?: 'gpt-image-1',
+            openaiImageEndpoint: self::env('OPENAI_IMAGE_ENDPOINT') ?: '',
         );
     }
 
@@ -78,6 +82,8 @@ final class Config
             openaiKey: $this->openaiKey,
             openaiModel: $this->openaiModel,
             openaiEndpoint: $this->openaiEndpoint,
+            openaiImageModel: $this->openaiImageModel,
+            openaiImageEndpoint: $this->openaiImageEndpoint,
         );
     }
 

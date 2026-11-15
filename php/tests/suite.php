@@ -825,7 +825,7 @@ assertSame('tabela de uso de IA criada', 1, (int) $appAntiga->db->scalar("SELECT
 assertSame('dados de clientes preservados', 'Cliente Herdado', $appAntiga->db->scalar('SELECT company_name FROM clients WHERE id = 1'));
 \Smia\Database\Schema::migrate($appAntiga->db);
 assertSame('migração é idempotente', 'Cliente Herdado', $appAntiga->db->scalar('SELECT company_name FROM clients WHERE id = 1'));
-assertSame('nenhuma versão duplicada', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = 3'));
+assertSame('nenhuma versão duplicada', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = ?', [\Smia\Database\Schema::VERSAO]));
 
 echo "\n[29] Dashboard e navegação liberam o planejamento\n";
 $logar($app, $idUsuario);
@@ -867,6 +867,325 @@ $jsonQuebrado = $app->handle(requisicao('POST', '/planner/generate', [
 ]));
 assertSame('46 publicações em 30 dias é barrado', 400, $jsonQuebrado->status);
 check('mensagem explica o limite', str_contains($jsonQuebrado->body, 'entre 1 e 45'));
+
+echo "\n[31] Estúdio: tela, formatos e permissões\n";
+$logar($app, $idUsuario);
+$telaStudio = $app->handle(requisicao('GET', '/studio'));
+assertSame('tela do estúdio responde 200', 200, $telaStudio->status);
+check('mostra que a IA não está configurada', str_contains($telaStudio->body, 'Sem chave de IA configurada'));
+check('lista os sete formatos', substr_count($telaStudio->body, 'class="format-card"') === 7);
+check('carrega o CSS do estúdio', str_contains($telaStudio->body, 'studio.css'));
+check('explica que o rascunho local não é IA', str_contains($telaStudio->body, 'rascunho local'));
+
+$semLoginStudio = appNova();
+assertSame('estúdio exige login', '/edijalmemoura/socialai/login', $semLoginStudio[0]->handle(requisicao('GET', '/studio'))->header('Location'));
+
+echo "\n[32] Estúdio: validação do formulário de criação\n";
+$criarArte = function (array $extra = []) use ($app, $logar, $idUsuario, $csrf, $clientePlano): \Smia\Http\Response {
+    $logar($app, $idUsuario);
+
+    return $app->handle(requisicao('POST', '/studio/generate', array_merge([
+        'csrf_token' => $csrf,
+        'client_id' => (string) $clientePlano,
+        'subject' => 'Aula experimental gratuita',
+        'format_key' => 'square',
+    ], $extra)));
+};
+assertSame('sem CSRF responde 400', 400, $criarArte(['csrf_token' => 'errado'])->status);
+assertSame('sem cliente responde 400', 400, $criarArte(['client_id' => '0'])->status);
+assertSame('formato inválido responde 400', 400, $criarArte(['format_key' => 'billboard'])->status);
+assertSame('assunto curto responde 400', 400, $criarArte(['subject' => 'ab'])->status);
+check('erro devolve o formulário preenchido', str_contains($criarArte(['subject' => 'ab'])->body, 'Aula experimental gratuita'));
+assertSame('nada foi gravado nos casos inválidos', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM creative_posts'));
+
+echo "\n[33] Estúdio: rascunho local (sem IA) e primeira versão\n";
+$criada = $criarArte();
+assertSame('criação sem IA responde 302', 302, $criada->status);
+$destinoArte = (string) $criada->header('Location');
+check('redirect para o editor', str_contains($destinoArte, '/studio/posts/') && str_contains($destinoArte, 'created=1'));
+$arteId = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url($destinoArte, PHP_URL_PATH));
+$arte = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$arteId]);
+check('arte gravada com o formato pedido', $arte !== null && $arte['format_key'] === 'square');
+assertSame('canvas quadrado', 1080, (int) $arte['canvas_height']);
+assertSame('cor de fundo vem da marca', '#112244', $arte['background_color']);
+$conteudoArte = json_decode((string) $arte['content_json'], true);
+check('título usa o assunto', str_contains((string) $conteudoArte['title'], 'Aula experimental'));
+check('legenda se identifica como rascunho local', str_contains((string) $conteudoArte['caption'], 'RASCUNHO LOCAL'));
+check('briefing cita a cor da marca', str_contains((string) $conteudoArte['visual_brief'], '#112244'));
+check('prompt da imagem pede área de respiro', str_contains((string) $arte['image_prompt'], 'respiro'));
+assertSame('primeira versão registrada', 'Texto e layout gerados', $app->db->scalar('SELECT version_label FROM post_versions WHERE creative_id = ?', [$arteId]));
+assertSame('consumo registrado como local', 'local-draft', $app->db->scalar("SELECT model FROM ai_generations WHERE feature = 'studio_copy' AND client_id = ?", [$clientePlano]));
+assertSame('auditoria do estúdio', 'studio.created', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'studio.created'"));
+$layoutArte = json_decode((string) $arte['layout_json'], true);
+assertSame('layout tem os quatro elementos', 4, count($layoutArte['elements']));
+check('título do layout tem o texto da arte', $layoutArte['elements'][0]['text'] === $conteudoArte['title']);
+
+echo "\n[34] Estúdio: editor e salvamento com versão\n";
+$logar($app, $idUsuario);
+$telaEditor = $app->handle(requisicao('GET', '/studio/posts/' . $arteId));
+assertSame('editor responde 200', 200, $telaEditor->status);
+check('editor mostra a prancheta', str_contains($telaEditor->body, 'id="studioCanvas"'));
+check('editor carrega o JS do estúdio', str_contains($telaEditor->body, 'studio.js'));
+check('editor explica a imagem de fundo', str_contains($telaEditor->body, 'Imagem de fundo'));
+check('botão de imagem presente', str_contains($telaEditor->body, 'Gerar imagem com IA'));
+assertSame('arte de outra empresa responde 404', 404, $app->handle(requisicao('GET', '/studio/posts/99999'))->status);
+
+$layoutNovo = ['elements' => $layoutArte['elements']];
+$layoutNovo['elements'][0]['x'] = 120;
+$layoutNovo['elements'][0]['y'] = 200;
+$layoutNovo['elements'][0]['fontSize'] = 96;
+$salvarArte = function (array $extra = []) use ($app, $logar, $idUsuario, $csrf, $arteId, $layoutNovo): \Smia\Http\Response {
+    $logar($app, $idUsuario);
+
+    return $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/save', array_merge([
+        'csrf_token' => $csrf,
+        'layout_json' => json_encode($layoutNovo),
+        'background_color' => '#ff6600',
+        'title' => 'Título editado à mão',
+        'subtitle' => 'Subtítulo editado',
+        'cta' => 'Agende agora',
+        'caption' => 'Legenda revisada pelo time.',
+        'hashtags' => '#bravo #treino',
+        'visual_brief' => 'Briefing revisado.',
+        'image_suggestion' => 'Imagem revisada.',
+        'composition' => 'Composição revisada.',
+        'image_prompt' => 'Prompt revisado da imagem',
+    ], $extra)));
+};
+$salva = $salvarArte();
+assertSame('salvar redireciona', 302, $salva->status);
+check('redirect de salvamento', str_contains((string) $salva->header('Location'), 'ok=saved'));
+$arteSalva = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$arteId]);
+assertSame('cor de fundo atualizada', '#ff6600', $arteSalva['background_color']);
+$conteudoSalvo = json_decode((string) $arteSalva['content_json'], true);
+assertSame('título atualizado', 'Título editado à mão', $conteudoSalvo['title']);
+$layoutSalvo = json_decode((string) $arteSalva['layout_json'], true);
+assertSame('posição do título salva', 120, (int) $layoutSalvo['elements'][0]['x']);
+assertSame('tamanho da fonte salvo', 96, (int) $layoutSalvo['elements'][0]['fontSize']);
+assertSame('texto do layout sincronizado', 'Título editado à mão', $layoutSalvo['elements'][0]['text']);
+assertSame('histórico ganhou a edição', 'Edição manual', $app->db->scalar('SELECT version_label FROM post_versions WHERE creative_id = ? ORDER BY id DESC LIMIT 1', [$arteId]));
+assertSame('duas versões no histórico', 2, (int) $app->db->scalar('SELECT COUNT(*) FROM post_versions WHERE creative_id = ?', [$arteId]));
+
+echo "\n[35] Estúdio: validação do layout e dos campos\n";
+$layoutQuebrado = $layoutNovo;
+$layoutQuebrado['elements'][0]['id'] = 'injetado';
+$respostaLayout = $salvarArte(['layout_json' => json_encode($layoutQuebrado)]);
+assertSame('layout com elemento desconhecido responde 302 (volta com erro)', 302, $respostaLayout->status);
+check('erro de layout explicado', str_contains((string) $respostaLayout->header('Location'), 'layout'));
+assertSame('layout com três elementos volta com erro', 302, $salvarArte(['layout_json' => json_encode(['elements' => array_slice($layoutNovo['elements'], 0, 3)])])->status);
+check('layout inválido não altera a arte', $app->db->scalar('SELECT background_color FROM creative_posts WHERE id = ?', [$arteId]) === '#ff6600');
+$semLegenda = $salvarArte(['caption' => '']);
+check('campo essencial vazio é barrado', str_contains((string) $semLegenda->header('Location'), 'obrigat'));
+$salvarArte(['background_color' => 'azul']);
+check('cor inválida mantém a anterior', $app->db->scalar('SELECT background_color FROM creative_posts WHERE id = ?', [$arteId]) === '#ff6600');
+check('JSON de layout vazio é recusado', str_contains((string) $salvarArte(['layout_json' => ''])->header('Location'), 'layout'));
+
+echo "\n[36] Estúdio: restaurar versão\n";
+$versaoAntiga = $app->db->one('SELECT * FROM post_versions WHERE creative_id = ? ORDER BY id ASC LIMIT 1', [$arteId]);
+$restaurada = $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/versions/' . (int) $versaoAntiga['id'] . '/restore', ['csrf_token' => $csrf]));
+assertSame('restaurar redireciona', 302, $restaurada->status);
+$arteRestaurada = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$arteId]);
+assertSame('cor volta à da primeira versão', $versaoAntiga['background_color'], $arteRestaurada['background_color']);
+check('restauro fica no histórico', str_contains((string) $app->db->scalar('SELECT version_label FROM post_versions WHERE creative_id = ? ORDER BY id DESC LIMIT 1', [$arteId]), 'Restaurado'));
+assertSame('versão de outra arte responde 404', 404, $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/versions/99999/restore', ['csrf_token' => $csrf]))->status);
+
+echo "\n[37] Estúdio: imagem de fundo (upload, enquadramento e limites)\n";
+$logar($app, $idUsuario);
+$arquivoTmp = sys_get_temp_dir() . '/smia-studio-' . bin2hex(random_bytes(4)) . '.png';
+$lona = imagecreatetruecolor(300, 300);
+imagefill($lona, 0, 0, imagecolorallocate($lona, 200, 30, 90));
+imagepng($lona, $arquivoTmp);
+imagedestroy($lona);
+$_FILES['file'] = ['name' => 'foto.png', 'tmp_name' => $arquivoTmp, 'error' => UPLOAD_ERR_OK, 'size' => filesize($arquivoTmp)];
+$enviada = $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/image/upload', ['csrf_token' => $csrf]));
+unset($_FILES['file']);
+assertSame('upload redireciona', 302, $enviada->status);
+check('redirect de upload', str_contains((string) $enviada->header('Location'), 'ok=upload'));
+$arteComImagem = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$arteId]);
+check('imagem gravada com nome do sistema', (bool) preg_match('/^studio-\d+-[a-f0-9]{24}\.png$/', (string) $arteComImagem['image_path']));
+$caminhoImagem = $raiz . '/uploads/' . $arteComImagem['image_path'];
+check('imagem existe no disco', is_file($caminhoImagem));
+$medida = getimagesize($caminhoImagem);
+check('imagem foi enquadrada no formato', $medida !== false && $medida[0] === 1080 && $medida[1] === 1080);
+check('upload fica no histórico', str_contains((string) $app->db->scalar('SELECT version_label FROM post_versions WHERE creative_id = ? ORDER BY id DESC LIMIT 1', [$arteId]), 'Imagem substituída'));
+
+$logar($app, $idUsuario);
+$servida = $app->handle(requisicao('GET', '/studio/files', [], ['file' => (string) $arteComImagem['image_path']]));
+assertSame('imagem servida para a dona', 200, $servida->status);
+check('mime da imagem servida', str_contains((string) $servida->header('Content-Type'), 'image/png'));
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+$outraEmpresaStudio = $app->handle(requisicao('GET', '/studio/files', [], ['file' => (string) $arteComImagem['image_path']]));
+check('outra empresa não recebe a imagem', $outraEmpresaStudio->status === 404 || str_contains($outraEmpresaStudio->body, 'não existe'));
+$logar($app, $idUsuario);
+assertSame('nome de arquivo suspeito é barrado', 404, $app->handle(requisicao('GET', '/studio/files', [], ['file' => '../../.env']))->status);
+
+$falso = sys_get_temp_dir() . '/smia-studio-' . bin2hex(random_bytes(4)) . '.png';
+file_put_contents($falso, "<?php echo 1; ?>");
+$_FILES['file'] = ['name' => 'malicioso.png', 'tmp_name' => $falso, 'error' => UPLOAD_ERR_OK, 'size' => filesize($falso)];
+$logar($app, $idUsuario);
+$recusado = $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/image/upload', ['csrf_token' => $csrf]));
+unset($_FILES['file']);
+check('arquivo sem assinatura de imagem é recusado', str_contains((string) $recusado->header('Location'), 'erro='));
+
+echo "\n[38] Estúdio: exportação e download\n";
+$pngExport = sys_get_temp_dir() . '/smia-export-' . bin2hex(random_bytes(4)) . '.png';
+$lonaExport = imagecreatetruecolor(1080, 1080);
+imagefill($lonaExport, 0, 0, imagecolorallocate($lonaExport, 10, 20, 30));
+imagepng($lonaExport, $pngExport);
+imagedestroy($lonaExport);
+$_FILES['file'] = ['name' => 'arte.png', 'tmp_name' => $pngExport, 'error' => UPLOAD_ERR_OK, 'size' => filesize($pngExport)];
+$logar($app, $idUsuario);
+$exportada = $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/export', ['csrf_token' => $csrf]));
+unset($_FILES['file']);
+assertSame('exportação responde 200', 200, $exportada->status);
+$jsonExport = json_decode($exportada->body, true);
+check('exportação devolve URL da arte', isset($jsonExport['url']) && str_contains((string) $jsonExport['url'], '/studio/files'));
+check('exportação devolve URL de download', isset($jsonExport['download']) && str_contains((string) $jsonExport['download'], '/download'));
+$arteExportada = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$arteId]);
+assertSame('status vira exportada', 'exported', $arteExportada['status']);
+check('arquivo exportado gravado', is_file($raiz . '/uploads/' . (string) $arteExportada['export_path']));
+$baixada = $app->handle(requisicao('GET', '/studio/posts/' . $arteId . '/download'));
+assertSame('download responde 200', 200, $baixada->status);
+check('download vem como anexo', str_contains((string) $baixada->header('Content-Disposition'), 'attachment'));
+check('download tem o nome do produto', str_contains((string) $baixada->header('Content-Disposition'), 'socialmedia-ia-'));
+$semArquivo = $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/export', ['csrf_token' => $csrf]));
+assertSame('exportação sem arquivo responde 400', 400, $semArquivo->status);
+$exportSemCsrf = $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/export', ['csrf_token' => 'x']));
+assertSame('exportação sem CSRF responde 400', 400, $exportSemCsrf->status);
+check('erro de CSRF vem em JSON', str_contains((string) $exportSemCsrf->header('Content-Type'), 'application/json'));
+
+echo "\n[39] Estúdio: variação, exclusão e isolamento\n";
+$logar($app, $idUsuario);
+$variacao = $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/variation', ['csrf_token' => $csrf, 'variation_note' => 'Tom mais leve']));
+assertSame('variação redireciona', 302, $variacao->status);
+$arteVariacao = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $variacao->header('Location'), PHP_URL_PATH));
+check('variação criou outra arte', $arteVariacao > 0 && $arteVariacao !== $arteId);
+assertSame('variação tem o mesmo assunto', 'Aula experimental gratuita', $app->db->scalar('SELECT subject FROM creative_posts WHERE id = ?', [$arteVariacao]));
+assertSame('variação se identifica como tal', 'Variação gerada', $app->db->scalar('SELECT version_label FROM post_versions WHERE creative_id = ?', [$arteVariacao]));
+
+$logar($app, $idUsuario);
+$apagada = $app->handle(requisicao('POST', '/studio/posts/' . $arteVariacao . '/delete', ['csrf_token' => $csrf]));
+assertSame('exclusão redireciona', 302, $apagada->status);
+assertSame('arte removida', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM creative_posts WHERE id = ?', [$arteVariacao]));
+assertSame('versões removidas em cascata', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM post_versions WHERE creative_id = ?', [$arteVariacao]));
+assertSame('exclusão sem CSRF responde 403', 403, $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/delete', ['csrf_token' => 'x']))->status);
+
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+assertSame('outra agência não abre a arte', 404, $app->handle(requisicao('GET', '/studio/posts/' . $arteId))->status);
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+assertSame('outra agência não exclui a arte', 404, $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/delete', ['csrf_token' => $csrf]))->status);
+check('arte da outra agência continua existindo', (int) $app->db->scalar('SELECT COUNT(*) FROM creative_posts WHERE id = ?', [$arteId]) === 1);
+
+echo "\n[40] Estúdio: matriz de permissões\n";
+$papelStudio = (string) $app->db->scalar('SELECT role FROM users WHERE id = ?', [$idUsuario]);
+$app->db->run("UPDATE users SET role = 'viewer' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('viewer abre o estúdio', 200, $app->handle(requisicao('GET', '/studio'))->status);
+$logar($app, $idUsuario);
+$telaViewer = $app->handle(requisicao('GET', '/studio/posts/' . $arteId));
+assertSame('viewer abre a arte', 200, $telaViewer->status);
+check('viewer não vê o formulário de salvar', !str_contains($telaViewer->body, 'id="studioSave"'));
+$logar($app, $idUsuario);
+assertSame('viewer não cria arte', 403, $app->handle(requisicao('POST', '/studio/generate', ['csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'subject' => 'Teste', 'format_key' => 'square']))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não salva', 403, $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/save', ['csrf_token' => $csrf]))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não exclui', 403, $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/delete', ['csrf_token' => $csrf]))->status);
+$app->db->run("UPDATE users SET role = 'editor' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('editor salva a arte', 302, $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/save', [
+    'csrf_token' => $csrf, 'layout_json' => json_encode($layoutNovo), 'background_color' => '#112244',
+    'title' => 'Título do editor', 'subtitle' => 'S', 'cta' => 'C', 'caption' => 'L',
+    'hashtags' => '', 'visual_brief' => 'B', 'image_suggestion' => 'I', 'composition' => 'C', 'image_prompt' => 'P',
+]))->status);
+$app->db->run('UPDATE users SET role = ? WHERE id = ?', [$papelStudio, $idUsuario]);
+$logar($app, $idUsuario);
+
+echo "\n[41] Estúdio: caminho com IA (texto e imagem simulados)\n";
+if ($endpointProvedor === '') {
+    check('provedor simulado disponível para o estúdio', false, 'tests/.provedor-ia ausente');
+} else {
+    $raizIa = sys_get_temp_dir() . '/smia-studio-ia-' . bin2hex(random_bytes(4));
+    mkdir($raizIa, 0o700, true);
+    $configIaStudio = new \Smia\Support\Config(
+        root: $raizIa, dataDir: $raizIa, dbPath: $raizIa . '/socialmedia.sqlite', envFile: $raizIa . '/installer.env',
+        basePath: '/edijalmemoura/socialai',
+        publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+        secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+        openaiKey: 'chave-teste', openaiModel: 'gpt-4o-mini',
+        openaiEndpoint: $endpointProvedor,
+        openaiImageModel: 'gpt-image-1',
+        openaiImageEndpoint: str_replace('/chat/completions', '/images/generations', $endpointProvedor),
+    );
+    $appStudioIa = new Application($configIaStudio);
+    \Smia\Database\Schema::migrate($appStudioIa->db);
+    $appStudioIa->db->run("INSERT INTO companies (id, name, slug) VALUES (1, 'Agência IA', 'agencia-ia')");
+    $appStudioIa->db->run("INSERT INTO users (id, company_id, name, email, password_hash, role) VALUES (1, 1, 'Ana', 'ana@ia.example', ?, 'owner')", [password_hash('SenhaForte123', PASSWORD_DEFAULT)]);
+    $appStudioIa->db->run("INSERT INTO clients (id, company_id, company_name, trade_name, segment) VALUES (1, 1, 'Bravo Fitness', 'Bravo', 'Academia')");
+    $appStudioIa->db->run("INSERT INTO client_branding (client_id, primary_color) VALUES (1, '#112244')");
+
+    $appStudioIa->session->start();
+    $appStudioIa->session->put('user_id', 1);
+    $telaIaStudio = $appStudioIa->handle(requisicao('GET', '/studio'));
+    assertSame('tela do estúdio com IA responde 200', 200, $telaIaStudio->status);
+    check('tela indica a IA configurada', str_contains($telaIaStudio->body, 'IA configurada'));
+    preg_match('/name="csrf_token" value="([^"]+)"/', $telaIaStudio->body, $msi);
+    $csrfStudioIa = $msi[1] ?? '';
+
+    $appStudioIa->session->start();
+    $appStudioIa->session->put('user_id', 1);
+    $criadaIa = $appStudioIa->handle(requisicao('POST', '/studio/generate', [
+        'csrf_token' => $csrfStudioIa,
+        'client_id' => '1',
+        'subject' => 'Renovação de matrícula',
+        'format_key' => 'portrait',
+    ]));
+    assertSame('geração com IA responde 302', 302, $criadaIa->status);
+    $arteIaId = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $criadaIa->header('Location'), PHP_URL_PATH));
+    $arteIa = $appStudioIa->db->one('SELECT * FROM creative_posts WHERE id = ?', [$arteIaId]);
+    $conteudoIaArte = json_decode((string) $arteIa['content_json'], true);
+    assertSame('título veio da IA', 'Tema IA 1', $conteudoIaArte['title']);
+    check('texto não é rascunho local', !str_contains((string) $conteudoIaArte['caption'], 'RASCUNHO LOCAL'));
+    assertSame('canvas do formato retrato', 1350, (int) $arteIa['canvas_height']);
+    $usoCopy = $appStudioIa->db->one("SELECT * FROM ai_generations WHERE feature = 'studio_copy' ORDER BY id DESC LIMIT 1");
+    assertSame('tokens da IA de texto gravados', 1234, (int) $usoCopy['input_tokens']);
+    assertSame('modelo real gravado', 'gpt-4o-mini', $usoCopy['model']);
+
+    $appStudioIa->session->start();
+    $appStudioIa->session->put('user_id', 1);
+    $gerouImagem = $appStudioIa->handle(requisicao('POST', '/studio/posts/' . $arteIaId . '/image', [
+        'csrf_token' => $csrfStudioIa,
+        'image_prompt' => 'Academia iluminada com pessoas treinando, luz natural',
+    ]));
+    assertSame('geração de imagem redireciona', 302, $gerouImagem->status);
+    check('redirect de imagem gerada', str_contains((string) $gerouImagem->header('Location'), 'ok=image'));
+    $arteComIa = $appStudioIa->db->one('SELECT * FROM creative_posts WHERE id = ?', [$arteIaId]);
+    check('imagem da IA gravada', (bool) preg_match('/^studio-\d+-[a-f0-9]{24}\.png$/', (string) $arteComIa['image_path']));
+    $medidaIa = getimagesize($raizIa . '/uploads/' . (string) $arteComIa['image_path']);
+    check('imagem da IA tem o tamanho do formato', $medidaIa !== false && $medidaIa[0] === 1080 && $medidaIa[1] === 1350);
+    $usoImagem = $appStudioIa->db->one("SELECT * FROM ai_generations WHERE feature = 'studio_image' ORDER BY id DESC LIMIT 1");
+    assertSame('tokens da imagem gravados', 12, (int) $usoImagem['input_tokens']);
+    check('bytes da imagem começam com assinatura PNG', str_starts_with((string) file_get_contents($raizIa . '/uploads/' . (string) $arteComIa['image_path'], false, null, 0, 8), "\x89PNG"));
+
+echo "\n[42] Estúdio: mensagens de erro aparecem na tela\n";
+    $logar($app, $idUsuario);
+    $comErro = $app->handle(requisicao('GET', '/studio/posts/' . $arteId, [], ['erro' => 'Layout inválido de propósito']));
+    assertSame('editor com erro responde 200', 200, $comErro->status);
+    check('erro devolvido na tela', str_contains($comErro->body, 'Layout inválido de propósito'));
+    $logar($app, $idUsuario);
+    check('aviso de salvamento na tela', str_contains($app->handle(requisicao('GET', '/studio/posts/' . $arteId, [], ['ok' => 'saved']))->body, 'Edição salva como uma nova versão'));
+    check('aviso de restauro na tela', str_contains($app->handle(requisicao('GET', '/studio/posts/' . $arteId, [], ['ok' => 'restored']))->body, 'Versão restaurada'));
+}
+
+echo "\n[43] Estúdio: dashboard e navegação\n";
+$logar($app, $idUsuario);
+$painelStudio = $app->handle(requisicao('GET', '/dashboard'));
+assertSame('dashboard responde 200', 200, $painelStudio->status);
+check('Estúdio no menu', str_contains($painelStudio->body, 'Estúdio'));
+$modulosStudio = \Smia\Support\Modules::all();
+$moduloEstudio = array_values(array_filter($modulosStudio, static fn (array $m): bool => $m['slug'] === 'studio'))[0] ?? null;
+check('módulo estúdio marcado como pronto', ($moduloEstudio['ready'] ?? false) === true);
+check('aprovações seguem pendentes', (array_values(array_filter($modulosStudio, static fn (array $m): bool => $m['slug'] === 'approvals'))[0]['ready'] ?? true) === false);
 
 echo "\n----------------------------------------\n";
 echo $falhas === 0 ? "RESULTADO: OK ({$total} verificações)\n" : "RESULTADO: {$falhas} FALHA(S) de {$total}\n";

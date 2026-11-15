@@ -38,7 +38,7 @@ DEPOIS DE INSTALAR
 ATUALIZANDO DE UMA VERSÃO ANTERIOR
   Envie por cima apenas app/ e public/ (mantenha .env e data/).
   O banco é migrado sozinho na primeira abertura; nada é apagado.
-  v1.2 acrescenta as tabelas do planejamento (calendário e publicações).
+  v1.3 acrescenta as tabelas do estúdio (artes, versões e itens de feed).
 
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
@@ -50,14 +50,17 @@ O QUE ESTA VERSÃO JÁ FAZ
   Clientes: cadastro, identidade visual, logo e referências
   Planejamento: calendário editorial por IA, grade semanal, edição de posts
     (sem OPENAI_API_KEY ele cria um rascunho local identificado como tal)
+  Estúdio: arte pronta a partir de um assunto — prancheta no navegador,
+    histórico de versões e exportação em PNG/JPG para download
 
 ATIVAR A IA (OPCIONAL)
   Acrescente no .env:  OPENAI_API_KEY=sk-...
-  Modelo padrão gpt-4o-mini; troque com OPENAI_MODEL.
+  Texto: OPENAI_MODEL (padrão gpt-4o-mini).
+  Imagem do estúdio: OPENAI_IMAGE_MODEL (padrão gpt-image-1).
   Sem a chave o módulo funciona em modo rascunho local, sem custo.
 
 PRÓXIMOS MÓDULOS
-  estúdio → aprovações → feed → relatórios → Meta
+  aprovações → feed → relatórios → Meta
 
 PROBLEMAS COMUNS
   500 .............. log de erros do cPanel; falta permissão em data/

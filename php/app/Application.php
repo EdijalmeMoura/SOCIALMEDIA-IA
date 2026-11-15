@@ -11,6 +11,7 @@ use Smia\Controllers\ClientController;
 use Smia\Controllers\DashboardController;
 use Smia\Controllers\InstallerController;
 use Smia\Controllers\PlannerController;
+use Smia\Controllers\StudioController;
 use Smia\Database\Database;
 use Smia\Database\Schema;
 use Smia\Http\Request;
@@ -19,6 +20,8 @@ use Smia\Http\Router;
 use Smia\Installer\Installer;
 use Smia\Planner\PlanGenerator;
 use Smia\Planner\PlannerRepository;
+use Smia\Studio\StudioGenerator;
+use Smia\Studio\StudioRepository;
 use Smia\Support\Config;
 use Smia\Support\Session;
 use Smia\Support\Upload;
@@ -110,6 +113,24 @@ final class Application
         $this->router->get('/dashboard', $dashboard->index(...));
 
         // --- Clientes -------------------------------------------------
+        $studio = new StudioController(
+            $this->config,
+            new StudioRepository($this->db),
+            new StudioGenerator(
+                $this->config->openaiKey !== '' ? $this->config->openaiKey : null,
+                $this->config->openaiModel,
+                $this->config->openaiImageModel,
+                90,
+                180,
+                $this->config->openaiEndpoint,
+                $this->config->openaiImageEndpoint,
+            ),
+            $this->upload,
+            $auth,
+            $this->session,
+            $this->view(),
+        );
+
         $this->router->get('/clients', $clientes->index(...));
         $this->router->get('/clients/new', $clientes->createForm(...));
         $this->router->post('/clients/new', $clientes->create(...));
@@ -133,6 +154,20 @@ final class Application
         $this->router->get('/planner/{id}', $planner->show(...));
         $this->router->post('/planner/{id}/production', $planner->production(...));
         $this->router->post('/planner/{id}/delete', $planner->delete(...));
+
+        // --- Estúdio ---------------------------------------------------
+        $this->router->get('/studio', $studio->index(...));
+        $this->router->post('/studio/generate', $studio->generate(...));
+        $this->router->get('/studio/files', $studio->file(...));
+        $this->router->get('/studio/posts/{id}', $studio->editor(...));
+        $this->router->post('/studio/posts/{id}/save', $studio->save(...));
+        $this->router->post('/studio/posts/{id}/image', $studio->generateImage(...));
+        $this->router->post('/studio/posts/{id}/image/upload', $studio->uploadImage(...));
+        $this->router->post('/studio/posts/{id}/export', $studio->export(...));
+        $this->router->get('/studio/posts/{id}/download', $studio->download(...));
+        $this->router->post('/studio/posts/{id}/variation', $studio->variation(...));
+        $this->router->post('/studio/posts/{id}/versions/{version}/restore', $studio->restore(...));
+        $this->router->post('/studio/posts/{id}/delete', $studio->delete(...));
     }
 
     /**

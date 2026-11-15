@@ -37,6 +37,16 @@ final class Response
      * Resposta binária (imagens enviadas). Lê o arquivo aqui, então o corpo da
      * resposta continua sendo uma string — nada de stream no handler.
      */
+    /** Resposta JSON (o editor usa para confirmar a exportação). */
+    public static function json(array $dados, int $status = 200): self
+    {
+        return new self(
+            (string) json_encode($dados, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            $status,
+            ['Content-Type' => 'application/json; charset=utf-8']
+        );
+    }
+
     public static function file(string $caminho, string $mime, int $status = 200): self
     {
         $conteudo = is_file($caminho) ? (string) file_get_contents($caminho) : '';
