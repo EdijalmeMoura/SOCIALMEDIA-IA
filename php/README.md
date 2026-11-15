@@ -3,15 +3,16 @@
 Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 (cPanel): sobe os arquivos e funciona. Sem Composer, sem Node, sem Passenger.
 
-> Estado atual: **base funcional + módulo de clientes** — instalador de 3 telas,
-> login, dashboard, banco SQLite, sessão/CSRF, tratamento de subpasta e o
-> portfólio de clientes (perfil, identidade visual, logo e referências). Os
-> demais módulos (planejamento, estúdio, aprovações, feed, relatórios, Meta)
-> entram um a um, reaproveitando esta mesma base e o mesmo esquema de dados.
+> Estado atual: **base funcional + clientes + planejamento** — instalador de 3
+> telas, login, dashboard, banco SQLite, sessão/CSRF, tratamento de subpasta, o
+> portfólio de clientes (perfil, identidade visual, logo e referências) e o
+> calendário editorial com IA. Os demais módulos (estúdio, aprovações, feed,
+> relatórios, Meta) entram um a um, reaproveitando esta mesma base e o mesmo
+> esquema de dados.
 
 ## Baixar o pacote pronto
 
-`downloads/SOCIALMEDIA-IA-php-v1.0.zip` nesta pasta é o pacote completo (`.env`
+`downloads/SOCIALMEDIA-IA-php-v1.2.zip` nesta pasta é o pacote completo (`.env`
 com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
 publicada em
 [`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
@@ -126,11 +127,48 @@ Regras que valem a pena saber:
 - Cada escrita (criar, editar, excluir, upload) deixa evento no `audit_log`,
   visível no dashboard.
 
+### Planejamento (pronto)
+
+Calendário editorial por cliente: a IA lê o perfil e a identidade visual da marca
+e devolve as publicações do período, com tema, objetivo, legenda, CTA e briefing
+visual.
+
+| Rota | Método | O que faz | Quem pode |
+|---|---|---|---|
+| `/planner` | GET | formulário de geração + lista de calendários | todos |
+| `/planner/generate` | POST | cria o calendário (IA ou rascunho local) | owner, admin, editor |
+| `/planner/{id}` | GET | calendário: fatos, grade semanal e publicações | todos |
+| `/planner/{id}/production` | POST | envia plano e publicações para produção | owner, admin, editor |
+| `/planner/{id}/delete` | POST | exclui o calendário e as publicações | owner, admin |
+| `/planner/posts/{id}/edit` | GET/POST | edita uma publicação | ver: todos · editar: owner/admin/editor |
+| `/planner/posts/{id}/duplicate` | POST | duplica a publicação ao fim do plano | owner, admin, editor |
+| `/planner/posts/{id}/delete` | POST | remove a publicação | owner, admin, editor |
+
+Regras que valem a pena saber:
+
+- **Sem `OPENAI_API_KEY` o planejamento continua funcionando**: ele cria um
+  *rascunho local* marcado como tal (`ai_model = local-draft`, 0 tokens) e a tela
+  diz "Rascunho local (sem IA)". O produto nunca apresenta texto de template como
+  se fosse IA.
+- Com chave, a chamada usa o mesmo contrato da versão Python (JSON com os 11
+  campos por post, `temperature 0.7`, `max_tokens 10000`) e o consumo fica em
+  `ai_generations`. `OPENAI_ENDPOINT` permite apontar para Azure ou um proxy.
+- **Nada entra no banco sem validação**: quantidade exata de posts, datas dentro
+  do período (inclusivo), redes apenas as escolhidas, campos essenciais
+  preenchidos. Resposta fora disso vira mensagem tratada, nunca erro 500.
+- A quantidade de publicações é limitada a 45 por período (7, 15 ou 30 dias).
+- O conteúdo gerado é tratado como **não confiável** e escapado na tela.
+- Toda consulta filtra por `company_id`: calendário de outra agência responde 404.
+- Excluir o calendário remove as publicações em cascata; duplicar soma 1 ao alvo
+  do plano, remover subtrai 1 (nunca abaixo de zero).
+- Escritas deixam evento no `audit_log` (`planner.created`, `planner.production`,
+  `planner.deleted`).
+
 ### Próximos
 
-planejamento → estúdio → aprovações → feed → relatórios → Meta. Cada um entra
-por migração aditiva do `Schema` (versão 2 já é a de clientes), então atualizar
-o pacote nunca apaga dados de uma instalação em uso.
+estúdio → aprovações → feed → relatórios → Meta. Cada um entra por migração
+aditiva do `Schema` (versão 2 = clientes, versão 3 = planejamento), então
+atualizar o pacote nunca apaga dados de uma instalação em uso.
 
 ## Subpasta: como é resolvido
 

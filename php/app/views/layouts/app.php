@@ -21,6 +21,9 @@ $iniciais = mb_strtoupper(mb_substr((string) $user['name'], 0, 1) . mb_substr((s
   <meta name="robots" content="noindex, nofollow">
   <title><?= e($title ?? 'Workspace') ?> · SocialMedia IA</title>
   <link rel="stylesheet" href="<?= e(smia_asset('/assets/app.css')) ?>">
+  <?php if (($active ?? null) === 'planner'): ?>
+    <link rel="stylesheet" href="<?= e(smia_asset('/assets/planner.css')) ?>">
+  <?php endif; ?>
   <script src="<?= e(smia_asset('/assets/app.js')) ?>" defer></script>
 </head>
 <body>

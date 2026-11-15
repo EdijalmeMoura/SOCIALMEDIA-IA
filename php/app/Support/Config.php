@@ -23,6 +23,9 @@ final class Config
         public readonly bool $cookieSecure,
         public readonly ?string $installToken,
         public readonly string $timezone,
+        public readonly string $openaiKey = '',
+        public readonly string $openaiModel = 'gpt-4o-mini',
+        public readonly string $openaiEndpoint = '',
     ) {
     }
 
@@ -45,6 +48,9 @@ final class Config
             cookieSecure: self::env('COOKIE_SECURE') === '1',
             installToken: self::env('SOCIALMEDIA_INSTALL_TOKEN') ?: null,
             timezone: self::env('SOCIALMEDIA_TIMEZONE') ?: 'America/Sao_Paulo',
+            openaiKey: self::env('OPENAI_API_KEY') ?? '',
+            openaiModel: self::env('OPENAI_MODEL') ?: 'gpt-4o-mini',
+            openaiEndpoint: self::env('OPENAI_ENDPOINT') ?: '',
         );
     }
 
@@ -69,6 +75,9 @@ final class Config
             cookieSecure: $this->cookieSecure,
             installToken: $this->installToken,
             timezone: $this->timezone,
+            openaiKey: $this->openaiKey,
+            openaiModel: $this->openaiModel,
+            openaiEndpoint: $this->openaiEndpoint,
         );
     }
 

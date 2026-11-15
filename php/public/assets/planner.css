@@ -1,0 +1,142 @@
+/*
+ * Planejamento editorial: construtor do calendário, grade semanal e cartões.
+ * Carregado só em /planner — mantém o app.css enxuto.
+ */
+
+.planner-builder { margin-bottom: 22px; }
+
+.planner-form .form-actions { align-items: center; }
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #6b7183;
+  margin-bottom: 8px;
+}
+
+.field-label em { color: #d4483b; font-style: normal; }
+
+/* Período: 7 / 15 / 30 dias */
+.segmented { display: inline-flex; background: #f1f2f7; border-radius: 10px; padding: 4px; gap: 4px; }
+.segmented label { cursor: pointer; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented span {
+  display: block; padding: 8px 16px; border-radius: 8px;
+  font-size: 14px; font-weight: 600; color: #5b6172; transition: background .15s, color .15s;
+}
+.segmented input:checked + span { background: #fff; color: #1f2430; box-shadow: 0 1px 3px rgba(31,36,48,.14); }
+.segmented input:focus-visible + span { outline: 2px solid #3158d8; outline-offset: 2px; }
+
+/* Redes sociais */
+.network-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { cursor: pointer; }
+.chip input { position: absolute; opacity: 0; pointer-events: none; }
+.chip span {
+  display: inline-block; padding: 8px 14px; border: 1px solid #dfe2ec; border-radius: 999px;
+  font-size: 13px; font-weight: 600; color: #5b6172; background: #fff; transition: all .15s;
+}
+.chip input:checked + span { background: #eef1fd; border-color: #3158d8; color: #2440a5; }
+.chip input:focus-visible + span { outline: 2px solid #3158d8; outline-offset: 2px; }
+
+.setup-alert { background: #fdf7e9; border: 1px solid #f0dfb5; }
+.setup-alert code { background: #fff; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.setup-alert p { margin: 6px 0 0; font-size: 14px; line-height: 1.5; color: #5b5340; }
+
+.muted-pill { background: #f1f2f7; color: #6b7183; }
+.muted-pill i { background: #9aa0b0; }
+
+/* Lista de calendários */
+.plan-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.plan-row {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px;
+  border: 1px solid #e6e8f0; border-radius: 12px; background: #fff;
+  text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s;
+}
+.plan-row:hover { border-color: #c8cfe6; box-shadow: 0 4px 14px rgba(31,36,48,.07); }
+.plan-badge {
+  flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px;
+  display: grid; place-items: center; background: #eef1fd; color: #2440a5;
+  font-weight: 700; font-size: 14px;
+}
+.plan-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.plan-main b { font-size: 15px; }
+.plan-main small { color: #6b7183; font-size: 12.5px; }
+.plan-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  background: #f1f2f7; color: #5b6172; font-size: 11.5px; font-weight: 600;
+}
+.tag-soft { background: #f7f8fc; }
+.badge {
+  padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
+  background: #f1f2f7; color: #6b7183; white-space: nowrap;
+}
+.badge-live { background: #e6f7ef; color: #148a58; }
+
+/* Fatos do plano */
+.plan-facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px; margin: 18px 0;
+}
+.plan-facts > div { background: #fff; border: 1px solid #e6e8f0; border-radius: 12px; padding: 12px 14px; }
+.plan-facts span { display: block; font-size: 10.5px; letter-spacing: .08em; color: #8a90a2; font-weight: 700; margin-bottom: 4px; }
+.plan-facts b { font-size: 14px; font-weight: 600; }
+
+.context-note {
+  background: #f7f8fc; border-left: 3px solid #3158d8; border-radius: 0 10px 10px 0;
+  padding: 12px 16px; margin-bottom: 18px;
+}
+.context-note b { font-size: 13px; }
+.context-note p { margin: 4px 0 0; font-size: 13.5px; color: #4a5060; line-height: 1.5; }
+
+/* Grade semanal */
+.week-grid { display: flex; flex-direction: column; gap: 18px; margin-top: 14px; }
+.week-title { font-size: 11px; letter-spacing: .1em; color: #8a90a2; font-weight: 700; margin-bottom: 8px; }
+.week-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.day-cell {
+  background: #fafbfe; border: 1px solid #eceef6; border-radius: 10px;
+  padding: 8px; min-height: 92px; display: flex; flex-direction: column; gap: 6px;
+}
+.day-cell.has-posts { background: #fff; border-color: #dfe3f2; }
+.day-head { display: flex; align-items: baseline; justify-content: space-between; }
+.day-head span { font-size: 9.5px; letter-spacing: .07em; color: #9aa0b0; font-weight: 700; }
+.day-head b { font-size: 12px; color: #4a5060; }
+.post-chip {
+  display: block; padding: 6px 8px; border-radius: 7px; background: #eef1fd;
+  text-decoration: none; color: inherit; border-left: 2px solid #3158d8;
+}
+a.post-chip:hover { background: #e3e8fc; }
+.post-chip b { display: block; font-size: 11.5px; line-height: 1.3; font-weight: 600; }
+.post-chip small { font-size: 10px; color: #6b7183; }
+
+/* Cartões de publicação */
+.post-list { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.post-card { border: 1px solid #e6e8f0; border-radius: 12px; background: #fff; overflow: hidden; }
+.post-card > header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 12px 16px; background: #fafbfe; border-bottom: 1px solid #eceef6;
+}
+.post-card > header > div:first-child { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.post-date { font-size: 12px; font-weight: 700; color: #3158d8; white-space: nowrap; }
+.post-card > header b { font-size: 14px; }
+.post-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.post-card-actions form { display: inline; }
+.mini-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: #3158d8; text-decoration: none;
+}
+.mini-link:hover { text-decoration: underline; }
+.mini-link.danger { color: #c4382b; }
+.post-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; padding: 14px 16px; }
+.post-field span { display: block; font-size: 9.5px; letter-spacing: .08em; color: #8a90a2; font-weight: 700; margin-bottom: 4px; }
+.post-field p { margin: 0; font-size: 13px; line-height: 1.55; color: #3d4352; }
+.post-field p.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-word; }
+
+@media (max-width: 900px) {
+  .week-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plan-row { flex-wrap: wrap; }
+  .post-card > header { flex-direction: column; }
+}

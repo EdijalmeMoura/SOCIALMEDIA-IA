@@ -13,10 +13,11 @@ namespace Smia\Database;
  *
  * Versões: 1 = base (empresa, usuários, instalação, auditoria)
  *           2 = clientes (perfil, identidade visual, biblioteca de imagens)
+ *           3 = planejamento (calendário editorial e publicações)
  */
 final class Schema
 {
-    public const VERSAO = 2;
+    public const VERSAO = 3;
 
     public static function migrate(Database $db): void
     {
@@ -118,6 +119,66 @@ CREATE TABLE IF NOT EXISTS client_assets (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_assets_client ON client_assets(client_id);
+SQL);
+
+        // --- v3: planejamento editorial --------------------------------
+        $db->pdo()->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS content_calendar (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL,
+    period_days INTEGER NOT NULL CHECK (period_days IN (7,15,30)),
+    start_date TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    campaign_context TEXT NOT NULL DEFAULT '',
+    networks_json TEXT NOT NULL,
+    target_posts INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','in_production')),
+    ai_model TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_tenant_date ON content_calendar(company_id, start_date, status);
+CREATE INDEX IF NOT EXISTS idx_calendar_client ON content_calendar(client_id, created_at);
+
+CREATE TABLE IF NOT EXISTS posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    calendar_id INTEGER NOT NULL REFERENCES content_calendar(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 1,
+    publication_date TEXT NOT NULL,
+    network TEXT NOT NULL,
+    theme TEXT NOT NULL,
+    strategic_objective TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    main_text TEXT NOT NULL,
+    caption TEXT NOT NULL,
+    hashtags TEXT NOT NULL DEFAULT '',
+    cta TEXT NOT NULL DEFAULT '',
+    visual_brief TEXT NOT NULL,
+    image_suggestion TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','in_production')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_posts_calendar_date ON posts(calendar_id, publication_date, position);
+CREATE INDEX IF NOT EXISTS idx_posts_tenant_client ON posts(company_id, client_id, publication_date);
+
+CREATE TABLE IF NOT EXISTS ai_generations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    feature TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ai_generations_tenant ON ai_generations(company_id, created_at);
 SQL);
 
         $versao = (int) ($db->scalar('SELECT MAX(version) FROM schema_version') ?? 0);

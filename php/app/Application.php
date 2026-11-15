@@ -10,12 +10,15 @@ use Smia\Controllers\AuthController;
 use Smia\Controllers\ClientController;
 use Smia\Controllers\DashboardController;
 use Smia\Controllers\InstallerController;
+use Smia\Controllers\PlannerController;
 use Smia\Database\Database;
 use Smia\Database\Schema;
 use Smia\Http\Request;
 use Smia\Http\Response;
 use Smia\Http\Router;
 use Smia\Installer\Installer;
+use Smia\Planner\PlanGenerator;
+use Smia\Planner\PlannerRepository;
 use Smia\Support\Config;
 use Smia\Support\Session;
 use Smia\Support\Upload;
@@ -70,6 +73,19 @@ final class Application
             fn (): bool => $this->installer->needed(),
         );
         $dashboard = new DashboardController($this->config, $this->db, $auth, $this->session, $this->view());
+        $planner = new PlannerController(
+            $this->config,
+            new PlannerRepository($this->db),
+            new PlanGenerator(
+                $this->config->openaiKey !== '' ? $this->config->openaiKey : null,
+                $this->config->openaiModel,
+                90,
+                $this->config->openaiEndpoint,
+            ),
+            $auth,
+            $this->session,
+            $this->view(),
+        );
         $clientes = new ClientController(
             $this->config,
             new ClientRepository($this->db),
@@ -106,6 +122,17 @@ final class Application
         $this->router->post('/clients/{id}/logo', $clientes->uploadLogo(...));
         $this->router->post('/clients/{id}/assets', $clientes->uploadAsset(...));
         $this->router->post('/clients/{id}/assets/{asset}/delete', $clientes->deleteAsset(...));
+
+        // --- Planejamento ---------------------------------------------
+        $this->router->get('/planner', $planner->index(...));
+        $this->router->post('/planner/generate', $planner->generate(...));
+        $this->router->get('/planner/posts/{id}/edit', $planner->editPost(...));
+        $this->router->post('/planner/posts/{id}/edit', $planner->editPost(...));
+        $this->router->post('/planner/posts/{id}/delete', $planner->deletePost(...));
+        $this->router->post('/planner/posts/{id}/duplicate', $planner->duplicatePost(...));
+        $this->router->get('/planner/{id}', $planner->show(...));
+        $this->router->post('/planner/{id}/production', $planner->production(...));
+        $this->router->post('/planner/{id}/delete', $planner->delete(...));
     }
 
     /**

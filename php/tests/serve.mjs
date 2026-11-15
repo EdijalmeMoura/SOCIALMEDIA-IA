@@ -80,6 +80,23 @@ function lerMultipart(buffer, boundary) {
   return partes;
 }
 
+/**
+ * Reproduz o comportamento do PHP para campos repetidos e `campo[]`:
+ * "networks[]=a&networks[]=b" vira post.networks = ['a','b'].
+ */
+function adicionarCampo(post, campo, valor) {
+  const lista = campo.endsWith('[]');
+  const chave = lista ? campo.slice(0, -2) : campo;
+  if (lista) {
+    if (!Array.isArray(post[chave])) post[chave] = post[chave] === undefined ? [] : [post[chave]];
+    post[chave].push(valor);
+    return;
+  }
+  if (post[chave] === undefined) post[chave] = valor;
+  else if (Array.isArray(post[chave])) post[chave].push(valor);
+  else post[chave] = [post[chave], valor];
+}
+
 const parseCookies = (header) => {
   const out = {};
   for (const parte of header.split(';')) {
@@ -117,7 +134,7 @@ createServer(async (req, res) => {
     const boundary = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(tipoConteudo);
     for (const parte of lerMultipart(bruto, (boundary?.[1] || boundary?.[2] || '').trim())) {
       if (parte.filename === null) {
-        post[parte.campo] = parte.conteudo.toString('utf8');
+        adicionarCampo(post, parte.campo, parte.conteudo.toString('utf8'));
         continue;
       }
       const destino = `/www/php/.uploads/${Date.now()}-${parte.filename.replace(/[^\w.-]/g, '_')}`;
@@ -132,7 +149,9 @@ createServer(async (req, res) => {
       };
     }
   } else {
-    Object.assign(post, Object.fromEntries(new URLSearchParams(bruto.toString()).entries()));
+    for (const [campo, valor] of new URLSearchParams(bruto.toString()).entries()) {
+      adicionarCampo(post, campo, valor);
+    }
   }
 
   // O ambiente e o corpo do POST vão por arquivo: nada de interpolar no código.

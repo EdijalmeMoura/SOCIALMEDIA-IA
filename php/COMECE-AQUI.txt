@@ -35,6 +35,11 @@ DEPOIS DE INSTALAR
   - Entre por /login com o e-mail e a senha cadastrados.
   - Apague SOCIALMEDIA_INSTALL_TOKEN do .env.
 
+ATUALIZANDO DE UMA VERSÃO ANTERIOR
+  Envie por cima apenas app/ e public/ (mantenha .env e data/).
+  O banco é migrado sozinho na primeira abertura; nada é apagado.
+  v1.2 acrescenta as tabelas do planejamento (calendário e publicações).
+
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
   Workspace + proprietário em transação única no SQLite
@@ -42,9 +47,17 @@ O QUE ESTA VERSÃO JÁ FAZ
   Login com trava de tentativas, logout com CSRF
   Dashboard com estado da instância e auditoria
   Funciona em subpasta (URLs, cookies e redirects prefixados)
+  Clientes: cadastro, identidade visual, logo e referências
+  Planejamento: calendário editorial por IA, grade semanal, edição de posts
+    (sem OPENAI_API_KEY ele cria um rascunho local identificado como tal)
+
+ATIVAR A IA (OPCIONAL)
+  Acrescente no .env:  OPENAI_API_KEY=sk-...
+  Modelo padrão gpt-4o-mini; troque com OPENAI_MODEL.
+  Sem a chave o módulo funciona em modo rascunho local, sem custo.
 
 PRÓXIMOS MÓDULOS
-  clientes → planejamento → estúdio → aprovações → feed → relatórios → Meta
+  estúdio → aprovações → feed → relatórios → Meta
 
 PROBLEMAS COMUNS
   500 .............. log de erros do cPanel; falta permissão em data/

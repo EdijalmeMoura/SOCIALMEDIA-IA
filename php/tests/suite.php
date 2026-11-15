@@ -416,6 +416,458 @@ $menu = $app->handle(requisicao('GET', '/dashboard'));
 check('menu tem link real para clientes', str_contains($menu->body, '/edijalmemoura/socialai/clients"'));
 check('módulos futuros seguem marcados', str_contains($menu->body, 'EM BREVE'));
 
+echo "\n[18] Planejamento: formulário e permissões\n";
+// Sessão própria: garante usuário logado independente do que os testes
+// anteriores fizeram com a sessão (o alvo é terceiro no workspaces).
+$idUsuario = (int) $app->db->scalar("SELECT id FROM users WHERE email = 'ana@pasta.example'");
+$empresaTeste = (int) $app->db->scalar("SELECT company_id FROM users WHERE email = 'ana@pasta.example'");
+/**
+ * Reabre a sessão com o usuário logado.
+ *
+ * Cada handle() inicia a sessão do zero (no CLI não há cookie para reenviar),
+ * então o teste define a sessão imediatamente antes da requisição — é o que o
+ * navegador faz com o cookie smia_session.
+ */
+$logar = static function (Application $instancia, int $id): void {
+    $instancia->session->start();
+    $instancia->session->put('user_id', $id);
+};
+$logar($app, $idUsuario);
+$csrf = $app->session->csrfToken();
+$app->db->run('INSERT INTO clients (company_id, company_name, trade_name, segment) VALUES (?, ?, ?, ?)', [
+    $empresaTeste, 'Bravo Fitness', 'Bravo', 'Academia',
+]);
+$clientePlano = (int) $app->db->pdo()->lastInsertId();
+$app->db->run("INSERT INTO client_branding (client_id, primary_color, accent_color, communication_tone, visual_style) VALUES (?, '#112244', '#ff6600', 'direto e motivador', 'fotos reais de treino')", [$clientePlano]);
+
+$telaPlanner = $app->handle(requisicao('GET', '/planner'));
+assertSame('tela de planejamento responde 200', 200, $telaPlanner->status);
+check('mostra que a IA não está configurada', str_contains($telaPlanner->body, 'Sem chave de IA configurada'));
+check('lista o cliente ativo no seletor (nome comercial)', (bool) preg_match('/<option value="\d+"[^>]*>\s*Bravo/', $telaPlanner->body));
+check('carrega o CSS do planejamento', str_contains($telaPlanner->body, 'planner.css'));
+
+$semLogin = appNova();
+[$appSemLogin] = $semLogin;
+assertSame('planejamento exige login', '/edijalmemoura/socialai/login', $appSemLogin->handle(requisicao('GET', '/planner'))->header('Location'));
+
+echo "\n[19] Planejamento: validação do formulário de geração\n";
+$telaPlanner = $app->handle(requisicao('GET', '/planner'));
+preg_match('/name="csrf_token" value="([^"]+)"/', $telaPlanner->body, $mpl);
+$csrf = $mpl[1] ?? $csrf;
+$gerar = function (array $extra = []) use ($app, $logar, $idUsuario, $csrf, $clientePlano): \Smia\Http\Response {
+    $logar($app, $idUsuario);
+    return $app->handle(requisicao('POST', '/planner/generate', array_merge([
+    'csrf_token' => $csrf,
+    'client_id' => (string) $clientePlano,
+    'period_days' => '7',
+    'target_posts' => '7',
+    'start_date' => '2026-03-02',
+    'networks' => ['Instagram'],
+    'objective' => 'Aumentar matrículas no plano trimestral',
+        'campaign_context' => '',
+    ], $extra)));
+};
+
+assertSame('sem CSRF responde 400', 400, $gerar(['csrf_token' => 'errado'])->status);
+assertSame('sem cliente responde 400', 400, $gerar(['client_id' => '0'])->status);
+assertSame('período inválido responde 400', 400, $gerar(['period_days' => '10'])->status);
+assertSame('alvo fora da faixa responde 400', 400, $gerar(['target_posts' => '99'])->status);
+assertSame('data inválida responde 400', 400, $gerar(['start_date' => '31/02/2026'])->status);
+assertSame('sem rede responde 400', 400, $gerar(['networks' => []])->status);
+check('rede desconhecida é ignorada', !str_contains($gerar(['networks' => ['Orkut']])->body, 'Orkut'));
+assertSame('sem objetivo responde 400', 400, $gerar(['objective' => '  '])->status);
+check('erro devolve o formulário preenchido', str_contains($gerar(['client_id' => '0'])->body, 'Selecione um cliente'));
+
+echo "\n[20] Planejamento: geração local (sem IA) e gravação\n";
+assertSame('nada foi gravado nos casos inválidos', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM content_calendar'));
+$criado = $gerar();
+assertSame('geração sem IA cria o plano', 302, $criado->status);
+$destinoPlano = (string) $criado->header('Location');
+check('redirect para o calendário', str_contains($destinoPlano, '/planner/') && str_contains($destinoPlano, 'created=1'));
+$planoId = (int) (explode('/', parse_url($destinoPlano, PHP_URL_PATH))[4] ?? 0);
+$plano = $app->db->one('SELECT * FROM content_calendar WHERE id = ?', [$planoId]);
+assertSame('modelo gravado como rascunho local', 'local-draft', $plano['ai_model']);
+assertSame('quantidade de posts gravada', 7, (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoId]));
+assertSame('redes gravadas como JSON', '["Instagram"]', $plano['networks_json']);
+assertSame('objetivo gravado', 'Aumentar matrículas no plano trimestral', $plano['objective']);
+assertSame('rascunho fica registrado como local', 'local-draft', $app->db->scalar("SELECT model FROM ai_generations WHERE feature = 'weekly_planning'"));
+assertSame('rascunho local não consome tokens', 0, (int) $app->db->scalar("SELECT input_tokens + output_tokens FROM ai_generations WHERE feature = 'weekly_planning'"));
+assertSame('auditoria registrada', 'planner.created', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'planner.created'"));
+
+$postsDoPlano = $app->db->all('SELECT * FROM posts WHERE calendar_id = ? ORDER BY publication_date, position', [$planoId]);
+$datas = array_column($postsDoPlano, 'publication_date');
+check('datas dentro do período', min($datas) === '2026-03-02' && max($datas) <= '2026-03-08');
+$obrigatorios = ['theme', 'strategic_objective', 'content_type', 'main_text', 'caption', 'visual_brief', 'image_suggestion'];
+$completos = array_filter($postsDoPlano, static function (array $p) use ($obrigatorios): bool {
+    foreach ($obrigatorios as $campo) {
+        if (trim((string) $p[$campo]) === '') {
+            return false;
+        }
+    }
+    return true;
+});
+assertSame('todos os posts têm os campos obrigatórios', 7, count($completos));
+check('briefing visual cita as cores da marca', (bool) preg_grep('/#112244/', array_column($postsDoPlano, 'visual_brief')));
+check('rascunho local se identifica no texto', str_contains((string) $postsDoPlano[0]['main_text'], 'RASCUNHO LOCAL'));
+
+echo "\n[21] Planejamento: tela do calendário\n";
+$tela = $app->handle(requisicao('GET', '/planner/' . $planoId));
+assertSame('calendário responde 200', 200, $tela->status);
+check('mostra o selo de rascunho local', str_contains($tela->body, 'Rascunho local (sem IA)'));
+check('mostra a grade semanal', str_contains($tela->body, 'SEMANA 1'));
+check('mostra as publicações', substr_count($tela->body, 'post-card') >= 7);
+check('mostra o objetivo do plano', str_contains($tela->body, 'Aumentar matrículas'));
+assertSame('plano de outro workspace responde 404', 404, $app->handle(requisicao('GET', '/planner/9999'))->status);
+
+echo "\n[22] Planejamento: edição de publicação\n";
+$primeiroPost = (int) $postsDoPlano[0]['id'];
+$formPost = $app->handle(requisicao('GET', '/planner/posts/' . $primeiroPost . '/edit'));
+assertSame('formulário de post responde 200', 200, $formPost->status);
+$semForaDoPeriodo = $app->handle(requisicao('POST', '/planner/posts/' . $primeiroPost . '/edit', [
+    'csrf_token' => $csrf,
+    'publication_date' => '2026-04-20',
+    'network' => 'Instagram',
+    'theme' => 'Tema', 'strategic_objective' => 'Objetivo', 'content_type' => 'Reels',
+    'main_text' => 'Texto', 'caption' => 'Legenda', 'hashtags' => '#x', 'cta' => 'CTA',
+    'visual_brief' => 'Briefing', 'image_suggestion' => 'Imagem',
+]));
+assertSame('data fora do período responde 422', 422, $semForaDoPeriodo->status);
+check('explica o intervalo permitido', str_contains($semForaDoPeriodo->body, 'dentro do período'));
+$redeErrada = $app->handle(requisicao('POST', '/planner/posts/' . $primeiroPost . '/edit', [
+    'csrf_token' => $csrf, 'publication_date' => '2026-03-03', 'network' => 'TikTok',
+    'theme' => 'T', 'strategic_objective' => 'O', 'content_type' => 'C',
+    'main_text' => 'M', 'caption' => 'L', 'hashtags' => '', 'cta' => '',
+    'visual_brief' => 'B', 'image_suggestion' => 'I',
+]));
+assertSame('rede fora do plano responde 422', 422, $redeErrada->status);
+$vazio = $app->handle(requisicao('POST', '/planner/posts/' . $primeiroPost . '/edit', [
+    'csrf_token' => $csrf, 'publication_date' => '2026-03-03', 'network' => 'Instagram',
+    'theme' => '', 'strategic_objective' => 'O', 'content_type' => 'C',
+    'main_text' => 'M', 'caption' => 'L', 'hashtags' => '', 'cta' => '',
+    'visual_brief' => 'B', 'image_suggestion' => 'I',
+]));
+assertSame('campo obrigatório vazio responde 422', 422, $vazio->status);
+$salvo = $app->handle(requisicao('POST', '/planner/posts/' . $primeiroPost . '/edit', [
+    'csrf_token' => $csrf, 'publication_date' => '2026-03-04', 'network' => 'Instagram',
+    'theme' => 'Aula experimental gratuita', 'strategic_objective' => 'Trazer novos alunos',
+    'content_type' => 'Reels', 'main_text' => 'Roteiro revisado', 'caption' => 'Legenda revisada',
+    'hashtags' => '#bravo #treino', 'cta' => 'Agende sua aula', 'visual_brief' => 'Treino real',
+    'image_suggestion' => 'Vídeo vertical',
+]));
+assertSame('edição válida redireciona', 302, $salvo->status);
+$postAtualizado = $app->db->one('SELECT * FROM posts WHERE id = ?', [$primeiroPost]);
+assertSame('tema atualizado', 'Aula experimental gratuita', $postAtualizado['theme']);
+assertSame('data atualizada', '2026-03-04', $postAtualizado['publication_date']);
+
+echo "\n[23] Planejamento: duplicar, remover, produção e exclusão\n";
+$antes = (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoId]);
+$duplicado = $app->handle(requisicao('POST', '/planner/posts/' . $primeiroPost . '/duplicate', ['csrf_token' => $csrf]));
+assertSame('duplicar redireciona', 302, $duplicado->status);
+assertSame('post duplicado criado', $antes + 1, (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoId]));
+$removido = $app->handle(requisicao('POST', '/planner/posts/' . $primeiroPost . '/delete', ['csrf_token' => $csrf]));
+assertSame('remover post redireciona', 302, $removido->status);
+assertSame('post removido', $antes, (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoId]));
+
+$producao = $app->handle(requisicao('POST', '/planner/' . $planoId . '/production', ['csrf_token' => $csrf]));
+assertSame('enviar para produção redireciona', 302, $producao->status);
+assertSame('plano em produção', 'in_production', $app->db->scalar('SELECT status FROM content_calendar WHERE id = ?', [$planoId]));
+assertSame('posts em produção', 0, (int) $app->db->scalar("SELECT COUNT(*) FROM posts WHERE calendar_id = ? AND status = 'planned'", [$planoId]));
+assertSame('exclusão sem CSRF é barrada', 403, $app->handle(requisicao('POST', '/planner/' . $planoId . '/delete', ['csrf_token' => 'x']))->status);
+$apagado = $app->handle(requisicao('POST', '/planner/' . $planoId . '/delete', ['csrf_token' => $csrf]));
+assertSame('excluir plano redireciona', 302, $apagado->status);
+assertSame('plano removido', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM content_calendar WHERE id = ?', [$planoId]));
+assertSame('posts removidos em cascata', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoId]));
+
+echo "\n[24] Planejamento: validação rigorosa da resposta da IA\n";
+$gerador = new \Smia\Planner\PlanGenerator('chave-de-teste', 'gpt-4o-mini');
+check('IA é considerada configurada com chave', $gerador->iaConfigurada());
+$spec = ['period_days' => 7, 'target_posts' => 2, 'start_date' => '2026-03-02', 'networks' => ['Instagram', 'Facebook'], 'objective' => 'Objetivo', 'campaign_context' => ''];
+$postValido = static fn (string $data, string $rede) => [
+    'publication_date' => $data, 'network' => $rede, 'theme' => 'Tema', 'strategic_objective' => 'Objetivo',
+    'content_type' => 'Carrossel', 'main_text' => 'Texto', 'caption' => 'Legenda',
+    'hashtags' => ['#a', '#b'], 'cta' => 'CTA', 'visual_brief' => 'Briefing', 'image_suggestion' => 'Imagem',
+];
+$validados = $gerador->validarPosts([$postValido('2026-03-05', 'Facebook'), $postValido('2026-03-02', 'Instagram')], $spec);
+assertSame('ordena por data', '2026-03-02', $validados[0]['publication_date']);
+assertSame('hashtags em lista viram texto', '#a #b', $validados[0]['hashtags']);
+
+$casosInvalidos = [
+    'quantidade diferente do pedido' => [[$postValido('2026-03-02', 'Instagram')], 'quantidade'],
+    'data fora do período' => [[$postValido('2026-03-20', 'Instagram'), $postValido('2026-03-02', 'Instagram')], 'fora do planejamento'],
+    'rede não escolhida' => [[$postValido('2026-03-02', 'TikTok'), $postValido('2026-03-02', 'Instagram')], 'fora do planejamento'],
+    'data em formato inválido' => [[array_merge($postValido('2026-03-02', 'Instagram'), ['publication_date' => '02/03/2026']), $postValido('2026-03-03', 'Instagram')], 'data'],
+    'campo essencial vazio' => [[array_merge($postValido('2026-03-02', 'Instagram'), ['caption' => '']), $postValido('2026-03-03', 'Instagram')], 'campos essenciais'],
+];
+foreach ($casosInvalidos as $nome => [$entrada, $trecho]) {
+    try {
+        $gerador->validarPosts($entrada, $spec);
+        check("rejeita {$nome}", false, 'aceitou resposta inválida');
+    } catch (\Smia\Planner\PlannerError $erro) {
+        check("rejeita {$nome}", str_contains(mb_strtolower($erro->getMessage()), mb_strtolower($trecho)), $erro->getMessage());
+    }
+}
+
+$semChave = new \Smia\Planner\PlanGenerator(null);
+check('sem chave, IA não é configurada', !$semChave->iaConfigurada());
+$resultadoLocal = $semChave->gerar(['company_name' => 'Bravo', 'segment' => 'Academia', 'primary_color' => '#112244'], $spec);
+assertSame('fallback gera a quantidade pedida', 2, count($resultadoLocal['posts']));
+assertSame('fallback se identifica como local', 'local-draft', $resultadoLocal['model']);
+assertSame('fallback não cobra tokens', 0, $resultadoLocal['input_tokens']);
+
+echo "\n[25] Planejamento: caminho com IA (provedor simulado em Node)\n";
+// O php-wasm não abre sockets de servidor; o runner sobe um provedor falso em
+// Node e exporta SMIA_PROVEDOR_IA. Aqui exercitamos o caminho de IA de ponta a
+// ponta: prompt -> POST HTTP -> JSON -> validação -> gravação com tokens.
+$arquivoProvedor = __DIR__ . '/.provedor-ia';
+$endpointProvedor = is_file($arquivoProvedor) ? trim((string) file_get_contents($arquivoProvedor)) : '';
+if ($endpointProvedor === '') {
+    check('provedor simulado disponível', false, 'tests/.provedor-ia não foi escrito pelo runner');
+} else {
+    check('provedor simulado disponível', true);
+
+    $geradorIa = new \Smia\Planner\PlanGenerator('chave-teste', 'gpt-4o-mini', 20, $endpointProvedor);
+    $specIa = ['period_days' => 7, 'target_posts' => 3, 'start_date' => '2026-03-02', 'networks' => ['Instagram', 'Facebook'], 'objective' => 'Trazer alunos', 'campaign_context' => ''];
+    $clienteIa = ['company_name' => 'Bravo Fitness', 'trade_name' => 'Bravo', 'segment' => 'Academia', 'primary_color' => '#112244', 'communication_tone' => 'direto'];
+
+    // 1) Chave recusada (401)
+    $curto = new \Smia\Planner\PlanGenerator('chave-errada', 'gpt-4o-mini', 20, $endpointProvedor . '?cenario=401');
+    try {
+        $curto->gerar($clienteIa, $specIa);
+        check('401 vira mensagem de chave recusada', false, 'não lançou erro');
+    } catch (\Smia\Planner\PlannerError $erro) {
+        check('401 vira mensagem de chave recusada', str_contains($erro->getMessage(), 'recusada'), $erro->getMessage());
+    }
+
+    // 2) Limite do provedor (429)
+    $limitado = new \Smia\Planner\PlanGenerator('chave', 'gpt-4o-mini', 20, $endpointProvedor . '?cenario=429');
+    try {
+        $limitado->gerar($clienteIa, $specIa);
+        check('429 vira mensagem de limite', false, 'não lançou erro');
+    } catch (\Smia\Planner\PlannerError $erro) {
+        check('429 vira mensagem de limite', str_contains($erro->getMessage(), 'limitou'), $erro->getMessage());
+    }
+
+    // 3) Resposta fora do formato
+    $quebrado = new \Smia\Planner\PlanGenerator('chave', 'gpt-4o-mini', 20, $endpointProvedor . '?cenario=invalido');
+    try {
+        $quebrado->gerar($clienteIa, $specIa);
+        check('resposta inválida vira erro tratado', false, 'não lançou erro');
+    } catch (\Smia\Planner\PlannerError $erro) {
+        check('resposta inválida vira erro tratado', str_contains($erro->getMessage(), 'formato inválido'), $erro->getMessage());
+    }
+
+    // 4) Caminho feliz: gera com IA, valida e confere tokens.
+    $resultadoIa = $geradorIa->gerar($clienteIa, $specIa);
+    check('IA devolve o modo "ia"', ($resultadoIa['modo'] ?? '') === 'ia');
+    assertSame('IA gera a quantidade pedida', 3, count($resultadoIa['posts']));
+    assertSame('modelo registrado', 'gpt-4o-mini', $resultadoIa['model']);
+    assertSame('tokens de entrada lidos', 1234, $resultadoIa['input_tokens']);
+    assertSame('tokens de saída lidos', 567, $resultadoIa['output_tokens']);
+    check('posts da IA respeitam as redes escolhidas', array_reduce($resultadoIa['posts'], static fn (bool $ok, array $p): bool => $ok && in_array($p['network'], $specIa['networks'], true), true));
+
+    // 5) Ponte completa: app com OPENAI_ENDPOINT apontando para o provedor.
+    $configIa = new \Smia\Support\Config(
+        root: $raiz, dataDir: $raiz, dbPath: $config->dbPath, envFile: $raiz . '/installer.env',
+        basePath: '/edijalmemoura/socialai',
+        publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+        secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+        openaiKey: 'chave-teste', openaiModel: 'gpt-4o-mini', openaiEndpoint: $endpointProvedor,
+    );
+    $appIa = new Application($configIa);
+    $appIa->session->start();
+    $appIa->session->put('user_id', $idUsuario);
+    $telaIa = $appIa->handle(requisicao('GET', '/planner'));
+    assertSame('tela mostra IA configurada', 200, $telaIa->status);
+    check('tela indica a IA configurada', str_contains($telaIa->body, 'IA configurada'));
+    check('tela não mostra aviso de chave ausente', !str_contains($telaIa->body, 'Sem chave de IA configurada'));
+    preg_match('/name="csrf_token" value="([^"]+)"/', $telaIa->body, $mia);
+    $appIa->session->start();
+    $appIa->session->put('user_id', $idUsuario);
+    $criadoIa = $appIa->handle(requisicao('POST', '/planner/generate', [
+        'csrf_token' => $mia[1] ?? '',
+        'client_id' => (string) $clientePlano,
+        'period_days' => '7',
+        'target_posts' => '3',
+        'start_date' => '2026-05-04',
+        'networks' => ['Instagram'],
+        'objective' => 'Renovar matrículas',
+    ]));
+    assertSame('geração com IA cria o plano', 302, $criadoIa->status);
+    $planoIaId = (int) (explode('/', parse_url((string) $criadoIa->header('Location'), PHP_URL_PATH))[4] ?? 0);
+    $planoIa = $appIa->db->one('SELECT * FROM content_calendar WHERE id = ?', [$planoIaId]);
+    assertSame('modelo real gravado no plano', 'gpt-4o-mini', $planoIa['ai_model'] ?? null);
+    assertSame('posts gravados pela IA', 3, (int) $appIa->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoIaId]));
+    $usoIa = $appIa->db->one("SELECT * FROM ai_generations WHERE feature = 'weekly_planning' ORDER BY id DESC LIMIT 1");
+    assertSame('tokens de entrada gravados', 1234, (int) $usoIa['input_tokens']);
+    assertSame('tokens de saída gravados', 567, (int) $usoIa['output_tokens']);
+    check('texto da IA não é rascunho local', !str_contains((string) $appIa->db->scalar('SELECT main_text FROM posts WHERE calendar_id = ? LIMIT 1', [$planoIaId]), 'RASCUNHO LOCAL'));
+}
+
+echo "\n[26] Planejamento: mensagens de erro do provedor\n";
+$portaMorta = 18000 + random_int(2001, 4000);
+$logOriginal = ini_set('error_log', sys_get_temp_dir() . '/smia-erro-' . bin2hex(random_bytes(4)) . '.log');
+$semProvedor = new \Smia\Planner\PlanGenerator('chave', 'gpt-4o-mini', 2, 'http://127.0.0.1:' . $portaMorta . '/v1/chat/completions');
+try {
+    $semProvedor->gerar(['company_name' => 'X'], ['period_days' => 7, 'target_posts' => 1, 'start_date' => '2026-03-02', 'networks' => ['Instagram'], 'objective' => 'O', 'campaign_context' => '']);
+    check('provedor fora do ar vira erro tratado', false, 'não lançou erro');
+} catch (\Smia\Planner\PlannerError $erro) {
+    check('provedor fora do ar vira erro tratado', str_contains($erro->getMessage(), 'conectar'), $erro->getMessage());
+}
+if ($logOriginal !== false) {
+    ini_set('error_log', $logOriginal);
+}
+
+echo "\n[27] Planejamento: matriz de permissões e isolamento entre agências\n";
+// Prepara um plano novo para a matriz de papéis.
+$logar($app, $idUsuario);
+$basePerm = $gerar(['target_posts' => '4', 'start_date' => '2026-06-01']);
+assertSame('plano para a matriz criado', 302, $basePerm->status);
+$planoPerm = (int) (explode('/', parse_url((string) $basePerm->header('Location'), PHP_URL_PATH))[4] ?? 0);
+$postPerm = (int) $app->db->scalar('SELECT id FROM posts WHERE calendar_id = ? LIMIT 1', [$planoPerm]);
+$dadosPost = [
+    'csrf_token' => $csrf, 'publication_date' => '2026-06-02', 'network' => 'Instagram',
+    'theme' => 'Tema', 'strategic_objective' => 'Objetivo', 'content_type' => 'Reels',
+    'main_text' => 'Texto', 'caption' => 'Legenda', 'hashtags' => '#a', 'cta' => 'CTA',
+    'visual_brief' => 'Briefing', 'image_suggestion' => 'Imagem',
+];
+$papelOriginal = (string) $app->db->scalar('SELECT role FROM users WHERE id = ?', [$idUsuario]);
+
+// viewer: lê, mas não gera, edita, envia para produção nem exclui
+$app->db->run("UPDATE users SET role = 'viewer' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('viewer abre o planejamento', 200, $app->handle(requisicao('GET', '/planner'))->status);
+$logar($app, $idUsuario);
+assertSame('viewer abre o calendário', 200, $app->handle(requisicao('GET', '/planner/' . $planoPerm))->status);
+$logar($app, $idUsuario);
+$negadoGerar = $app->handle(requisicao('POST', '/planner/generate', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'period_days' => '7',
+    'target_posts' => '7', 'start_date' => '2026-06-01', 'networks' => ['Instagram'], 'objective' => 'O',
+]));
+assertSame('viewer não gera calendário', 403, $negadoGerar->status);
+check('tela de 403 do planejamento', str_contains($negadoGerar->body, 'não pode fazer isso'));
+$logar($app, $idUsuario);
+assertSame('viewer não edita post', 403, $app->handle(requisicao('POST', '/planner/posts/' . $postPerm . '/edit', $dadosPost))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não duplica post', 403, $app->handle(requisicao('POST', '/planner/posts/' . $postPerm . '/duplicate', ['csrf_token' => $csrf]))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não envia para produção', 403, $app->handle(requisicao('POST', '/planner/' . $planoPerm . '/production', ['csrf_token' => $csrf]))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não exclui plano', 403, $app->handle(requisicao('POST', '/planner/' . $planoPerm . '/delete', ['csrf_token' => $csrf]))->status);
+
+// editor: cria e edita; não exclui plano
+$app->db->run("UPDATE users SET role = 'editor' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('editor edita post', 302, $app->handle(requisicao('POST', '/planner/posts/' . $postPerm . '/edit', $dadosPost))->status);
+$logar($app, $idUsuario);
+assertSame('editor não exclui plano', 403, $app->handle(requisicao('POST', '/planner/' . $planoPerm . '/delete', ['csrf_token' => $csrf]))->status);
+
+// admin: exclui
+$app->db->run("UPDATE users SET role = 'admin' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('admin exclui plano', 302, $app->handle(requisicao('POST', '/planner/' . $planoPerm . '/delete', ['csrf_token' => $csrf]))->status);
+$app->db->run('UPDATE users SET role = ? WHERE id = ?', [$papelOriginal, $idUsuario]);
+
+// Isolamento: usuário de outra agência não vê nem abre o calendário alheio
+$logar($app, $idUsuario);
+$proprio = $gerar(['target_posts' => '3', 'start_date' => '2026-07-06']);
+$planoProprio = (int) (explode('/', parse_url((string) $proprio->header('Location'), PHP_URL_PATH))[4] ?? 0);
+$postProprio = (int) $app->db->scalar('SELECT id FROM posts WHERE calendar_id = ? LIMIT 1', [$planoProprio]);
+$idOutro = (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'");
+$logar($app, $idOutro);
+$listaOutro = $app->handle(requisicao('GET', '/planner'));
+assertSame('outra agência abre o próprio planejamento', 200, $listaOutro->status);
+check('outra agência não vê o calendário alheio', !str_contains($listaOutro->body, 'Bravo'));
+$logar($app, $idOutro);
+assertSame('outra agência recebe 404 no calendário alheio', 404, $app->handle(requisicao('GET', '/planner/' . $planoProprio))->status);
+$logar($app, $idOutro);
+assertSame('outra agência recebe 404 no post alheio', 404, $app->handle(requisicao('GET', '/planner/posts/' . $postProprio . '/edit'))->status);
+$logar($app, $idOutro);
+assertSame('outra agência não exclui o plano alheio', 404, $app->handle(requisicao('POST', '/planner/' . $planoProprio . '/delete', ['csrf_token' => $csrf]))->status);
+check('calendário alheio continua intacto', (int) $app->db->scalar('SELECT COUNT(*) FROM content_calendar WHERE id = ?', [$planoProprio]) === 1);
+
+// Volta ao usuário principal para o fechamento da suíte.
+$logar($app, $idUsuario);
+
+echo "\n[28] Planejamento: migração aditiva sobre uma instalação v1.1\n";
+// Simula um banco vindo da versão anterior: só as tabelas de clientes, com dados.
+$bancoAntigo = sys_get_temp_dir() . '/smia-antigo-' . bin2hex(random_bytes(4)) . '.sqlite';
+$pdoAntigo = new PDO('sqlite:' . $bancoAntigo);
+$pdoAntigo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$pdoAntigo->exec('PRAGMA foreign_keys = ON');
+$pdoAntigo->exec(<<<'SQL'
+CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE companies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, name TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner', last_login_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE installation (id INTEGER PRIMARY KEY CHECK (id = 1), installed_at TEXT NOT NULL, agency_name TEXT NOT NULL, owner_email TEXT NOT NULL, public_origin TEXT NOT NULL, php_version TEXT NOT NULL);
+CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER, user_id INTEGER, action TEXT NOT NULL, entity TEXT, entity_id INTEGER, details TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE clients (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE, company_name TEXT NOT NULL, trade_name TEXT, segment TEXT, website TEXT, description TEXT, products_services TEXT, audience TEXT, business_goals TEXT, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE client_branding (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER NOT NULL UNIQUE REFERENCES clients(id) ON DELETE CASCADE, primary_color TEXT, secondary_color TEXT, accent_color TEXT, typography TEXT, visual_style TEXT, communication_tone TEXT, slogan TEXT, graphic_elements TEXT, brand_manual TEXT);
+CREATE TABLE client_assets (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE, file_name TEXT NOT NULL, stored_name TEXT NOT NULL, mime_type TEXT, size_bytes INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+INSERT INTO schema_version (version) VALUES (2);
+INSERT INTO companies (name, slug) VALUES ('Agência Antiga', 'agencia-antiga');
+INSERT INTO users (company_id, name, email, password_hash, role) VALUES (1, 'Ana', 'ana@antiga.example', 'x', 'owner');
+INSERT INTO clients (company_id, company_name, trade_name) VALUES (1, 'Cliente Herdado', 'Herdado');
+SQL);
+$pdoAntigo = null;
+
+$configAntiga = new \Smia\Support\Config(
+    root: $raiz, dataDir: $raiz, dbPath: $bancoAntigo, envFile: $raiz . '/installer.env',
+    basePath: '/edijalmemoura/socialai',
+    publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+    secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+);
+$appAntiga = new Application($configAntiga);
+\Smia\Database\Schema::migrate($appAntiga->db);
+assertSame('versão do esquema atualizada', (string) \Smia\Database\Schema::VERSAO, (string) $appAntiga->db->scalar('SELECT MAX(version) FROM schema_version'));
+assertSame('tabela de calendário criada', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'content_calendar'"));
+assertSame('tabela de posts criada', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'posts'"));
+assertSame('tabela de uso de IA criada', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ai_generations'"));
+assertSame('dados de clientes preservados', 'Cliente Herdado', $appAntiga->db->scalar('SELECT company_name FROM clients WHERE id = 1'));
+\Smia\Database\Schema::migrate($appAntiga->db);
+assertSame('migração é idempotente', 'Cliente Herdado', $appAntiga->db->scalar('SELECT company_name FROM clients WHERE id = 1'));
+assertSame('nenhuma versão duplicada', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = 3'));
+
+echo "\n[29] Dashboard e navegação liberam o planejamento\n";
+$logar($app, $idUsuario);
+$painelNovo = $app->handle(requisicao('GET', '/dashboard'));
+assertSame('dashboard responde 200', 200, $painelNovo->status);
+check('menu mostra Planejamento', str_contains($painelNovo->body, 'Planejamento'));
+check('módulo não aparece como "em breve"', !preg_match('/Planejamento.{0,200}?em breve/s', $painelNovo->body));
+$modulos = \Smia\Support\Modules::all();
+$moduloPlanner = array_values(array_filter($modulos, static fn (array $m): bool => $m['slug'] === 'planner'))[0] ?? null;
+check('módulo planejamento marcado como pronto', ($moduloPlanner['ready'] ?? false) === true);
+check('os demais módulos seguem pendentes', count(array_filter($modulos, static fn (array $m): bool => $m['ready'] === false)) >= 4);
+
+echo "\n[30] Planejamento: conteúdo da IA é tratado como não confiável\n";
+$logar($app, $idUsuario);
+$comHtml = $gerar(['objective' => '<script>alert(1)</script> Quero "matrículas" & mais', 'target_posts' => '2']);
+assertSame('objetivo com HTML é aceito como texto', 302, $comHtml->status);
+$planoXss = (int) (explode('/', parse_url((string) $comHtml->header('Location'), PHP_URL_PATH))[4] ?? 0);
+$logar($app, $idUsuario);
+$telaXss = $app->handle(requisicao('GET', '/planner/' . $planoXss));
+assertSame('calendário com HTML no objetivo responde', 200, $telaXss->status);
+check('script do objetivo não é executado', !str_contains($telaXss->body, '<script>alert(1)</script>'));
+check('texto escapado aparece como conteúdo', str_contains($telaXss->body, '&lt;script&gt;alert(1)&lt;/script&gt;'));
+
+// Post vindo da IA com HTML no corpo: precisa ser escapado na tela
+$logar($app, $idUsuario);
+$app->db->run("UPDATE posts SET main_text = ?, caption = ? WHERE calendar_id = ?", [
+    '<img src=x onerror=alert(1)>', '"><script>roubar()</script>', $planoXss,
+]);
+$logar($app, $idUsuario);
+$telaPost = $app->handle(requisicao('GET', '/planner/' . $planoXss));
+check('imagem maliciosa do post não vira tag', !str_contains($telaPost->body, '<img src=x onerror'));
+check('script no texto do post não vira tag', !str_contains($telaPost->body, '<script>roubar()'));
+
+// JSON quebrado do provedor não derruba o app: mensagem + 502 na tela
+$logar($app, $idUsuario);
+$jsonQuebrado = $app->handle(requisicao('POST', '/planner/generate', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'period_days' => '30',
+    'target_posts' => '46', 'start_date' => '2026-08-03', 'networks' => ['Instagram'], 'objective' => 'O',
+]));
+assertSame('46 publicações em 30 dias é barrado', 400, $jsonQuebrado->status);
+check('mensagem explica o limite', str_contains($jsonQuebrado->body, 'entre 1 e 45'));
+
 echo "\n----------------------------------------\n";
 echo $falhas === 0 ? "RESULTADO: OK ({$total} verificações)\n" : "RESULTADO: {$falhas} FALHA(S) de {$total}\n";
 exit($falhas === 0 ? 0 : 1);
