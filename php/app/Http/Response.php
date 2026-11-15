@@ -1,0 +1,79 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Smia\Http;
+
+/**
+ * Resposta HTTP imutável o suficiente para ser testável sem servidor.
+ * Os testes criam a resposta, inspecionam status/cabeçalhos e imprimem.
+ */
+final class Response
+{
+    /** @param array<string,string> $headers */
+    public function __construct(
+        public string $body = '',
+        public int $status = 200,
+        public array $headers = [],
+    ) {
+    }
+
+    public static function html(string $corpo, int $status = 200): self
+    {
+        return new self($corpo, $status, ['Content-Type' => 'text/html; charset=utf-8']);
+    }
+
+    public static function redirect(string $destino, int $status = 302): self
+    {
+        return new self('', $status, ['Location' => $destino]);
+    }
+
+    public static function text(string $corpo, int $status = 200): self
+    {
+        return new self($corpo, $status, ['Content-Type' => 'text/plain; charset=utf-8']);
+    }
+
+    public function withHeader(string $nome, string $valor): self
+    {
+        $this->headers[$nome] = $valor;
+
+        return $this;
+    }
+
+    /** Cabeçalhos de segurança iguais aos do produto Python. */
+    public function withSecurityHeaders(): self
+    {
+        return $this
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withHeader('X-Frame-Options', 'SAMEORIGIN')
+            ->withHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+            ->withHeader(
+                'Content-Security-Policy',
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                . "font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self'; "
+                . "frame-ancestors 'self'"
+            );
+    }
+
+    public function send(): void
+    {
+        if (!headers_sent()) {
+            http_response_code($this->status);
+            foreach ($this->headers as $nome => $valor) {
+                header($nome . ': ' . $valor, true);
+            }
+        }
+        echo $this->body;
+    }
+
+    public function header(string $nome): ?string
+    {
+        foreach ($this->headers as $chave => $valor) {
+            if (strcasecmp($chave, $nome) === 0) {
+                return $valor;
+            }
+        }
+
+        return null;
+    }
+}

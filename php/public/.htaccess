@@ -1,0 +1,35 @@
+# SocialMedia IA (PHP) — Apache / LiteSpeed do cPanel
+#
+# Esta pasta (public/) é a única exposta. O código e os dados ficam acima dela.
+# Nada aqui depende de Passenger, Python ou Composer.
+
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Raiz do diretório: NÃO fixe a subpasta. O index.php detecta sozinho,
+    # então o mesmo pacote serve em /, /edijalmemoura/socialai ou subdomínio.
+    RewriteBase /
+
+    # Bloqueios (defesa em profundidade; o código nem está nesta pasta).
+    RewriteRule (^|/)\.(env|git|htaccess) - [F,L]
+    RewriteRule \.(sqlite|sqlite3|db|log|bak|ini|md)$ - [F,L]
+
+    # Arquivos reais (CSS, JS, imagens enviadas) vão direto.
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Todo o resto é da aplicação.
+    RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+<FilesMatch "\.(sqlite|sqlite3|db|log|env)$">
+    Require all denied
+</FilesMatch>

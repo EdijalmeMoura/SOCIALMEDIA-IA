@@ -12,3 +12,6 @@ backups/
 .env
 .env.*
 !.env.example
+
+# Dependências dos testes PHP (php-wasm), nunca versionadas
+php/node_modules/

@@ -1,0 +1,6 @@
+node_modules/
+data/*.sqlite
+data/installer.env
+data/installer-drafts/
+data/*.db
+.env
