@@ -8,6 +8,22 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 > (clientes, planejamento, estúdio, aprovações, feed, relatórios, Meta) entram
 > um a um, reaproveitando esta mesma base e o mesmo esquema de dados.
 
+## Baixar o pacote pronto
+
+`downloads/SOCIALMEDIA-IA-php-v1.0.zip` nesta pasta é o pacote completo (`.env`
+com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
+publicada em
+[`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
+ou gere um novo a qualquer momento:
+
+```sh
+git archive --format=zip -o socialai-php.zip HEAD:php
+```
+
+O pacote publicado **não contém segredos**: preencha `SECRET_KEY` e
+`SOCIALMEDIA_INSTALL_TOKEN` no `.env` antes de enviar (instruções no
+`COMECE-AQUI.txt`).
+
 ## Por que existe
 
 O endereço `https://projetoredesnordeste.com.br/edijalmemoura/socialai/`
