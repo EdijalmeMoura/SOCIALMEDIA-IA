@@ -7,6 +7,9 @@
  * @var int $team_count
  * @var array<int,array<string,string>> $audit
  * @var array<int,array<string,mixed>> $modules
+ * @var int $client_total
+ * @var array{total:int,ativos:int} $client_summary
+ * @var array<int,array<string,mixed>> $recent_clients
  * @var string $csrf
  * @var array<int,array{type:string,message:string}> $flashes
  * @var \Smia\Support\Config $config
@@ -39,22 +42,44 @@ ob_start();
     <div class="stat-bottom"><span class="stat-note">UTC · instalador fechado (410)</span></div>
   </article>
   <article class="stat-card">
-    <div class="stat-head"><span class="stat-icon coral">◆</span><span class="stat-caption">MÓDULOS</span></div>
-    <div class="stat-value"><?= (int) $prontos ?><small>/<?= count($modules) ?></small></div>
-    <div class="stat-bottom"><span class="stat-note">port do Python em andamento</span></div>
+    <div class="stat-head"><span class="stat-icon coral">◆</span><span class="stat-caption">CLIENTES</span></div>
+    <div class="stat-value"><a href="<?= e($config->url('/clients')) ?>" style="color:inherit;text-decoration:none"><?= (int) $client_total ?><small> marcas</small></a></div>
+    <div class="stat-bottom"><span class="stat-note"><?= (int) $client_summary['ativos'] ?> ativo(s) · módulo <?= $prontos ?> de <?= count($modules) ?> pronto</span></div>
   </article>
 </div>
 
 <div class="lower-grid">
   <section class="panel">
     <div class="panel-heading">
+      <div><h3>Clientes recentes</h3><p>Últimos perfis cadastrados neste workspace.</p></div>
+      <a class="button outline small-button" href="<?= e($config->url('/clients')) ?>">Ver todos</a>
+    </div>
+    <?php if (empty($recent_clients)): ?>
+      <div class="empty-state" style="padding:26px 0">
+        <p class="page-subtitle">Nenhum cliente ainda. Comece cadastrando a primeira marca.</p>
+        <a class="button primary small-button" href="<?= e($config->url('/clients/new')) ?>">＋ Novo cliente</a>
+      </div>
+    <?php else: ?>
+      <ul class="check-list" style="margin-top:14px">
+        <?php foreach ($recent_clients as $cliente): ?>
+          <li class="check">
+            <span class="check-icon">◫</span>
+            <div>
+              <b><a href="<?= e($config->url('/clients/' . $cliente['id'])) ?>" style="color:inherit"><?= e((string) ($cliente['trade_name'] ?: $cliente['company_name'])) ?></a></b>
+              <small><?= e((string) ($cliente['segment'] ?: 'Segmento não informado')) ?> · <?= e(mb_substr((string) $cliente['created_at'], 0, 10)) ?></small>
+            </div>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+    <?php endif; ?>
+    <div class="panel-heading" style="margin-top:18px">
       <div><h3>Módulos do produto</h3><p>Mesma estrutura de dados do produto Python; cada um entra em uma entrega.</p></div>
     </div>
-    <ul class="check-list" style="margin-top:14px">
+    <ul class="check-list" style="margin-top:10px">
       <?php foreach ($modules as $modulo): ?>
         <li class="check">
           <span class="check-icon" style="<?= $modulo['ready'] ? '' : 'background:#f1f2f7;color:#9aa0b0' ?>"><?= $modulo['ready'] ? '✓' : '·' ?></span>
-          <div><b><?= e($modulo['name']) ?></b><small><?= e($modulo['hint']) ?></small></div>
+          <div><b><?= $modulo['ready'] ? '<a href="' . e($config->url((string) $modulo['path'])) . '" style="color:inherit">' . e($modulo['name']) . '</a>' : e($modulo['name']) ?></b><small><?= e($modulo['hint']) ?></small></div>
         </li>
       <?php endforeach; ?>
     </ul>

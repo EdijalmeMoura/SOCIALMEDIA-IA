@@ -266,6 +266,156 @@ echo "\n[11] Isolamento entre instâncias\n";
 [$app2, , $raiz2] = appNova();
 check('segunda instância também precisa de instalação', $app2->installer->needed());
 
+echo "\n[12] Clientes: cadastro, perfil e identidade visual\n";
+// Reaproveita a instância já instalada e logada da seção [8].
+// A seção [9] fez logout, então entra de novo — igual ao que o usuário faz.
+$paginaLogin = $app->handle(requisicao('GET', '/login'));
+preg_match('/name="csrf_token" value="([^"]+)"/', $paginaLogin->body, $ml);
+$entrada = $app->handle(requisicao('POST', '/login', [
+    'csrf_token' => $ml[1] ?? '',
+    'email' => 'ana@pasta.example',
+    'password' => 'PastaForte2026',
+]));
+assertSame('login restabelecido para os testes de clientes', 302, $entrada->status);
+$formNovo = $app->handle(requisicao('GET', '/clients/new'));
+preg_match('/name="csrf_token" value="([^"]+)"/', $formNovo->body, $mc);
+$csrf = $mc[1] ?? '';
+check('CSRF do formulário de cliente', strlen($csrf) === 64);
+$listaLimpa = $app->handle(requisicao('GET', '/clients'));
+assertSame('listagem de clientes responde 200', 200, $listaLimpa->status);
+check('estado vazio convida a cadastrar', str_contains($listaLimpa->body, 'Cadastrar primeiro cliente'));
+
+$criado = $app->handle(requisicao('POST', '/clients/new', [
+    'csrf_token' => $csrf,
+    'company_name' => '  Aurora Cafés Especiais  ',
+    'trade_name' => 'Aurora',
+    'segment' => 'Gastronomia',
+    'website' => 'https://aurora.com.br',
+    'instagram' => '@auroracafes',
+    'description' => "Cafeteria de origem\ncom grãos próprios",
+]));
+assertSame('criação redireciona para o perfil', 302, $criado->status);
+$destino = (string) $criado->header('Location');
+check('redirect prefixado com ?created=1', str_starts_with($destino, '/edijalmemoura/socialai/clients/') && str_ends_with($destino, '?created=1'));
+$clientId = (int) (explode('/', parse_url($destino, PHP_URL_PATH))[4] ?? 0);
+check('id do cliente no redirect', $clientId > 0);
+$linha = $app->db->one('SELECT * FROM clients WHERE id = ?', [$clientId]);
+assertSame('nome sem espaços nas pontas', 'Aurora Cafés Especiais', $linha['company_name']);
+check('identidade visual criada junto', $app->db->one('SELECT * FROM client_branding WHERE client_id = ?', [$clientId]) !== null);
+assertSame('evento na auditoria', 'client.created', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'client.created'"));
+
+$semNome = $app->handle(requisicao('POST', '/clients/new', ['csrf_token' => $csrf, 'company_name' => '   ']));
+assertSame('nome vazio responde 422', 422, $semNome->status);
+check('mensagem de nome obrigatório', str_contains($semNome->body, 'O nome da empresa é obrigatório.'));
+$siteRuim = $app->handle(requisicao('POST', '/clients/new', ['csrf_token' => $csrf, 'company_name' => 'X', 'website' => 'aurora.com.br']));
+assertSame('site sem http responde 422', 422, $siteRuim->status);
+$semCsrf = $app->handle(requisicao('POST', '/clients/new', ['company_name' => 'Sem CSRF']));
+assertSame('criação sem CSRF responde 400', 400, $semCsrf->status);
+assertSame('nada foi criado sem CSRF', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM clients'));
+
+$perfil = $app->handle(requisicao('GET', '/clients/' . $clientId));
+assertSame('perfil responde 200', 200, $perfil->status);
+check('perfil mostra a marca', str_contains($perfil->body, 'Aurora Cafés Especiais'));
+check('perfil mostra as abas', str_contains($perfil->body, 'Identidade visual') && str_contains($perfil->body, 'Referências'));
+
+$salvo = $app->handle(requisicao('POST', '/clients/' . $clientId, [
+    'csrf_token' => $csrf,
+    'company_name' => 'Aurora Cafés',
+    'segment' => 'Cafés especiais',
+    'primary_color' => '#123456',
+    'secondary_color' => 'invalida',
+    'accent_color' => '#abcdef',
+    'slogan' => 'Grãos com história',
+    'typography' => 'Lora',
+]));
+assertSame('salvar perfil redireciona', 302, $salvo->status);
+$branding = $app->db->one('SELECT * FROM client_branding WHERE client_id = ?', [$clientId]);
+assertSame('cor principal salva', '#123456', $branding['primary_color']);
+assertSame('cor inválida cai no padrão', '#f57a45', $branding['secondary_color']);
+assertSame('cor de destaque salva', '#abcdef', $branding['accent_color']);
+assertSame('slogan salvo', 'Grãos com história', $branding['slogan']);
+assertSame('nome atualizado', 'Aurora Cafés', $app->db->scalar('SELECT company_name FROM clients WHERE id = ?', [$clientId]));
+
+echo "\n[13] Clientes: isolamento entre workspaces\n";
+$app->db->run("INSERT INTO companies (name, slug) VALUES ('Outra Agência', 'outra-agencia')");
+$outraEmpresa = (int) $app->db->pdo()->lastInsertId();
+$app->db->run("INSERT INTO users (company_id, name, email, password_hash, role) VALUES (?, 'Outro', 'outro@exemplo.com', ?, 'owner')", [$outraEmpresa, password_hash('OutraSenha#123', PASSWORD_DEFAULT)]);
+// Mesmo id, mas o cliente pertence a outra empresa: precisa ser invisível.
+$app->db->run('INSERT INTO clients (company_id, company_name) VALUES (?, ?)', [$outraEmpresa, 'Cliente Sigiloso']);
+$idSigiloso = (int) $app->db->pdo()->lastInsertId();
+$alheio = $app->handle(requisicao('GET', '/clients/' . $idSigiloso));
+assertSame('cliente de outro workspace responde 404', 404, $alheio->status);
+check('não revela o nome do cliente alheio', !str_contains($alheio->body, 'Cliente Sigiloso'));
+assertSame('cliente inexistente responde 404', 404, $app->handle(requisicao('GET', '/clients/999999'))->status);
+assertSame('listagem não traz cliente alheio', 1, count($app->handle(requisicao('GET', '/clients'))->body === '' ? [] : [1]));
+check('listagem só mostra clientes da empresa', !str_contains($app->handle(requisicao('GET', '/clients'))->body, 'Cliente Sigiloso'));
+
+echo "\n[14] Clientes: upload de imagem validado\n";
+$upload = new \Smia\Support\Upload($raiz . '/uploads');
+$png = sys_get_temp_dir() . '/smia-teste-' . bin2hex(random_bytes(4)) . '.png';
+file_put_contents($png, "\x89PNG\r\n\x1a\n" . str_repeat("\0", 40));
+$salvoImg = $upload->store(['name' => 'logo.png', 'tmp_name' => $png, 'error' => UPLOAD_ERR_OK, 'size' => filesize($png)], 7, 'logo');
+check('aceita PNG pela assinatura', $salvoImg !== null && str_ends_with($salvoImg['filename'], '.png'));
+check('nome gerado não usa o original', $salvoImg !== null && !str_contains($salvoImg['filename'], 'logo.png'));
+check('arquivo existe no disco', $salvoImg !== null && is_file($raiz . '/uploads/' . $salvoImg['filename']));
+
+$falso = sys_get_temp_dir() . '/smia-teste-' . bin2hex(random_bytes(4)) . '.png';
+file_put_contents($falso, '<?php echo "invasao"; ?>');
+try {
+    $upload->store(['name' => 'malicioso.png', 'tmp_name' => $falso, 'error' => UPLOAD_ERR_OK, 'size' => filesize($falso)], 7, 'logo');
+    check('recusa arquivo com extensão de imagem e conteúdo PHP', false, 'aceitou arquivo inválido');
+} catch (\InvalidArgumentException $erro) {
+    check('recusa arquivo com extensão de imagem e conteúdo PHP', str_contains($erro->getMessage(), 'não corresponde'));
+}
+
+$gif = sys_get_temp_dir() . '/smia-teste-' . bin2hex(random_bytes(4)) . '.gif';
+file_put_contents($gif, 'GIF89a');
+try {
+    $upload->store(['name' => 'animacao.gif', 'tmp_name' => $gif, 'error' => UPLOAD_ERR_OK, 'size' => filesize($gif)], 7, 'logo');
+    check('recusa extensão fora da lista', false, 'aceitou GIF');
+} catch (\InvalidArgumentException $erro) {
+    check('recusa extensão fora da lista', str_contains($erro->getMessage(), 'PNG, JPG ou WEBP'));
+}
+assertSame('sem arquivo devolve null', null, $upload->store(['error' => UPLOAD_ERR_NO_FILE], 7, 'logo'));
+check('nome inseguro é rejeitado', !\Smia\Support\Upload::isSafeName('../.env') && \Smia\Support\Upload::isSafeName('12-logo-abc.png'));
+
+echo "\n[15] Clientes: permissões por papel\n";
+$app->db->run("UPDATE users SET role = 'viewer' WHERE email = 'ana@pasta.example'");
+$verViewer = $app->handle(requisicao('GET', '/clients'));
+assertSame('viewer lê a listagem', 200, $verViewer->status);
+check('viewer não vê botão de novo cliente', !str_contains($verViewer->body, 'Novo cliente'));
+assertSame('viewer não abre o formulário', 403, $app->handle(requisicao('GET', '/clients/new'))->status);
+assertSame('viewer não edita', 403, $app->handle(requisicao('POST', '/clients/' . $clientId, ['csrf_token' => $csrf, 'company_name' => 'Hack']))->status);
+assertSame('viewer não exclui', 403, $app->handle(requisicao('POST', '/clients/' . $clientId . '/delete', ['csrf_token' => $csrf]))->status);
+assertSame('nada mudou com o viewer', 'Aurora Cafés', $app->db->scalar('SELECT company_name FROM clients WHERE id = ?', [$clientId]));
+
+$app->db->run("UPDATE users SET role = 'editor' WHERE email = 'ana@pasta.example'");
+assertSame('editor edita', 302, $app->handle(requisicao('POST', '/clients/' . $clientId, ['csrf_token' => $csrf, 'company_name' => 'Aurora Cafés II']))->status);
+assertSame('editor não exclui', 403, $app->handle(requisicao('POST', '/clients/' . $clientId . '/delete', ['csrf_token' => $csrf]))->status);
+$app->db->run("UPDATE users SET role = 'owner' WHERE email = 'ana@pasta.example'");
+
+echo "\n[16] Clientes: exclusão e limpeza\n";
+$arquivo = $salvoImg['filename'] ?? '';
+$app->db->run('INSERT INTO client_assets (client_id, filename, original_name) VALUES (?, ?, ?)', [$clientId, $arquivo, 'referencia.png']);
+file_put_contents($raiz . '/uploads/' . $arquivo, 'x');
+assertSame('exclusão sem CSRF responde 403', 403, $app->handle(requisicao('POST', '/clients/' . $clientId . '/delete', ['csrf_token' => 'errado']))->status);
+$excluido = $app->handle(requisicao('POST', '/clients/' . $clientId . '/delete', ['csrf_token' => $csrf]));
+assertSame('owner exclui o cliente', 302, $excluido->status);
+assertSame('cliente removido do banco', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM clients WHERE id = ?', [$clientId]));
+assertSame('identidade visual removida em cascata', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM client_branding WHERE client_id = ?', [$clientId]));
+assertSame('referências removidas em cascata', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM client_assets WHERE client_id = ?', [$clientId]));
+
+echo "\n[17] Navegação e menu por módulo\n";
+$modulos = \Smia\Support\Modules::all();
+assertSame('primeiro módulo pronto é clientes', 'clients', $modulos[0]['slug']);
+check('módulo de clientes tem caminho', $modulos[0]['path'] === '/clients' && $modulos[0]['ready'] === true);
+assertSame('slug ativo a partir de /clients/3', 'clients', \Smia\Support\Modules::activeFrom('/clients/3'));
+assertSame('sem módulo ativo na raiz', null, \Smia\Support\Modules::activeFrom('/'));
+assertSame('slug desconhecido não quebra', null, \Smia\Support\Modules::activeFrom('/qualquer'));
+$menu = $app->handle(requisicao('GET', '/dashboard'));
+check('menu tem link real para clientes', str_contains($menu->body, '/edijalmemoura/socialai/clients"'));
+check('módulos futuros seguem marcados', str_contains($menu->body, 'EM BREVE'));
+
 echo "\n----------------------------------------\n";
 echo $falhas === 0 ? "RESULTADO: OK ({$total} verificações)\n" : "RESULTADO: {$falhas} FALHA(S) de {$total}\n";
 exit($falhas === 0 ? 0 : 1);

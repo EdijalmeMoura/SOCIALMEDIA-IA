@@ -33,6 +33,22 @@ final class Response
         return new self($corpo, $status, ['Content-Type' => 'text/plain; charset=utf-8']);
     }
 
+    /**
+     * Resposta binária (imagens enviadas). Lê o arquivo aqui, então o corpo da
+     * resposta continua sendo uma string — nada de stream no handler.
+     */
+    public static function file(string $caminho, string $mime, int $status = 200): self
+    {
+        $conteudo = is_file($caminho) ? (string) file_get_contents($caminho) : '';
+
+        return new self($conteudo, $status, [
+            'Content-Type' => $mime,
+            'Content-Length' => (string) strlen($conteudo),
+            'Cache-Control' => 'private, max-age=3600',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
     public function withHeader(string $nome, string $valor): self
     {
         $this->headers[$nome] = $valor;

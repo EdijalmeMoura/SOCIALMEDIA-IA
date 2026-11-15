@@ -7,6 +7,8 @@
  * @var array<string,mixed> $user
  * @var string $csrf
  * @var array<int,array{type:string,message:string}> $flashes
+ * @var array<int,array<string,mixed>> $modules
+ * @var string|null $active slug do módulo ativo (para marcar o menu)
  * @var \Smia\Support\Config $config
  */
 $iniciais = mb_strtoupper(mb_substr((string) $user['name'], 0, 1) . mb_substr((string) (explode(' ', (string) $user['name'])[1] ?? ''), 0, 1));
@@ -19,10 +21,11 @@ $iniciais = mb_strtoupper(mb_substr((string) $user['name'], 0, 1) . mb_substr((s
   <meta name="robots" content="noindex, nofollow">
   <title><?= e($title ?? 'Workspace') ?> · SocialMedia IA</title>
   <link rel="stylesheet" href="<?= e(smia_asset('/assets/app.css')) ?>">
+  <script src="<?= e(smia_asset('/assets/app.js')) ?>" defer></script>
 </head>
 <body>
 <div class="app-shell">
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <a class="brand" href="<?= e($config->url('/dashboard')) ?>">
       <span class="brand-mark"><svg viewBox="0 0 32 32"><path d="M5 21.5 12.4 14l5.3 5.3L27 9.8"/><path d="M19.8 9.8H27v7.1"/><circle cx="7" cy="25" r="2"/></svg></span>
       <span class="brand-copy">SocialMedia<span>IA</span><small>PLATAFORMA</small></span>
@@ -34,12 +37,18 @@ $iniciais = mb_strtoupper(mb_substr((string) $user['name'], 0, 1) . mb_substr((s
     </div>
     <p class="nav-label">OPERAÇÃO</p>
     <nav class="nav-links">
-      <a class="nav-link active" href="<?= e($config->url('/dashboard')) ?>"><span class="nav-icon">◧</span> Visão geral</a>
+      <a class="nav-link <?= ($active ?? null) === null ? 'active' : '' ?>" href="<?= e($config->url('/dashboard')) ?>"><span class="nav-icon">◧</span> Visão geral</a>
       <?php foreach (($modules ?? []) as $modulo): ?>
-        <span class="nav-link muted-link <?= $modulo['ready'] ? '' : 'is-soon' ?>">
-          <span class="nav-icon">◻</span> <?= e($modulo['name']) ?>
-          <span class="soon">EM BREVE</span>
-        </span>
+        <?php if ($modulo['ready'] && $modulo['path'] !== null): ?>
+          <a class="nav-link <?= ($active ?? null) === $modulo['slug'] ? 'active' : '' ?>" href="<?= e($config->url($modulo['path'])) ?>">
+            <span class="nav-icon"><?= e($modulo['icon']) ?></span> <?= e($modulo['name']) ?>
+          </a>
+        <?php else: ?>
+          <span class="nav-link muted-link is-soon">
+            <span class="nav-icon">◻</span> <?= e($modulo['name']) ?>
+            <span class="soon">EM BREVE</span>
+          </span>
+        <?php endif; ?>
       <?php endforeach; ?>
     </nav>
     <div class="sidebar-bottom">
@@ -62,7 +71,7 @@ $iniciais = mb_strtoupper(mb_substr((string) $user['name'], 0, 1) . mb_substr((s
 
   <div class="main-area">
     <header class="topbar">
-      <button class="mobile-menu" type="button" aria-label="Menu">☰</button>
+      <button class="mobile-menu" id="mobileMenu" type="button" aria-label="Menu">☰</button>
       <div class="breadcrumb"><a href="<?= e($config->url('/dashboard')) ?>">Workspace</a><span>/</span><?= e($title ?? 'Visão geral') ?></div>
       <div class="top-actions">
         <span class="status-pill"><i></i> Instância local</span>

@@ -42,6 +42,44 @@ for (const pasta of ['app', 'public']) {
   await copiar(pasta);
 }
 
+/**
+ * Lê multipart/form-data (o navegador envia upload assim).
+ *
+ * O PHP do php-wasm não popula $_FILES sozinho neste servidor de teste, então
+ * os arquivos são gravados em /www/php/.uploads e $_FILES é montado à mão —
+ * o código da aplicação continua usando a API normal (is_uploaded_file já é
+ * dispensado para SAPI sem HTTP).
+ */
+function lerMultipart(buffer, boundary) {
+  const partes = [];
+  const separador = Buffer.from('--' + boundary);
+  let indice = buffer.indexOf(separador);
+  while (indice !== -1) {
+    const inicio = indice + separador.length;
+    const fim = buffer.indexOf(separador, inicio);
+    if (fim === -1) break;
+    const bloco = buffer.subarray(inicio, fim);
+    const corte = bloco.indexOf('\r\n\r\n');
+    if (corte > 0) {
+      const cabecalhos = bloco.subarray(0, corte).toString('utf8');
+      const conteudo = bloco.subarray(corte + 4, bloco.length - 2);
+      const nome = /name="([^"]*)"/.exec(cabecalhos);
+      const arquivo = /filename="([^"]*)"/.exec(cabecalhos);
+      const tipo = /Content-Type:\s*([^\r\n]+)/i.exec(cabecalhos);
+      if (nome) {
+        partes.push({
+          campo: nome[1],
+          filename: arquivo ? arquivo[1] : null,
+          mime: tipo ? tipo[1].trim() : 'application/octet-stream',
+          conteudo,
+        });
+      }
+    }
+    indice = fim;
+  }
+  return partes;
+}
+
 const parseCookies = (header) => {
   const out = {};
   for (const parte of header.split(';')) {
@@ -70,7 +108,32 @@ createServer(async (req, res) => {
 
   const corpo = [];
   for await (const chunk of req) corpo.push(chunk);
-  const post = Object.fromEntries(new URLSearchParams(Buffer.concat(corpo).toString()).entries());
+  const bruto = Buffer.concat(corpo);
+  const tipoConteudo = String(req.headers['content-type'] || '');
+  const post = {};
+  const arquivos = {};
+
+  if (tipoConteudo.startsWith('multipart/form-data')) {
+    const boundary = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(tipoConteudo);
+    for (const parte of lerMultipart(bruto, (boundary?.[1] || boundary?.[2] || '').trim())) {
+      if (parte.filename === null) {
+        post[parte.campo] = parte.conteudo.toString('utf8');
+        continue;
+      }
+      const destino = `/www/php/.uploads/${Date.now()}-${parte.filename.replace(/[^\w.-]/g, '_')}`;
+      try { await php.mkdir('/www/php/.uploads', { recursive: true }); } catch { /* já existe */ }
+      await php.writeFile(destino, parte.conteudo);
+      arquivos[parte.campo] = {
+        name: parte.filename,
+        tmp_name: destino,
+        error: 0,
+        size: parte.conteudo.length,
+        type: parte.mime,
+      };
+    }
+  } else {
+    Object.assign(post, Object.fromEntries(new URLSearchParams(bruto.toString()).entries()));
+  }
 
   // O ambiente e o corpo do POST vão por arquivo: nada de interpolar no código.
   const ambiente = {
@@ -81,6 +144,7 @@ createServer(async (req, res) => {
     host: req.headers.host || 'localhost',
     get: Object.fromEntries(url.searchParams.entries()),
     post,
+    files: arquivos,
     cookies: parseCookies(req.headers.cookie || ''),
   };
   await php.writeFile('/www/php/.request.json', JSON.stringify(ambiente));
@@ -101,6 +165,7 @@ $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
 $_GET = $r['get'];
 $_POST = $r['post'];
 $_COOKIE = $r['cookies'];
+$_FILES = $r['files'];
 require '/www/php/public/index.php';
 `,
     });

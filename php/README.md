@@ -3,10 +3,11 @@
 Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 (cPanel): sobe os arquivos e funciona. Sem Composer, sem Node, sem Passenger.
 
-> Estado atual: **base funcional** — instalador de 3 telas, login, dashboard,
-> banco SQLite, sessão/CSRF e tratamento de subpasta. Os módulos de negócio
-> (clientes, planejamento, estúdio, aprovações, feed, relatórios, Meta) entram
-> um a um, reaproveitando esta mesma base e o mesmo esquema de dados.
+> Estado atual: **base funcional + módulo de clientes** — instalador de 3 telas,
+> login, dashboard, banco SQLite, sessão/CSRF, tratamento de subpasta e o
+> portfólio de clientes (perfil, identidade visual, logo e referências). Os
+> demais módulos (planejamento, estúdio, aprovações, feed, relatórios, Meta)
+> entram um a um, reaproveitando esta mesma base e o mesmo esquema de dados.
 
 ## Baixar o pacote pronto
 
@@ -82,17 +83,54 @@ php/
 ├── app/
 │   ├── Application.php      ← monta rotas, banco, sessão
 │   ├── Http/                ← Request, Response, Router
-│   ├── Support/             ← Config, EnvFile, Session, View
+│   ├── Support/             ← Config, EnvFile, Session, View, Upload, Modules
 │   ├── Database/            ← conexão SQLite + esquema versionado
 │   ├── Installer/           ← regras de instalação (espelham o Python)
 │   ├── Auth/                ← login, trava de tentativas, rehash
-│   ├── Controllers/         ← instalador, autenticação, dashboard
+│   ├── Clients/             ← regras dos clientes (multi-tenant, cores, arquivos)
+│   ├── Controllers/         ← instalador, autenticação, dashboard, clientes
 │   └── views/               ← templates PHP com escape obrigatório
 ├── .htaccess          ← raiz: manda para public/ e bloqueia app/, data/, tests/
 ├── data/              ← SQLite, .env gerado e rascunhos (conteúdo ignorado no Git;
 │                        o .htaccess que nega acesso é versionado)
 └── tests/             ← suíte que roda em PHP 8.3 real (php-wasm)
 ```
+
+## Módulos
+
+### Clientes (pronto)
+
+Portfólio de marcas do workspace, com o mesmo modelo de dados da versão Python.
+
+| Rota | Método | O que faz | Quem pode |
+|---|---|---|---|
+| `/clients` | GET | grade de clientes com busca instantânea | todos |
+| `/clients/new` | GET/POST | cadastro (negócio + canais) | owner, admin, editor |
+| `/clients/{id}` | GET/POST | perfil: dados, identidade visual, referências | ver: todos · editar: owner/admin/editor |
+| `/clients/{id}/delete` | POST | exclui cliente, logo e referências | owner, admin |
+| `/clients/{id}/logo` | POST | envia/substitui o logotipo | owner, admin, editor |
+| `/clients/{id}/assets` | POST | adiciona imagem de referência | owner, admin, editor |
+| `/clients/{id}/assets/{a}/delete` | POST | remove uma referência | owner, admin, editor |
+| `/clients/file?file=…` | GET | serve logo/referência **só da própria empresa** | todos |
+
+Regras que valem a pena saber:
+
+- Toda consulta filtra por `company_id`: id de outro workspace responde 404,
+  sem revelar que existe.
+- Cores aceitam apenas `#rrggbb`; valor inválido cai no padrão da marca
+  (`#3158d8`, `#f57a45`, `#16a68a`).
+- Upload aceita PNG/JPG/WEBP até 8 MB e valida a **assinatura dos bytes** —
+  renomear um `.php` para `.png` não passa. O nome salvo é gerado pelo sistema.
+- Excluir o cliente remove em cascata identidade visual e referências, e apaga
+  os arquivos do disco.
+- Cada escrita (criar, editar, excluir, upload) deixa evento no `audit_log`,
+  visível no dashboard.
+
+### Próximos
+
+planejamento → estúdio → aprovações → feed → relatórios → Meta. Cada um entra
+por migração aditiva do `Schema` (versão 2 já é a de clientes), então atualizar
+o pacote nunca apaga dados de uma instalação em uso.
 
 ## Subpasta: como é resolvido
 
@@ -116,14 +154,15 @@ instalado na máquina:
 ```sh
 cd php
 npm install        # @php-wasm/universal + @php-wasm/node (só para testes)
-npm test           # parse de todos os arquivos + 74 verificações funcionais
+npm test           # parse de todos os arquivos + 136 verificações funcionais
 ```
 
 Cobre: normalização de subpasta, `.env`, detecção de caminho, token do
 instalador, CSRF, validação de formulário, regras de URL pública (com
 subpasta e rejeições), instalação completa, hash da senha, permissão 0600 do
-arquivo de segredos, login, logout, dashboard, 404/405 e isolamento entre
-instâncias.
+arquivo de segredos, login, logout, dashboard, 404/405, isolamento entre
+instâncias e o módulo de clientes (cadastro, edição, cores, upload validado
+por assinatura, permissões por papel, exclusão em cascata).
 
 Para exercitar o caminho HTTP completo (cookies, redirecionamentos, HTML):
 
