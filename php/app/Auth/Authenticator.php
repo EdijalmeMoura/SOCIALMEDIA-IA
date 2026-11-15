@@ -68,6 +68,9 @@ final class Authenticator
         unset($tentativas[$chave]);
         $this->session->put(self::CHAVE_TENTATIVAS, $tentativas);
         $this->session->regenerate();
+        // Entrar na agência encerra uma sessão de portal aberta no mesmo
+        // navegador: os dois escopos nunca ficam ativos ao mesmo tempo.
+        $this->session->forget('portal_user_id');
         $this->session->put('user_id', (int) $usuario['id']);
         $this->db->run('UPDATE users SET last_login_at = ? WHERE id = ?', [gmdate('Y-m-d H:i:s'), $usuario['id']]);
 

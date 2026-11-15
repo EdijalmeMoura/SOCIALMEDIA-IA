@@ -1,0 +1,184 @@
+/*
+ * Aprovações e portal do cliente.
+ *
+ * O mesmo arquivo serve a agência e o portal: as duas telas mostram a mesma
+ * fotografia do conteúdo, e é bom que elas se pareçam — o cliente confere o
+ * que o time viu.
+ */
+
+/* --- estados / selos ------------------------------------------------- */
+.badge-warn{background:#fff5e8;border:1px solid #f2ddb9;color:#a8762c}
+.approval-status{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.approval-status.big{font-size:10px;padding:6px 11px}
+.approval-status.status-pending{background:#fff5e8;color:#a8762c}
+.approval-status.status-approved{background:#e8f8f2;color:#1a7f5a}
+.approval-status.status-changes_requested{background:#fff0ec;color:#c1673f}
+.approval-status.status-rejected{background:#fdecec;color:#b64444}
+
+/* --- números do topo ------------------------------------------------ */
+.approval-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0 16px}
+.approval-stat{border:1px solid #ebeef3;background:#fff;border-radius:9px;padding:13px 15px;display:flex;flex-direction:column;gap:4px}
+.approval-stat b{font:700 21px Manrope,sans-serif;letter-spacing:-.6px}
+.approval-stat span{font-size:9px;color:#9298a7;letter-spacing:.04em;text-transform:uppercase;font-weight:700}
+
+/* --- envio ---------------------------------------------------------- */
+.approval-layout{display:grid;grid-template-columns:1.35fr .65fr;gap:13px;align-items:start}
+.approval-send{padding:18px}
+.approval-client-picker{margin:14px 0 0;max-width:320px}
+.approval-client-picker select{height:35px;border:1px solid #e6e8ef;border-radius:6px;background:#fff;color:#4d5465;font-size:10px;padding:0 9px;width:100%}
+.approval-send-form{margin-top:16px;display:grid;gap:14px}
+.source-list{display:grid;gap:7px}
+.source-item{display:flex;align-items:center;gap:9px;border:1px solid #eceef3;border-radius:7px;padding:9px 11px;cursor:pointer;transition:.15s}
+.source-item:hover{border-color:#c9d0f7;background:#fbfbff}
+.source-item input{accent-color:#455fe3;margin:0}
+.source-badge{font-size:7px;font-weight:700;letter-spacing:.6px;background:#eef0ff;color:#5063db;border-radius:4px;padding:3px 5px}
+.source-badge.planned{background:#eaf8f2;color:#25896d}
+.source-info{display:flex;flex-direction:column;gap:3px;min-width:0}
+.source-info b{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.source-info small{font-size:8px;color:#9298a7}
+.approval-none{border:1px dashed #e0e3eb;border-radius:8px;padding:16px;background:#fafbfe;margin-top:14px}
+.approval-none b{font-size:10px}
+.approval-none p{font-size:9px;color:#8d93a1;margin:6px 0 0;line-height:1.6}
+.approval-none a{color:#5266da;font-weight:700}
+
+/* --- acessos do portal ---------------------------------------------- */
+.approval-accounts{padding:18px}
+.account-list{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:1px}
+.account-list li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid #f0f1f5}
+.account-list li.is-paused{opacity:.6}
+.account-list li>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.account-list b{font-size:10px}
+.account-list small{font-size:8px;color:#9298a7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-list .text-link{background:none;border:0;padding:0;cursor:pointer}
+.approval-account-form{display:grid;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid #f0f1f5}
+.approval-account-form .button{justify-self:start}
+
+/* --- lista / tabela ------------------------------------------------- */
+.approval-history-block{margin-top:22px}
+.approval-history-block .period-selector select{height:30px;border:1px solid #e9eaf0;border-radius:6px;background:#fff;color:#747b8d;font-size:10px;padding:0 8px}
+.approval-table{padding:0;overflow-x:auto}
+.approval-table table{width:100%;border-collapse:collapse;min-width:720px}
+.approval-table th{text-align:left;font-size:8px;letter-spacing:.7px;text-transform:uppercase;color:#9298a7;padding:12px 14px;border-bottom:1px solid #eff0f4}
+.approval-table td{padding:11px 14px;border-bottom:1px solid #f4f5f8;font-size:10px;vertical-align:middle}
+.approval-table tr:last-child td{border-bottom:0}
+.approval-table td b{display:block;font-size:10px}
+.approval-table td small{font-size:8px;color:#9298a7}
+
+/* --- detalhe -------------------------------------------------------- */
+.approval-detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin:6px 0 16px}
+.approval-detail-head h1{font:800 23px Manrope,sans-serif;letter-spacing:-.8px;margin:6px 0 0}
+.approval-detail-head .detail-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.approval-detail-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:13px;align-items:start}
+.approval-preview{padding:0;overflow:hidden}
+.approval-preview>img{display:block;width:100%;max-height:520px;object-fit:contain;background:#f4f5f9}
+.approval-no-media{padding:48px 20px;text-align:center;font-size:10px;color:#9298a7;background:#fafbfe}
+.approval-meta{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid #f1f2f6;font-size:9px;color:#82889a}
+.color-chip{width:13px;height:13px;border-radius:4px;border:1px solid #e2e5ec;display:inline-block}
+.approval-copy{padding:16px 18px}
+.approval-copy h3{font:700 10px Manrope,sans-serif;letter-spacing:.3px;text-transform:uppercase;color:#82889a;margin:14px 0 5px}
+.approval-copy h3:first-child{margin-top:0}
+.approval-copy p{margin:0 0 8px;font-size:11px;line-height:1.65;color:#3c4356}
+.approval-copy p.muted{color:#8d93a1;font-size:10px}
+.approval-side{display:grid;gap:13px}
+.approval-respond{display:grid;gap:11px;margin-top:14px}
+.approval-buttons{display:flex;flex-wrap:wrap;gap:8px}
+.approval-buttons .button{flex:1;min-width:120px}
+.approval-respond input[type=file]{font-size:9px;color:#6d7487}
+.approval-facts dl{margin:14px 0 0;display:grid;grid-template-columns:auto 1fr;gap:8px 14px;font-size:10px}
+.approval-facts dt{color:#9298a7;font-size:9px;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+.approval-facts dd{margin:0;color:#3c4356}
+.approval-resolved .approval-decision{font:700 13px Manrope,sans-serif;margin:14px 0 4px}
+.approval-decision.decision-approved{color:#1a7f5a}
+.approval-decision.decision-changes_requested{color:#c1673f}
+.approval-decision.decision-rejected{color:#b64444}
+.approval-resolved .muted{font-size:9px;color:#9298a7;margin:0 0 4px}
+
+/* --- histórico ------------------------------------------------------ */
+.approval-history{margin-top:13px;padding:18px}
+.timeline{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:12px}
+.timeline-item{display:flex;gap:10px;position:relative;padding-left:4px}
+.timeline-dot{width:9px;height:9px;border-radius:50%;background:#dfe3ee;margin-top:4px;flex:0 0 auto}
+.timeline-item.is-pending .timeline-dot{background:#e0a94f}
+.timeline-item.is-approved .timeline-dot{background:#23b98a}
+.timeline-item.is-changes_requested .timeline-dot{background:#f09063}
+.timeline-item.is-rejected .timeline-dot{background:#d97070}
+.timeline-item>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.timeline-item b{font-size:10px}
+.timeline-item span{font-size:8px;color:#9298a7;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+.timeline-item p{margin:2px 0 0;font-size:10px;line-height:1.6;color:#3c4356;background:#fafbfe;border:1px solid #eff0f4;border-radius:6px;padding:8px 10px}
+.timeline-item small{font-size:8px;color:#a5aab6}
+.comment-list{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:9px}
+.comment-item{border:1px solid #eceef3;border-radius:8px;padding:10px 12px;background:#fff}
+.comment-item.from-client{border-color:#e4ecf9;background:#fafcff}
+.comment-head{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+.comment-head b{font-size:10px}
+.comment-role{font-size:7px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;background:#f0f1f5;color:#747b8b;border-radius:4px;padding:2px 5px}
+.comment-item.from-client .comment-role{background:#e9f1ff;color:#4467bd}
+.comment-head small{margin-left:auto;font-size:8px;color:#a5aab6}
+.comment-item p{margin:0;font-size:10px;line-height:1.65;color:#3c4356}
+.comment-attachment{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:9px;color:#5266da}
+.comment-attachment img{width:54px;height:54px;object-fit:cover;border-radius:6px;border:1px solid #e6e8ef}
+
+/* --- avisos --------------------------------------------------------- */
+.portal-notices{padding:18px}
+.notice-list{list-style:none;margin:13px 0 0;padding:0;display:grid;gap:1px}
+.notice-list li{border-top:1px solid #f0f1f5}
+.notice-list li a{display:flex;flex-direction:column;gap:3px;padding:9px 0;font-size:10px}
+.notice-list li.is-new a b:before{content:'•';color:#ef895f;margin-right:5px}
+.notice-list b{font-size:10px}
+.notice-list span{font-size:9px;color:#82889a;line-height:1.5}
+.notice-list small{font-size:8px;color:#a5aab6}
+.portal-notices .text-link{background:none;border:0;padding:0;cursor:pointer;font-size:9px}
+
+/* --- portal do cliente ---------------------------------------------- */
+.portal-body{background:#f6f7fb}
+.portal-bar{height:64px;background:#fff;border-bottom:1px solid #eff0f4;display:flex;align-items:center;justify-content:space-between;padding:0 30px;gap:16px}
+.portal-brand{display:flex;align-items:center;gap:10px}
+.portal-brand-copy{font:800 15px Manrope,sans-serif;letter-spacing:-.6px;line-height:1.05}
+.portal-brand-copy>span{color:#ff8056}
+.portal-brand-copy small{display:block;margin-top:4px;color:#a4a8b5;font:700 7px 'DM Sans',sans-serif;letter-spacing:1.4px}
+.portal-account{display:flex;align-items:center;gap:14px}
+.portal-client{font-size:10px;font-weight:700;color:#3c4356}
+.portal-user{font-size:9px;color:#9298a7;border-left:1px solid #e9ebf1;padding-left:14px}
+.portal-account form{margin:0}
+.button.tiny{height:30px;padding:0 11px;font-size:9px}
+.portal-content{max-width:1140px;margin:0 auto;padding:26px 24px 48px}
+.portal-footer{max-width:1140px;margin:0 auto;padding:0 24px 30px;display:flex;justify-content:space-between;gap:12px;font-size:8px;color:#a5aab6}
+.portal-head h1{font:800 25px Manrope,sans-serif}
+.portal-login{display:grid;place-items:center;gap:14px;padding:40px 0 60px}
+.portal-login-card{background:#fff;border:1px solid #ebeef3;border-radius:12px;padding:28px 26px;width:100%;max-width:400px;box-shadow:var(--shadow)}
+.portal-login-card h1{font:800 24px Manrope,sans-serif;letter-spacing:-.8px;margin:8px 0 6px}
+.portal-login-form{display:grid;gap:12px;margin-top:16px}
+.portal-login-form .button{justify-self:stretch}
+.portal-help{font-size:9px;color:#9298a7;line-height:1.6;margin:14px 0 0}
+.portal-back{font-size:9px;color:#82889a}
+.portal-back a{color:#5266da;font-weight:700}
+
+/* --- cartões de revisão (portal) ------------------------------------ */
+.approval-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:6px}
+.approval-card{border:1px solid #ebeef3;background:#fff;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;transition:.16s}
+.approval-card:hover{border-color:#c9d0f7;box-shadow:0 10px 26px rgba(31,42,77,.08);transform:translateY(-1px)}
+.approval-card-cover{position:relative;background:#f1f2f7;aspect-ratio:4 / 3;display:grid;place-items:center;overflow:hidden}
+.approval-card-cover img{width:100%;height:100%;object-fit:cover}
+.approval-cover-badge{font-size:9px;color:#82889a;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.approval-card-cover .approval-status{position:absolute;top:8px;left:8px;box-shadow:0 2px 8px rgba(31,42,77,.12)}
+.approval-card.is-pending .approval-card-cover{outline:2px solid #f4e3c6;outline-offset:-2px}
+.approval-card-body{padding:11px 12px 10px;display:flex;flex-direction:column;gap:5px}
+.approval-card-body b{font-size:11px;line-height:1.4}
+.approval-card-body small{font-size:8px;color:#9298a7}
+.approval-card-foot{display:flex;justify-content:space-between;align-items:center;font-size:8px;color:#a5aab6;border-top:1px solid #f2f3f7;padding-top:7px;margin-top:3px}
+.approval-card-foot span{color:#5266da;font-weight:700}
+
+@media(max-width:980px){
+  .approval-layout,.approval-detail-grid{grid-template-columns:1fr}
+  .approval-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:760px){
+  .portal-bar{padding:0 16px;height:58px}
+  .portal-client{display:none}
+  .portal-user{border-left:0;padding-left:0}
+  .portal-content{padding:18px 14px 36px}
+  .approval-detail-head{flex-direction:column}
+  .approval-grid{grid-template-columns:1fr}
+  .approval-buttons .button{flex:1 1 100%}
+}

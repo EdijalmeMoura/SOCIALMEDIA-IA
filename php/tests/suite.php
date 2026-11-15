@@ -1185,7 +1185,458 @@ check('Estúdio no menu', str_contains($painelStudio->body, 'Estúdio'));
 $modulosStudio = \Smia\Support\Modules::all();
 $moduloEstudio = array_values(array_filter($modulosStudio, static fn (array $m): bool => $m['slug'] === 'studio'))[0] ?? null;
 check('módulo estúdio marcado como pronto', ($moduloEstudio['ready'] ?? false) === true);
-check('aprovações seguem pendentes', (array_values(array_filter($modulosStudio, static fn (array $m): bool => $m['slug'] === 'approvals'))[0]['ready'] ?? true) === false);
+check('módulo aprovações marcado como pronto', (array_values(array_filter($modulosStudio, static fn (array $m): bool => $m['slug'] === 'approvals'))[0]['ready'] ?? false) === true);
+check('Aprovações no menu', str_contains($painelStudio->body, 'Aprovações'));
+
+echo "\n[44] Aprovações: tela, fila vazia e permissões\n";
+$logar($app, $idUsuario);
+$telaAprov = $app->handle(requisicao('GET', '/approvals'));
+assertSame('tela de aprovações responde 200', 200, $telaAprov->status);
+check('carrega o CSS de aprovações', str_contains($telaAprov->body, 'approvals.css'));
+check('seletor traz o cliente do teste', str_contains($telaAprov->body, 'class="approval-client-picker"'));
+check('estado vazio explica como enviar', str_contains($telaAprov->body, 'Nenhuma revisão'));
+check('lista as pautas disponíveis do cliente', str_contains($telaAprov->body, 'Pautas do planejamento'));
+check('formulário de acesso do portal presente', str_contains($telaAprov->body, 'Criar acesso'));
+assertSame('aprovações exigem login', '/edijalmemoura/socialai/login', appNova()[0]->handle(requisicao('GET', '/approvals'))->header('Location'));
+$portalSemLogin = $app->handle(requisicao('GET', '/portal/approvals'));
+assertSame('portal sem login vai para a entrada do cliente', '/edijalmemoura/socialai/portal/login', $portalSemLogin->header('Location'));
+$paginaPortal = $app->handle(requisicao('GET', '/portal/login'));
+assertSame('entrada do portal responde 200', 200, $paginaPortal->status);
+check('entrada do portal é separada da agência', str_contains($paginaPortal->body, 'PORTAL DO CLIENTE') && !str_contains($paginaPortal->body, 'class="sidebar"'));
+check('nenhuma aprovação gravada ainda', (int) $app->db->scalar('SELECT COUNT(*) FROM approvals') === 0);
+
+echo "\n[45] Aprovações: contas do portal e isolamento de sessão\n";
+$criarConta = function (array $extra = []) use ($app, $logar, $idUsuario, $csrf, $clientePlano): \Smia\Http\Response {
+    $logar($app, $idUsuario);
+
+    return $app->handle(requisicao('POST', '/approvals/portal-users', array_merge([
+        'csrf_token' => $csrf,
+        'client_id' => (string) $clientePlano,
+        'name' => 'Marina Alves',
+        'email' => 'marina@bravo.example',
+        'password' => 'ClienteForte2026',
+    ], $extra)));
+};
+assertSame('sem CSRF responde 302 com erro', 302, $criarConta(['csrf_token' => 'x'])->status);
+assertSame('nada criado sem CSRF', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM client_portal_users'));
+assertSame('e-mail inválido não cria conta', 302, $criarConta(['email' => 'marina@'])->status);
+assertSame('senha curta não cria conta', 302, $criarConta(['password' => '123'])->status);
+assertSame('cliente de outro workspace não cria conta', 302, $criarConta(['client_id' => '9999'])->status);
+assertSame('nenhuma conta criada nos casos inválidos', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM client_portal_users'));
+$criadaConta = $criarConta();
+assertSame('conta criada redireciona', 302, $criadaConta->status);
+check('redirect avisa criação', str_contains((string) $criadaConta->header('Location'), 'portal=created'));
+$contaPortal = $app->db->one('SELECT * FROM client_portal_users WHERE email = ?', ['marina@bravo.example']);
+check('conta gravada e ativa', $contaPortal !== null && (int) $contaPortal['is_active'] === 1);
+check('senha guardada como hash', !str_contains((string) $contaPortal['password_hash'], 'ClienteForte2026') && password_verify('ClienteForte2026', (string) $contaPortal['password_hash']));
+assertSame('e-mail duplicado é recusado', 302, $criarConta()->status);
+assertSame('continua uma conta só', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM client_portal_users'));
+assertSame('auditoria do acesso criado', 'portal.user_created', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'portal.user_created'"));
+
+$tokenPortal = $app->session->csrfToken();
+$entradaErrada = $app->handle(requisicao('POST', '/portal/login', ['csrf_token' => $tokenPortal, 'email' => 'marina@bravo.example', 'password' => 'errada']));
+assertSame('senha errada no portal responde 401', 401, $entradaErrada->status);
+check('mensagem genérica no portal', str_contains($entradaErrada->body, 'E-mail ou senha incorretos.'));
+$app->session->start();
+$tokenPortal = $app->session->csrfToken();
+$entradaCerta = $app->handle(requisicao('POST', '/portal/login', ['csrf_token' => $tokenPortal, 'email' => 'marina@bravo.example', 'password' => 'ClienteForte2026']));
+assertSame('login do portal redireciona', 302, $entradaCerta->status);
+assertSame('destino do portal prefixado', '/edijalmemoura/socialai/portal/approvals', $entradaCerta->header('Location'));
+assertSame('login do portal não abre a agência', '/edijalmemoura/socialai/login', $app->handle(requisicao('GET', '/approvals'))->header('Location'));
+$app->session->put('user_id', null);
+$app->session->forget('user_id');
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$listaPortal = $app->handle(requisicao('GET', '/portal/approvals'));
+assertSame('lista do portal responde 200', 200, $listaPortal->status);
+check('portal mostra o cliente certo', str_contains($listaPortal->body, 'Bravo Fitness'));
+check('portal não mostra o menu da agência', !str_contains($listaPortal->body, 'class="sidebar"'));
+assertSame('último acesso registrado', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM client_portal_users WHERE last_login_at IS NOT NULL'));
+
+// Trava de tentativas do portal: 10 erros na janela e a entrada fecha.
+for ($tentativa = 0; $tentativa < 10; $tentativa++) {
+    $app->session->put('portal_user_id', null);
+    $app->session->forget('portal_user_id');
+    $app->handle(requisicao('POST', '/portal/login', ['csrf_token' => $csrf, 'email' => 'marina@bravo.example', 'password' => 'errada-' . $tentativa]));
+}
+$bloqueado = $app->handle(requisicao('POST', '/portal/login', ['csrf_token' => $csrf, 'email' => 'marina@bravo.example', 'password' => 'ClienteForte2026']));
+assertSame('portal bloqueia depois de 10 tentativas', 429, $bloqueado->status);
+check('mensagem de bloqueio no portal', str_contains($bloqueado->body, 'Muitas tentativas'));
+unset($_SESSION['_portal_attempts']);
+
+// Escopos separados: entrar na agência encerra a sessão do portal.
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$loginAgencia = $app->handle(requisicao('POST', '/login', ['csrf_token' => $csrf, 'email' => 'ana@pasta.example', 'password' => 'PastaForte2026']));
+assertSame('login da agência redireciona', 302, $loginAgencia->status);
+check('login da agência encerra a sessão do portal', $app->session->get('portal_user_id') === null);
+
+echo "\n[46] Aprovações: envio de arte exportada\n";
+// A seção [40] salvou a arte no editor, e salvar volta o status para rascunho:
+// só arte EXPORTADA entra em revisão. Tentar antes disso tem que falhar.
+$logar($app, $idUsuario);
+$tentarSemArteExportada = $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'creative:' . $arteId,
+]));
+assertSame('arte não exportada é recusada', 302, $tentarSemArteExportada->status);
+check('mensagem explica a exigência', str_contains((string) $tentarSemArteExportada->header('Location'), 'exportadas'));
+assertSame('nada enviado', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM approvals'));
+assertSame('envio sem CSRF não cria revisão', 302, $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => 'x', 'client_id' => (string) $clientePlano, 'source' => 'creative:' . $arteId,
+]))->status);
+assertSame('envio de fonte inexistente é recusado', 302, $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'creative:9999',
+]))->status);
+assertSame('envio com origem inválida é recusado', 302, $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'video:1',
+]))->status);
+assertSame('continua sem revisões', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM approvals'));
+
+$pngReexport = sys_get_temp_dir() . '/smia-export2-' . bin2hex(random_bytes(4)) . '.png';
+$lonaReexport = imagecreatetruecolor(1080, 1080);
+imagefill($lonaReexport, 0, 0, imagecolorallocate($lonaReexport, 17, 34, 68));
+imagepng($lonaReexport, $pngReexport);
+imagedestroy($lonaReexport);
+$_FILES['file'] = ['name' => 'arte.png', 'tmp_name' => $pngReexport, 'error' => UPLOAD_ERR_OK, 'size' => filesize($pngReexport)];
+$logar($app, $idUsuario);
+assertSame('arte reexportada para a revisão', 200, $app->handle(requisicao('POST', '/studio/posts/' . $arteId . '/export', ['csrf_token' => $csrf]))->status);
+unset($_FILES['file']);
+
+$logar($app, $idUsuario);
+$enviada = $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'creative:' . $arteId,
+    'message' => 'Primeira versão para o lançamento.',
+]));
+assertSame('envio da arte exportada redireciona', 302, $enviada->status);
+$destinoAprov = (string) $enviada->header('Location');
+check('redirect para o detalhe com aviso', str_contains($destinoAprov, '/approvals/') && str_contains($destinoAprov, 'sent=1'), $destinoAprov);
+$aprovId = (int) preg_replace('#^.*/approvals/(\d+).*$#', '$1', (string) parse_url($destinoAprov, PHP_URL_PATH));
+$aprovacao = $app->db->one('SELECT * FROM approvals WHERE id = ?', [$aprovId]);
+check('revisão gravada', $aprovacao !== null);
+assertSame('status inicial pendente', 'pending', $aprovacao['status']);
+assertSame('origem arte', 'creative', $aprovacao['source_type']);
+assertSame('primeiro ciclo', 1, (int) $aprovacao['cycle_number']);
+$fotografia = json_decode((string) $aprovacao['snapshot_json'], true);
+assertSame('fotografia guarda o tipo', 'creative', $fotografia['type']);
+assertSame('fotografia guarda o formato', 'Post quadrado', $fotografia['format']);
+check('fotografia guarda o arquivo exportado', !empty($fotografia['export_path']));
+check('fotografia guarda o texto da arte', isset($fotografia['content']['title']));
+assertSame('evento de envio registrado', 'Enviado para aprovação', $app->db->scalar('SELECT note FROM approval_events WHERE approval_id = ? AND new_status = ?', [$aprovId, 'pending']));
+assertSame('mensagem virou comentário', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM comments WHERE approval_id = ? AND author_type = ?', [$aprovId, 'agency']));
+assertSame('cliente avisado no portal', 1, (int) $app->db->scalar("SELECT COUNT(*) FROM notifications WHERE recipient_type = 'client' AND recipient_portal_user_id = ?", [(int) $contaPortal['id']]));
+check('aviso aponta para o portal', str_starts_with((string) $app->db->scalar("SELECT target_url FROM notifications WHERE recipient_type = 'client' LIMIT 1"), '/portal/approvals/'));
+assertSame('auditoria do envio', 'approval.sent', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'approval.sent'"));
+
+$logar($app, $idUsuario);
+$duplicado = $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'creative:' . $arteId,
+]));
+assertSame('envio duplicado é bloqueado', 302, $duplicado->status);
+check('mensagem de pendência existente', str_contains(rawurldecode((string) $duplicado->header('Location')), 'já está aguardando aprovação'));
+assertSame('continua uma revisão', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM approvals'));
+
+$logar($app, $idUsuario);
+$telaAprov = $app->handle(requisicao('GET', '/approvals'));
+check('arte em revisão sai da lista de disponíveis', !str_contains($telaAprov->body, 'creative:' . $arteId . '"'));
+check('lista mostra a revisão', str_contains($telaAprov->body, 'Ciclo') || str_contains($telaAprov->body, 'Aguardando'));
+
+echo "\n[47] Aprovações: detalhe, mídia e comentário da agência\n";
+$logar($app, $idUsuario);
+$detalheAprov = $app->handle(requisicao('GET', '/approvals/' . $aprovId));
+assertSame('detalhe da revisão responde 200', 200, $detalheAprov->status);
+check('detalhe avisa que aguarda o cliente', str_contains($detalheAprov->body, 'Aguardando o cliente'));
+check('detalhe mostra o histórico', str_contains($detalheAprov->body, 'Histórico da revisão'));
+check('detalhe mostra o comentário enviado', str_contains($detalheAprov->body, 'Primeira versão para o lançamento.'));
+check('detalhe aponta para o estúdio', str_contains($detalheAprov->body, '/studio/posts/' . $arteId));
+assertSame('revisão de outro id responde 404', 404, $app->handle(requisicao('GET', '/approvals/99999'))->status);
+
+$arquivoExport = (string) $fotografia['export_path'];
+$logar($app, $idUsuario);
+$midia = $app->handle(requisicao('GET', '/approvals/' . $aprovId . '/media/' . $arquivoExport));
+assertSame('mídia da revisão responde 200', 200, $midia->status);
+check('mídia vem como PNG', str_contains((string) $midia->header('Content-Type'), 'image/png'));
+assertSame('mídia não é cacheada', 'private, no-store', $midia->header('Cache-Control'));
+$logar($app, $idUsuario);
+assertSame('arquivo fora da revisão responde 404', 404, $app->handle(requisicao('GET', '/approvals/' . $aprovId . '/media/segredo.png'))->status);
+assertSame('nome com travessia responde 404', 404, $app->handle(requisicao('GET', '/approvals/' . $aprovId . '/media/..%2F..%2Fdb'))->status);
+
+$logar($app, $idUsuario);
+$comentarioAgencia = $app->handle(requisicao('POST', '/approvals/' . $aprovId . '/comment', [
+    'csrf_token' => $csrf, 'body' => 'Usei a foto do treino funcional.',
+]));
+assertSame('comentário da agência redireciona', 302, $comentarioAgencia->status);
+check('redirect volta para o histórico', str_contains((string) $comentarioAgencia->header('Location'), '#historico'));
+assertSame('comentário gravado', 'Usei a foto do treino funcional.', $app->db->scalar("SELECT body FROM comments WHERE approval_id = ? AND author_type = 'agency' ORDER BY id DESC LIMIT 1", [$aprovId]));
+assertSame('cliente avisado do comentário', 2, (int) $app->db->scalar("SELECT COUNT(*) FROM notifications WHERE recipient_type = 'client'"));
+$logar($app, $idUsuario);
+assertSame('comentário vazio é recusado', 302, $app->handle(requisicao('POST', '/approvals/' . $aprovId . '/comment', ['csrf_token' => $csrf, 'body' => '   ']))->status);
+check('mensagem de comentário vazio', str_contains((string) $app->handle(requisicao('POST', '/approvals/' . $aprovId . '/comment', ['csrf_token' => $csrf, 'body' => '']))->header('Location'), 'coment'));
+$logar($app, $idUsuario);
+assertSame('comentário sem CSRF é recusado', 302, $app->handle(requisicao('POST', '/approvals/' . $aprovId . '/comment', ['csrf_token' => 'x', 'body' => 'oi']))->status);
+
+echo "\n[48] Portal: decisão do cliente e histórico\n";
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$detalhePortal = $app->handle(requisicao('GET', '/portal/approvals/' . $aprovId));
+assertSame('detalhe no portal responde 200', 200, $detalhePortal->status);
+check('portal mostra a prévia', str_contains($detalhePortal->body, '/portal/approvals/' . $aprovId . '/media/'));
+check('portal oferece as três decisões', str_contains($detalhePortal->body, 'Aprovar') && str_contains($detalhePortal->body, 'Pedir alterações') && str_contains($detalhePortal->body, 'Rejeitar'));
+check('portal mostra o comentário da agência', str_contains($detalhePortal->body, 'Usei a foto do treino funcional.'));
+assertSame('outro cliente não abre a revisão', 404, $app->handle(requisicao('GET', '/portal/approvals/99999'))->status);
+
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$semMotivo = $app->handle(requisicao('POST', '/portal/approvals/' . $aprovId . '/respond', [
+    'csrf_token' => $csrf, 'status' => 'changes_requested', 'body' => '  ',
+]));
+assertSame('pedir alterações sem texto redireciona com erro', 302, $semMotivo->status);
+check('mensagem exige descrição', str_contains((string) $semMotivo->header('Location'), 'altera'));
+assertSame('revisão continua pendente', 'pending', $app->db->scalar('SELECT status FROM approvals WHERE id = ?', [$aprovId]));
+
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$decisaoInvalida = $app->handle(requisicao('POST', '/portal/approvals/' . $aprovId . '/respond', [
+    'csrf_token' => $csrf, 'status' => 'talvez', 'body' => 'x',
+]));
+assertSame('decisão inválida redireciona com erro', 302, $decisaoInvalida->status);
+assertSame('revisão ainda pendente', 'pending', $app->db->scalar('SELECT status FROM approvals WHERE id = ?', [$aprovId]));
+
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$pedidoAlteracao = $app->handle(requisicao('POST', '/portal/approvals/' . $aprovId . '/respond', [
+    'csrf_token' => $csrf, 'status' => 'changes_requested', 'body' => 'Troque a foto e cite o desconto de 20%.',
+]));
+assertSame('pedido de alteração redireciona', 302, $pedidoAlteracao->status);
+check('redirect avisa da resposta', str_contains((string) $pedidoAlteracao->header('Location'), 'responded=1'));
+$aprovacao = $app->db->one('SELECT * FROM approvals WHERE id = ?', [$aprovId]);
+assertSame('status vira alterações solicitadas', 'changes_requested', $aprovacao['status']);
+check('data de resposta preenchida', !empty($aprovacao['resolved_at']));
+assertSame('evento do cliente registrado', 'changes_requested', $app->db->scalar("SELECT new_status FROM approval_events WHERE approval_id = ? AND actor_type = 'client'", [$aprovId]));
+assertSame('autor do evento é a conta do portal', (int) $contaPortal['id'], (int) $app->db->scalar("SELECT actor_portal_user_id FROM approval_events WHERE approval_id = ? AND actor_type = 'client'", [$aprovId]));
+assertSame('resposta vira comentário', 'Troque a foto e cite o desconto de 20%.', $app->db->scalar("SELECT body FROM comments WHERE approval_id = ? AND author_type = 'client'", [$aprovId]));
+assertSame('equipe avisada', 1, (int) $app->db->scalar("SELECT COUNT(*) FROM notifications WHERE recipient_type = 'agency' AND recipient_user_id = ?", [$idUsuario]));
+check('aviso cita a decisão', str_contains((string) $app->db->scalar("SELECT body FROM notifications WHERE recipient_type = 'agency' LIMIT 1"), 'solicitou alterações'));
+
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$telaPortalResolvida = $app->handle(requisicao('GET', '/portal/approvals/' . $aprovId));
+assertSame('portal mostra a revisão respondida', 200, $telaPortalResolvida->status);
+check('portal mostra a resposta registrada', str_contains($telaPortalResolvida->body, 'Resposta registrada'));
+check('portal não oferece decidir de novo', !str_contains($telaPortalResolvida->body, 'name="status" value="approved"'));
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+assertSame('segunda resposta responde 409', 409, $app->handle(requisicao('POST', '/portal/approvals/' . $aprovId . '/respond', [
+    'csrf_token' => $csrf, 'status' => 'approved', 'body' => 'agora sim',
+]))->status);
+assertSame('status preservado depois do 409', 'changes_requested', $app->db->scalar('SELECT status FROM approvals WHERE id = ?', [$aprovId]));
+
+$logar($app, $idUsuario);
+$detalheAprov = $app->handle(requisicao('GET', '/approvals/' . $aprovId));
+check('agência vê a decisão do cliente', str_contains($detalheAprov->body, 'Alterações solicitadas'));
+check('agência vê o motivo', str_contains($detalheAprov->body, 'Troque a foto e cita o desconto') || str_contains($detalheAprov->body, 'Troque a foto e cite o desconto'));
+check('aviso de retorno guardado para a equipe', (int) $app->db->scalar("SELECT COUNT(*) FROM notifications WHERE recipient_type = 'agency' AND title = 'Retorno do cliente'") === 1);
+check('aviso de retorno visível na lista', str_contains($app->handle(requisicao('GET', '/approvals'))->body, 'data-aviso="1"'));
+
+echo "\n[49] Aprovações: novo ciclo preserva o histórico\n";
+$logar($app, $idUsuario);
+$detalheAprov = $app->handle(requisicao('GET', '/approvals/' . $aprovId));
+check('revisão resolvida não oferece cancelar', !str_contains($detalheAprov->body, 'Cancelar revisão'));
+$logar($app, $idUsuario);
+$reenvio = $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'creative:' . $arteId,
+]));
+assertSame('reenvio depois da resposta é aceito', 302, $reenvio->status);
+$segundoId = (int) preg_replace('#^.*/approvals/(\d+).*$#', '$1', (string) parse_url((string) $reenvio->header('Location'), PHP_URL_PATH));
+check('novo ciclo é outra revisão', $segundoId !== $aprovId && $segundoId > 0);
+assertSame('ciclo incrementado', 2, (int) $app->db->scalar('SELECT cycle_number FROM approvals WHERE id = ?', [$segundoId]));
+assertSame('histórico anterior preservado', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM approvals WHERE id = ? AND status = ?', [$aprovId, 'changes_requested']));
+assertSame('comentários do ciclo anterior intactos', 3, (int) $app->db->scalar('SELECT COUNT(*) FROM comments WHERE approval_id = ?', [$aprovId]));
+
+$logar($app, $idUsuario);
+$cancelada = $app->handle(requisicao('POST', '/approvals/' . $segundoId . '/cancel', ['csrf_token' => $csrf]));
+assertSame('cancelamento redireciona', 302, $cancelada->status);
+assertSame('cancelamento rejeita a pendência', 'rejected', $app->db->scalar('SELECT status FROM approvals WHERE id = ?', [$segundoId]));
+assertSame('evento de cancelamento', 'Revisão cancelada pela agência', $app->db->scalar("SELECT note FROM approval_events WHERE approval_id = ? AND new_status = 'rejected'", [$segundoId]));
+$logar($app, $idUsuario);
+assertSame('cancelar duas vezes responde 302 com erro', 302, $app->handle(requisicao('POST', '/approvals/' . $segundoId . '/cancel', ['csrf_token' => $csrf]))->status);
+assertSame('cancelar sem CSRF é recusado', 302, $app->handle(requisicao('POST', '/approvals/' . $aprovId . '/cancel', ['csrf_token' => 'x']))->status);
+assertSame('cancelamento libera novo envio', 302, $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'creative:' . $arteId,
+]))->status);
+assertSame('terceiro ciclo criado', 3, (int) $app->db->scalar('SELECT MAX(cycle_number) FROM approvals WHERE creative_id = ?', [$arteId]));
+
+echo "\n[50] Aprovações: pauta planejada e anexos\n";
+// O plano da seção [20] foi excluído em [23]: gera um novo para revisar a pauta.
+$logar($app, $idUsuario);
+$planoRevisao = $app->handle(requisicao('POST', '/planner/generate', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'period_days' => '7',
+    'target_posts' => '3', 'start_date' => '2026-04-06', 'networks' => ['Instagram'],
+    'objective' => 'Divulgar o plano de revisão de conteúdo', 'campaign_context' => '',
+]));
+assertSame('plano novo criado para a pauta', 302, $planoRevisao->status);
+$planoRevisaoId = (int) (explode('/', parse_url((string) $planoRevisao->header('Location'), PHP_URL_PATH))[4] ?? 0);
+$postPlanejado = $app->db->one('SELECT * FROM posts WHERE calendar_id = ? ORDER BY publication_date LIMIT 1', [$planoRevisaoId]);
+check('pauta encontrada para envio', $postPlanejado !== null);
+$logar($app, $idUsuario);
+$envioPauta = $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'planned:' . (int) $postPlanejado['id'],
+]));
+assertSame('envio de pauta redireciona', 302, $envioPauta->status);
+$pautaAprovId = (int) preg_replace('#^.*/approvals/(\d+).*$#', '$1', (string) parse_url((string) $envioPauta->header('Location'), PHP_URL_PATH));
+$pautaAprov = $app->db->one('SELECT * FROM approvals WHERE id = ?', [$pautaAprovId]);
+assertSame('origem pauta', 'planned', $pautaAprov['source_type']);
+$fotografiaPauta = json_decode((string) $pautaAprov['snapshot_json'], true);
+assertSame('fotografia da pauta tem tipo', 'planned', $fotografiaPauta['type']);
+check('fotografia da pauta tem legenda', mb_strlen((string) $fotografiaPauta['caption']) > 0);
+check('fotografia da pauta tem briefing', mb_strlen((string) $fotografiaPauta['visual_brief']) > 0);
+$logar($app, $idUsuario);
+$detalhePauta = $app->handle(requisicao('GET', '/approvals/' . $pautaAprovId));
+assertSame('detalhe da pauta responde 200', 200, $detalhePauta->status);
+check('detalhe da pauta mostra o briefing', str_contains($detalhePauta->body, 'Briefing visual'));
+check('pauta não exige imagem', str_contains($detalhePauta->body, 'Pauta sem imagem'));
+
+$pngAnexo = sys_get_temp_dir() . '/smia-anexo-' . bin2hex(random_bytes(4)) . '.png';
+$lonaAnexo = imagecreatetruecolor(120, 120);
+imagefill($lonaAnexo, 0, 0, imagecolorallocate($lonaAnexo, 200, 80, 40));
+imagepng($lonaAnexo, $pngAnexo);
+imagedestroy($lonaAnexo);
+$_FILES['file'] = ['name' => 'referencia.png', 'tmp_name' => $pngAnexo, 'error' => UPLOAD_ERR_OK, 'size' => filesize($pngAnexo)];
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$app->session->put('user_id', null);
+$app->session->forget('user_id');
+$anexoPortal = $app->handle(requisicao('POST', '/portal/approvals/' . $pautaAprovId . '/comment', [
+    'csrf_token' => $csrf, 'body' => 'Sugestão de imagem em anexo.',
+]));
+unset($_FILES['file']);
+assertSame('comentário com anexo redireciona', 302, $anexoPortal->status);
+$anexo = $app->db->one('SELECT * FROM comments WHERE approval_id = ? AND author_type = ?', [$pautaAprovId, 'client']);
+check('anexo gravado no comentário', $anexo !== null && !empty($anexo['attachment_path']));
+assertSame('nome original preservado', 'referencia.png', $anexo['attachment_name']);
+check('arquivo do anexo existe', is_file($raiz . '/uploads/' . (string) $anexo['attachment_path']));
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$midiaAnexo = $app->handle(requisicao('GET', '/portal/approvals/' . $pautaAprovId . '/media/' . $anexo['attachment_path']));
+assertSame('anexo é servido no portal', 200, $midiaAnexo->status);
+$logar($app, $idUsuario);
+$midiaAnexoAgencia = $app->handle(requisicao('GET', '/approvals/' . $pautaAprovId . '/media/' . $anexo['attachment_path']));
+assertSame('anexo é servido na agência', 200, $midiaAnexoAgencia->status);
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+assertSame('anexo de outra revisão responde 404', 404, $app->handle(requisicao('GET', '/portal/approvals/' . $aprovId . '/media/' . $anexo['attachment_path']))->status);
+// Arquivo com extensão de imagem e conteúdo que não é imagem: validado pelos bytes.
+$arquivoFalso = sys_get_temp_dir() . '/smia-anexo-falso-' . bin2hex(random_bytes(4)) . '.png';
+file_put_contents($arquivoFalso, "GIF89a nao-e-png");
+$_FILES['file'] = ['name' => 'referencia.png', 'tmp_name' => $arquivoFalso, 'error' => UPLOAD_ERR_OK, 'size' => filesize($arquivoFalso)];
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+$anexoInvalido = $app->handle(requisicao('POST', '/portal/approvals/' . $pautaAprovId . '/comment', [
+    'csrf_token' => $csrf, 'body' => 'arquivo errado',
+]));
+assertSame('anexo de conteúdo inválido é recusado', 302, $anexoInvalido->status);
+check('mensagem explica o formato aceito', str_contains(rawurldecode((string) $anexoInvalido->header('Location')), 'PNG, JPG ou WEBP'));
+unset($_FILES['file']);
+
+echo "\n[51] Aprovações: permissões, isolamento e navegação\n";
+$papelAprov = (string) $app->db->scalar('SELECT role FROM users WHERE id = ?', [$idUsuario]);
+$app->db->run("UPDATE users SET role = 'viewer' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('viewer abre a lista', 200, $app->handle(requisicao('GET', '/approvals'))->status);
+$logar($app, $idUsuario);
+check('viewer não vê o formulário de envio', !str_contains($app->handle(requisicao('GET', '/approvals'))->body, 'Enviar para o portal'));
+$logar($app, $idUsuario);
+assertSame('viewer não envia para revisão', 403, $app->handle(requisicao('POST', '/approvals', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'source' => 'creative:' . $arteId,
+]))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não cria acesso do portal', 403, $app->handle(requisicao('POST', '/approvals/portal-users', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'name' => 'X', 'email' => 'x@y.example', 'password' => 'SenhaForte123',
+]))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não comenta', 403, $app->handle(requisicao('POST', '/approvals/' . $aprovId . '/comment', ['csrf_token' => $csrf, 'body' => 'oi']))->status);
+$logar($app, $idUsuario);
+assertSame('viewer abre o detalhe', 200, $app->handle(requisicao('GET', '/approvals/' . $aprovId))->status);
+$app->db->run("UPDATE users SET role = 'editor' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('editor não cria acesso do portal', 403, $app->handle(requisicao('POST', '/approvals/portal-users', [
+    'csrf_token' => $csrf, 'client_id' => (string) $clientePlano, 'name' => 'X', 'email' => 'z@y.example', 'password' => 'SenhaForte123',
+]))->status);
+$logar($app, $idUsuario);
+assertSame('editor não pausa acesso do portal', 403, $app->handle(requisicao('POST', '/approvals/portal-users/' . (int) $contaPortal['id'] . '/toggle', ['csrf_token' => $csrf]))->status);
+
+$app->db->run('UPDATE users SET role = ? WHERE id = ?', [$papelAprov, $idUsuario]);
+$logar($app, $idUsuario);
+$pausada = $app->handle(requisicao('POST', '/approvals/portal-users/' . (int) $contaPortal['id'] . '/toggle', ['csrf_token' => $csrf]));
+assertSame('owner pausa o acesso', 302, $pausada->status);
+assertSame('acesso fica inativo', 0, (int) $app->db->scalar('SELECT is_active FROM client_portal_users WHERE id = ?', [(int) $contaPortal['id']]));
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+assertSame('conta pausada perde a sessão na hora', '/edijalmemoura/socialai/portal/login', $app->handle(requisicao('GET', '/portal/approvals'))->header('Location'));
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+assertSame('conta pausada não responde revisão', '/edijalmemoura/socialai/portal/login', $app->handle(requisicao('POST', '/portal/approvals/' . $pautaAprovId . '/respond', ['csrf_token' => $csrf, 'status' => 'approved']))->header('Location'));
+$logar($app, $idUsuario);
+assertSame('acesso é reativado', 302, $app->handle(requisicao('POST', '/approvals/portal-users/' . (int) $contaPortal['id'] . '/toggle', ['csrf_token' => $csrf]))->status);
+assertSame('acesso volta a ficar ativo', 1, (int) $app->db->scalar('SELECT is_active FROM client_portal_users WHERE id = ?', [(int) $contaPortal['id']]));
+assertSame('pausar sem CSRF não muda nada', 302, $app->handle(requisicao('POST', '/approvals/portal-users/' . (int) $contaPortal['id'] . '/toggle', ['csrf_token' => 'x']))->status);
+assertSame('acesso segue ativo', 1, (int) $app->db->scalar('SELECT is_active FROM client_portal_users WHERE id = ?', [(int) $contaPortal['id']]));
+
+$app->db->run('UPDATE users SET role = ? WHERE id = ?', [$papelAprov, $idUsuario]);
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+assertSame('outra agência não abre a revisão', 404, $app->handle(requisicao('GET', '/approvals/' . $aprovId))->status);
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+assertSame('outra agência não vê a mídia', 404, $app->handle(requisicao('GET', '/approvals/' . $aprovId . '/media/' . $arquivoExport))->status);
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+assertSame('outra agência não comenta', 404, $app->handle(requisicao('POST', '/approvals/' . $aprovId . '/comment', ['csrf_token' => $csrf, 'body' => 'invasão']))->status);
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+check('outra agência não cria acesso do portal', (int) $app->db->scalar('SELECT COUNT(*) FROM client_portal_users') === 1);
+
+$logar($app, $idUsuario);
+$painelAprov = $app->handle(requisicao('GET', '/dashboard'));
+assertSame('dashboard responde 200 com aprovações', 200, $painelAprov->status);
+check('Aprovações aparece no menu', str_contains($painelAprov->body, 'Aprovações'));
+check('Aprovações aparece com link no dashboard', str_contains($painelAprov->body, '/approvals"'));
+check('dashboard conta quatro módulos prontos', str_contains($painelAprov->body, 'módulo 4 de 8 pronto'));
+$logar($app, $idUsuario);
+check('lista aponta para o portal do cliente', str_contains($app->handle(requisicao('GET', '/approvals'))->body, 'Acessos do portal'));
+assertSame('rota inexistente de aprovação responde 404', 404, $app->handle(requisicao('GET', '/approvals/abc/xyz'))->status);
+assertSame('portal com id inválido responde 404', 404, $app->handle(requisicao('GET', '/approvals/0'))->status ?: 0);
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+assertSame('portal responde 404 para revisão inexistente', 404, $app->handle(requisicao('GET', '/portal/approvals/98765'))->status);
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+assertSame('portal exige CSRF para comentar', 302, $app->handle(requisicao('POST', '/portal/approvals/' . $pautaAprovId . '/comment', ['csrf_token' => 'x', 'body' => 'oi']))->status);
+$app->session->forget('portal_user_id');
+assertSame('logout do portal exige CSRF', '/edijalmemoura/socialai/portal/approvals', $app->handle(requisicao('POST', '/portal/logout', ['csrf_token' => 'x']))->header('Location'));
+$app->session->put('portal_user_id', (int) $contaPortal['id']);
+assertSame('logout do portal redireciona', '/edijalmemoura/socialai/portal/login', $app->handle(requisicao('POST', '/portal/logout', ['csrf_token' => $csrf]))->header('Location'));
+check('sessão do portal encerrada', $app->session->get('portal_user_id') === null);
+
+echo "\n[52] Aprovações: migração aditiva mantém dados da v1.2\n";
+$appAntiga->db->run("INSERT INTO content_calendar (company_id, client_id, created_by, title, objective, period_days, target_posts, start_date, networks_json, ai_model) VALUES (1, 1, 1, 'Plano antigo', 'Objetivo', 7, 3, '2026-01-05', '[\"Instagram\"]', 'local-draft')");
+$planoAntigo = (int) $appAntiga->db->pdo()->lastInsertId();
+$appAntiga->db->run("INSERT INTO posts (company_id, calendar_id, client_id, publication_date, position, theme, network, content_type, strategic_objective, main_text, caption, visual_brief, image_suggestion) VALUES (1, ?, 1, '2026-01-05', 1, 'Tema antigo', 'Instagram', 'Post', 'Objetivo', 'Texto', 'Legenda', 'Brief', 'Imagem')", [$planoAntigo]);
+\Smia\Database\Schema::migrate($appAntiga->db);
+assertSame('tabela de aprovações criada na migração', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'approvals'"));
+assertSame('tabela de contas do portal criada', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'client_portal_users'"));
+assertSame('tabela de comentários criada', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'comments'"));
+assertSame('tabela de avisos criada', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'notifications'"));
+assertSame('dados do planejamento preservados', 'Tema antigo', $appAntiga->db->scalar('SELECT theme FROM posts WHERE calendar_id = ?', [$planoAntigo]));
+assertSame('cliente herdado preservado', 'Cliente Herdado', $appAntiga->db->scalar('SELECT company_name FROM clients WHERE id = 1'));
+$appAntiga->db->run("INSERT INTO creative_posts (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height, content_json, layout_json, background_color, status, export_path) VALUES (1, 1, 1, 'Arte antiga', 'square', 1080, 1080, '{\"title\":\"t\",\"subtitle\":\"s\",\"cta\":\"c\",\"caption\":\"l\",\"hashtags\":\"\",\"visual_brief\":\"b\",\"image_suggestion\":\"i\",\"composition\":\"\"}', '{\"elements\":[]}', '#112244', 'exported', 'arte.png')");
+\Smia\Database\Schema::migrate($appAntiga->db);
+assertSame('migração segue idempotente', 'Arte antiga', $appAntiga->db->scalar('SELECT subject FROM creative_posts WHERE id = 1'));
+assertSame('uma linha na versão do esquema', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = ?', [\Smia\Database\Schema::VERSAO]));
+
+echo "\n[53] Sintaxe de todos os arquivos PHP\n";
+$arquivosPhp = [];
+$iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));
+foreach ($iterador as $arquivo) {
+    if ($arquivo->isFile() && $arquivo->getExtension() === 'php') {
+        $arquivosPhp[] = $arquivo->getPathname();
+    }
+}
+foreach (glob(__DIR__ . '/../public/*.php') ?: [] as $entrada) {
+    $arquivosPhp[] = $entrada;
+}
+$arquivosPhp[] = __DIR__ . '/../app/autoload.php';
+$comErro = [];
+foreach ($arquivosPhp as $arquivo) {
+    try {
+        token_get_all((string) file_get_contents($arquivo), TOKEN_PARSE);
+    } catch (ParseError $erro) {
+        $comErro[] = basename($arquivo) . ': ' . $erro->getMessage();
+    }
+}
+check('todos os arquivos PHP compilam (' . count($arquivosPhp) . ' arquivos)', $comErro === [], implode(' | ', $comErro));
+check('views de aprovações e portal incluídas na checagem', count(array_filter($arquivosPhp, static fn (string $a): bool => str_contains($a, '/views/approvals/') || str_contains($a, '/views/portal/'))) >= 8);
+$rotasAprov = array_values(array_filter($app->router->patterns(), static fn (string $r): bool => str_contains($r, '/approvals') || str_contains($r, '/portal')));
+check('rotas de aprovações e portal registradas (' . count($rotasAprov) . ')', count($rotasAprov) >= 18);
 
 echo "\n----------------------------------------\n";
 echo $falhas === 0 ? "RESULTADO: OK ({$total} verificações)\n" : "RESULTADO: {$falhas} FALHA(S) de {$total}\n";

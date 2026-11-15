@@ -15,10 +15,11 @@ namespace Smia\Database;
  *           2 = clientes (perfil, identidade visual, biblioteca de imagens)
  *           3 = planejamento (calendário editorial e publicações)
  *           4 = estúdio (artes, versões e itens de feed)
+ *           5 = aprovações (revisões, histórico, portal do cliente, avisos)
  */
 final class Schema
 {
-    public const VERSAO = 4;
+    public const VERSAO = 5;
 
     public static function migrate(Database $db): void
     {
@@ -236,6 +237,96 @@ CREATE TABLE IF NOT EXISTS feed_items (
 CREATE INDEX IF NOT EXISTS idx_feed_client_position ON feed_items(company_id, client_id, position);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_creative_unique ON feed_items(company_id, client_id, creative_id) WHERE creative_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_planned_unique ON feed_items(company_id, client_id, planned_post_id) WHERE planned_post_id IS NOT NULL;
+
+-- Aprovações: o cliente revisa a arte exportada ou a pauta planejada.
+CREATE TABLE IF NOT EXISTS client_portal_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    password_hash TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+    last_login_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_portal_users_client ON client_portal_users(company_id, client_id, is_active);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    source_type TEXT NOT NULL CHECK (source_type IN ('creative','planned')),
+    creative_id INTEGER REFERENCES creative_posts(id) ON DELETE CASCADE,
+    planned_post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+    cycle_number INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','approved','changes_requested','rejected')),
+    submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((source_type = 'creative' AND creative_id IS NOT NULL AND planned_post_id IS NULL)
+        OR (source_type = 'planned' AND creative_id IS NULL AND planned_post_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_tenant ON approvals(company_id, status, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_approvals_client ON approvals(client_id, submitted_at DESC);
+-- Uma única pendência por conteúdo e um ciclo por vez: o índice protege
+-- contra duplo envio mesmo com dois cliques simultâneos.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_pending_creative ON approvals(company_id, client_id, creative_id) WHERE status = 'pending' AND creative_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_pending_planned ON approvals(company_id, client_id, planned_post_id) WHERE status = 'pending' AND planned_post_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_creative_cycle ON approvals(company_id, client_id, creative_id, cycle_number) WHERE creative_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_planned_cycle ON approvals(company_id, client_id, planned_post_id, cycle_number) WHERE planned_post_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS approval_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    approval_id INTEGER NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    actor_type TEXT NOT NULL CHECK (actor_type IN ('agency','client')),
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    actor_portal_user_id INTEGER REFERENCES client_portal_users(id) ON DELETE SET NULL,
+    previous_status TEXT,
+    new_status TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_approval_events_approval ON approval_events(approval_id, created_at);
+
+CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    approval_id INTEGER NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    author_type TEXT NOT NULL CHECK (author_type IN ('agency','client')),
+    author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    author_portal_user_id INTEGER REFERENCES client_portal_users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL DEFAULT '',
+    attachment_path TEXT,
+    attachment_name TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((author_type = 'agency' AND author_user_id IS NOT NULL AND author_portal_user_id IS NULL)
+        OR (author_type = 'client' AND author_portal_user_id IS NOT NULL AND author_user_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_comments_approval ON comments(approval_id, created_at);
+
+-- Avisos dentro do produto (o cPanel não envia e-mail): cada pessoa vê os seus.
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    recipient_type TEXT NOT NULL CHECK (recipient_type IN ('agency','client')),
+    recipient_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    recipient_portal_user_id INTEGER REFERENCES client_portal_users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    target_url TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    read_at TEXT,
+    CHECK ((recipient_type = 'agency' AND recipient_user_id IS NOT NULL AND recipient_portal_user_id IS NULL)
+        OR (recipient_type = 'client' AND recipient_user_id IS NULL AND recipient_portal_user_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_agency_unread ON notifications(company_id, recipient_user_id, read_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_client_unread ON notifications(company_id, recipient_portal_user_id, read_at, created_at DESC);
 SQL);
 
         $versao = (int) ($db->scalar('SELECT MAX(version) FROM schema_version') ?? 0);

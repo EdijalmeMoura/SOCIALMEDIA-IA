@@ -38,7 +38,8 @@ DEPOIS DE INSTALAR
 ATUALIZANDO DE UMA VERSÃO ANTERIOR
   Envie por cima apenas app/ e public/ (mantenha .env e data/).
   O banco é migrado sozinho na primeira abertura; nada é apagado.
-  v1.3 acrescenta as tabelas do estúdio (artes, versões e itens de feed).
+  v1.4 acrescenta as tabelas de aprovações (portal do cliente, revisões,
+  eventos, comentários e avisos).
 
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
@@ -52,6 +53,9 @@ O QUE ESTA VERSÃO JÁ FAZ
     (sem OPENAI_API_KEY ele cria um rascunho local identificado como tal)
   Estúdio: arte pronta a partir de um assunto — prancheta no navegador,
     histórico de versões e exportação em PNG/JPG para download
+  Aprovações: envie arte exportada ou pauta para o cliente revisar no portal
+    (/portal/login), com fotografia do conteúdo, ciclos, comentários com
+    anexo e avisos dentro do produto
 
 ATIVAR A IA (OPCIONAL)
   Acrescente no .env:  OPENAI_API_KEY=sk-...
@@ -59,8 +63,14 @@ ATIVAR A IA (OPCIONAL)
   Imagem do estúdio: OPENAI_IMAGE_MODEL (padrão gpt-image-1).
   Sem a chave o módulo funciona em modo rascunho local, sem custo.
 
+PORTAL DO CLIENTE
+  Acesse /approvals → "Acessos do portal" e crie a conta de quem revisa.
+  Mande para o cliente: o endereço /portal/login, o e-mail e a senha
+  temporária. Ele vê só os conteúdos dele — nunca o painel da agência.
+  Pausar a conta derruba o acesso na hora.
+
 PRÓXIMOS MÓDULOS
-  aprovações → feed → relatórios → Meta
+  feed → relatórios → Meta
 
 PROBLEMAS COMUNS
   500 .............. log de erros do cPanel; falta permissão em data/

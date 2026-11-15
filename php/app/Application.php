@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace Smia;
 
+use Smia\Approvals\ApprovalRepository;
+use Smia\Approvals\PortalRepository;
 use Smia\Auth\Authenticator;
 use Smia\Clients\ClientRepository;
+use Smia\Controllers\ApprovalController;
 use Smia\Controllers\AuthController;
 use Smia\Controllers\ClientController;
 use Smia\Controllers\DashboardController;
 use Smia\Controllers\InstallerController;
 use Smia\Controllers\PlannerController;
+use Smia\Controllers\PortalController;
 use Smia\Controllers\StudioController;
 use Smia\Database\Database;
 use Smia\Database\Schema;
@@ -86,6 +90,25 @@ final class Application
                 $this->config->openaiEndpoint,
             ),
             $auth,
+            $this->session,
+            $this->view(),
+        );
+        $aprovacoes = new ApprovalController(
+            $this->config,
+            new ApprovalRepository($this->db),
+            new PortalRepository($this->db),
+            $this->upload,
+            $auth,
+            $this->session,
+            $this->view(),
+        );
+        // O portal é uma sessão separada (portal_user_id) e não recebe o
+        // Authenticator: nenhuma rota do portal consegue enxergar a agência.
+        $portal = new PortalController(
+            $this->config,
+            new ApprovalRepository($this->db),
+            new PortalRepository($this->db),
+            $this->upload,
             $this->session,
             $this->view(),
         );
@@ -168,6 +191,28 @@ final class Application
         $this->router->post('/studio/posts/{id}/variation', $studio->variation(...));
         $this->router->post('/studio/posts/{id}/versions/{version}/restore', $studio->restore(...));
         $this->router->post('/studio/posts/{id}/delete', $studio->delete(...));
+
+        // --- Aprovações (agência) --------------------------------------
+        $this->router->get('/approvals', $aprovacoes->index(...));
+        $this->router->post('/approvals', $aprovacoes->send(...));
+        $this->router->post('/approvals/portal-users', $aprovacoes->createPortalUser(...));
+        $this->router->post('/approvals/portal-users/{id}/toggle', $aprovacoes->togglePortalUser(...));
+        $this->router->post('/approvals/notifications/read', $aprovacoes->readNotifications(...));
+        $this->router->get('/approvals/{id}', $aprovacoes->show(...));
+        $this->router->post('/approvals/{id}/comment', $aprovacoes->comment(...));
+        $this->router->post('/approvals/{id}/cancel', $aprovacoes->cancel(...));
+        $this->router->get('/approvals/{id}/media/{filename}', $aprovacoes->media(...));
+
+        // --- Portal do cliente -----------------------------------------
+        $this->router->get('/portal/login', $portal->loginForm(...));
+        $this->router->post('/portal/login', $portal->login(...));
+        $this->router->post('/portal/logout', $portal->logout(...));
+        $this->router->get('/portal/approvals', $portal->index(...));
+        $this->router->get('/portal/approvals/{id}', $portal->show(...));
+        $this->router->post('/portal/approvals/{id}/respond', $portal->respond(...));
+        $this->router->post('/portal/approvals/{id}/comment', $portal->comment(...));
+        $this->router->get('/portal/approvals/{id}/media/{filename}', $portal->media(...));
+        $this->router->post('/portal/notifications/read', $portal->readNotifications(...));
     }
 
     /**

@@ -3,17 +3,18 @@
 Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 (cPanel): sobe os arquivos e funciona. Sem Composer, sem Node, sem Passenger.
 
-> Estado atual: **base funcional + clientes + planejamento + estúdio** —
+> Estado atual: **base funcional + clientes + planejamento + estúdio +
+> aprovações** —
 > instalador de 3 telas, login, dashboard, banco SQLite, sessão/CSRF, tratamento
 > de subpasta, portfólio de clientes (perfil, identidade visual, logo e
-> referências), calendário editorial com IA e criação de artes com prancheta,
-> histórico de versões e exportação. Os demais módulos (aprovações, feed,
-> relatórios, Meta) entram um a um, reaproveitando esta mesma base e o mesmo
-> esquema de dados.
+> referências), calendário editorial com IA, criação de artes com prancheta,
+> histórico de versões e exportação, e revisão pelo cliente em portal próprio
+> com histórico e ciclos. Os demais módulos (feed, relatórios, Meta) entram um a
+> um, reaproveitando esta mesma base e o mesmo esquema de dados.
 
 ## Baixar o pacote pronto
 
-`downloads/SOCIALMEDIA-IA-php-v1.3.zip` nesta pasta é o pacote completo (`.env`
+`downloads/SOCIALMEDIA-IA-php-v1.4.zip` nesta pasta é o pacote completo (`.env`
 com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
 publicada em
 [`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
@@ -211,11 +212,78 @@ Regras que valem a pena saber:
 - Isolamento por `company_id` em tudo, inclusive no arquivo servido; a exclusão
   remove arte, versões em cascata e os arquivos do disco.
 
+### Aprovações (pronto)
+
+O conteúdo sai da agência, é revisado pelo cliente e volta com histórico. Cada
+envio é uma **fotografia**: o que o cliente aprovou continua sendo exatamente
+aquilo, mesmo que a arte mude depois no estúdio.
+
+**Agencia** (menu lateral → Aprovações):
+
+| Rota | Método | O que faz | Quem pode |
+|---|---|---|---|
+| `/approvals` | GET | fila de revisões, conteúdos disponíveis e acessos do portal | todos |
+| `/approvals` | POST | envia arte exportada ou pauta para o cliente | owner, admin, editor |
+| `/approvals/{id}` | GET | fotografia enviada + histórico + comentários | todos |
+| `/approvals/{id}/comment` | POST | comenta (com imagem opcional) e avisa o cliente | owner, admin, editor |
+| `/approvals/{id}/cancel` | POST | cancela a revisão e libera o conteúdo | owner, admin, editor |
+| `/approvals/{id}/media/{arquivo}` | GET | serve a arte ou um anexo **daquela revisão** | todos |
+| `/approvals/portal-users` | POST | cria acesso do cliente ao portal | owner, admin |
+| `/approvals/portal-users/{id}/toggle` | POST | pausa/reativa o acesso | owner, admin |
+| `/approvals/notifications/read` | POST | marca os avisos da equipe como lidos | todos |
+
+**Portal do cliente** (endereço separado, `/portal`):
+
+| Rota | Método | O que faz |
+|---|---|---|
+| `/portal/login` | GET/POST | entrada do cliente (e-mail e senha próprios) |
+| `/portal/logout` | POST | sai do portal |
+| `/portal/approvals` | GET | meus conteúdos, pendentes primeiro |
+| `/portal/approvals/{id}` | GET | conteúdo aberto, histórico e comentários |
+| `/portal/approvals/{id}/respond` | POST | aprova, pede alterações ou rejeita |
+| `/portal/approvals/{id}/comment` | POST | comenta (com imagem opcional) |
+| `/portal/approvals/{id}/media/{arquivo}` | GET | vê a arte e os anexos da revisão |
+| `/portal/notifications/read` | POST | marca os avisos do cliente como lidos |
+
+Regras que valem a pena saber:
+
+- **Fotografia, não link vivo**: no envio, o conteúdo é congelado em
+  `approvals.snapshot_json` (arte: formato, medidas, texto, imagem e arquivo
+  exportado; pauta: rede, data, objetivo, texto, legenda, CTA e briefing). O
+  cliente revisa o que foi enviado, não o que o estúdio tem agora.
+- **Uma pendência por conteúdo**, garantida por índice único parcial: dois
+  cliques ao mesmo tempo não criam duas revisões. Enviar de novo um conteúdo já
+  pendente responde com "Este conteúdo já está aguardando aprovação."
+- **Ciclos**: responder encerra o ciclo; um novo envio cria o ciclo 2, 3… com o
+  histórico anterior intacto (é o que torna a revisão auditável).
+- Só entra em revisão **arte exportada** (`status='exported'` com arquivo) ou
+  pauta do planejamento. Rascunho do estúdio não aparece na lista.
+- O cliente decide **uma vez**: responder de novo devolve **409** em vez de
+  sobrescrever. Pedir alterações exige texto ou imagem anexada.
+- **Sessões separadas**: o portal usa `portal_user_id`, o painel usa `user_id`.
+  Entrar como cliente não abre a agência; entrar na agência encerra a sessão do
+  portal no mesmo navegador. Desativar a conta derruba o acesso na hora, mesmo
+  com a sessão aberta.
+- **Avisos dentro do produto** (não por e-mail, que cPanel compartilhado não
+  entrega): a equipe recebe "Retorno do cliente" e "Novo comentário do cliente";
+  o cliente recebe "Novo conteúdo para revisão" e "Novo comentário da agência".
+- Entrada do portal tem trava de **10 tentativas por 5 minutos**; a mensagem é
+  sempre a mesma para e-mail inexistente e senha errada.
+- Mídia só é servida se o arquivo estiver na fotografia daquela revisão ou for
+  anexo de um comentário dela, sempre no escopo da empresa (agência) ou da
+  empresa + cliente (portal), com `Cache-Control: private, no-store`.
+- Escritas deixam evento em `approval_events` e rastro em `audit_log`
+  (`approval.sent`, `approval.cancelled`, `portal.user_created`).
+
+O cliente entra por `https://seu-dominio/.../socialai/portal/login` — mande esse
+endereço junto com o e-mail e a senha temporária. Ele nunca vê o painel da
+agência, nem outros clientes.
+
 ### Próximos
 
-aprovações → feed → relatórios → Meta. Cada um entra por migração aditiva do
-`Schema` (versão 2 = clientes, 3 = planejamento, 4 = estúdio), então atualizar o
-pacote nunca apaga dados de uma instalação em uso.
+feed → relatórios → Meta. Cada um entra por migração aditiva do `Schema`
+(versão 2 = clientes, 3 = planejamento, 4 = estúdio, 5 = aprovações), então
+atualizar o pacote nunca apaga dados de uma instalação em uso.
 
 ## Subpasta: como é resolvido
 
@@ -239,7 +307,7 @@ instalado na máquina:
 ```sh
 cd php
 npm install        # @php-wasm/universal + @php-wasm/node (só para testes)
-npm test           # parse de todos os arquivos + 136 verificações funcionais
+npm test           # parse de todos os arquivos + 560 verificações funcionais
 ```
 
 Cobre: normalização de subpasta, `.env`, detecção de caminho, token do
@@ -247,7 +315,10 @@ instalador, CSRF, validação de formulário, regras de URL pública (com
 subpasta e rejeições), instalação completa, hash da senha, permissão 0600 do
 arquivo de segredos, login, logout, dashboard, 404/405, isolamento entre
 instâncias e o módulo de clientes (cadastro, edição, cores, upload validado
-por assinatura, permissões por papel, exclusão em cascata).
+por assinatura, permissões por papel, exclusão em cascata), planejamento, estúdio
+e aprovações (envio com fotografia, ciclos, decisão do cliente, 409 em resposta
+dupla, anexos, contas do portal, sessões separadas, mídia restrita, migração
+aditiva sobre banco antigo).
 
 Para exercitar o caminho HTTP completo (cookies, redirecionamentos, HTML):
 
