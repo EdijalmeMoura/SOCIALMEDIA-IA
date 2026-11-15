@@ -65,7 +65,16 @@ final class Request
         // Diretório onde o front controller está, segundo o servidor.
         $prefixoScript = dirname($scriptName);
         $prefixoScript = ($prefixoScript === '/' || $prefixoScript === '.') ? '' : rtrim($prefixoScript, '/');
-        $base = $configurado !== '' ? $configurado : $prefixoScript;
+
+        // Quando o .htaccess da raiz do projeto reescreve para public/ (cPanel
+        // sem apontar document root), o SCRIPT_NAME chega como
+        // /pasta/public/index.php — mas o prefixo PÚBLICO é /pasta: public/ é
+        // detalhe interno. Sem isso, as rotas internas levariam /public junto.
+        $prefixoLivre = preg_replace('#/public$#', '', $prefixoScript);
+        $prefixoLivre = is_string($prefixoLivre) ? $prefixoLivre : $prefixoScript;
+
+        // Preferência: .env (config) > SCRIPT_NAME > raiz da aplicação.
+        $base = $configurado !== '' ? $configurado : $prefixoLivre;
 
         // PATH_INFO preenchido pelo servidor é a fonte mais direta.
         $pathInfo = (string) ($_SERVER['PATH_INFO'] ?? '');
@@ -75,7 +84,9 @@ final class Request
 
         // Sem PATH_INFO, o caminho interno é o que sobra da URI. A ordem importa:
         // primeiro os prefixos candidatos, do mais específico para o mais curto.
-        $candidatos = array_values(array_unique(array_filter([$base, $configurado, $prefixoScript])));
+        // O prefixo com /public é tentado também, para o caso de a URI já vir
+        // como /pasta/public/install (reescrita encadeada).
+        $candidatos = array_values(array_unique(array_filter([$base, $configurado, $prefixoLivre, $prefixoScript])));
         usort($candidatos, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
 
         $caminho = $caminhoUri;

@@ -92,6 +92,10 @@ $casos = [
     ['/pasta/', '/pasta/index.php', '', '/pasta', '/'],
     ['/pasta/install', '/pasta/index.php', '/install', '/pasta', '/install'],
     ['/install', '/index.php', '', '', '/install'],
+    // .htaccess da raiz reescrevendo para public/: public/ é interno, não prefixo público.
+    ['/pasta/install', '/pasta/public/index.php', '', '/pasta', '/install'],
+    ['/pasta/', '/pasta/public/index.php', '', '/pasta', '/'],
+    ['/pasta/install', '/pasta/public/index.php', '/install', '/pasta', '/install'],
 ];
 foreach ($casos as [$uri, $script, $pathInfo, $baseEsperado, $caminhoEsperado]) {
     $_SERVER['REQUEST_URI'] = $uri;
