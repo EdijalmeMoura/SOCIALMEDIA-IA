@@ -4,4 +4,3 @@ data/installer.env
 data/installer-drafts/
 data/*.db
 .env
-downloads/
