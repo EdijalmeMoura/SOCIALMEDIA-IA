@@ -4,17 +4,18 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 (cPanel): sobe os arquivos e funciona. Sem Composer, sem Node, sem Passenger.
 
 > Estado atual: **base funcional + clientes + planejamento + estúdio +
-> aprovações** —
+> aprovações + feed** —
 > instalador de 3 telas, login, dashboard, banco SQLite, sessão/CSRF, tratamento
 > de subpasta, portfólio de clientes (perfil, identidade visual, logo e
 > referências), calendário editorial com IA, criação de artes com prancheta,
-> histórico de versões e exportação, e revisão pelo cliente em portal próprio
-> com histórico e ciclos. Os demais módulos (feed, relatórios, Meta) entram um a
-> um, reaproveitando esta mesma base e o mesmo esquema de dados.
+> histórico de versões e exportação, revisão pelo cliente em portal próprio com
+> histórico e ciclos, e a prévia do feed montada a partir do que já foi
+> produzido. Os demais módulos (relatórios, Meta) entram um a um, reaproveitando
+> esta mesma base e o mesmo esquema de dados.
 
 ## Baixar o pacote pronto
 
-`downloads/SOCIALMEDIA-IA-php-v1.4.zip` nesta pasta é o pacote completo (`.env`
+`downloads/SOCIALMEDIA-IA-php-v1.5.zip` nesta pasta é o pacote completo (`.env`
 com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
 publicada em
 [`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
@@ -279,11 +280,45 @@ O cliente entra por `https://seu-dominio/.../socialai/portal/login` — mande es
 endereço junto com o e-mail e a senha temporária. Ele nunca vê o painel da
 agência, nem outros clientes.
 
+### Feed (pronto)
+
+A grade 3×3 do Instagram montada com o que a agência já produziu — para ver a
+sequência como o seguidor veria antes de mandar para aprovação.
+
+| Rota | Método | O que faz | Quem pode |
+|---|---|---|---|
+| `/feed` | GET | perfil da marca, grade 3×3 e fontes fora da grade | todos |
+| `/feed/{cliente}/add/creative/{arte}` | POST | coloca uma arte do estúdio no fim da grade | owner, admin, editor |
+| `/feed/{cliente}/add/post/{pauta}` | POST | coloca uma pauta do planejamento no fim da grade | owner, admin, editor |
+| `/feed/{cliente}/remove/{item}` | POST | tira o item da prévia (o conteúdo original fica) | owner, admin, editor |
+| `/feed/{cliente}/reorder` | POST | grava a nova ordem (JSON `{"order":[ids]}`) | owner, admin, editor |
+
+Regras que valem a pena saber:
+
+- **É prévia, não agenda**: nada é publicado nem agendado. Datas editoriais são
+  recomendação e o rodapé da tela diz isso explicitamente.
+- A ordem é sua, não da data: cada item tem `position`, refeita a cada
+  reorganização. Arrastar só muda a tela; gravar é um clique em "Salvar ordem".
+- **Reordenar é tudo ou nada**: a lista enviada precisa ser exatamente a lista
+  atual. Se outra aba adicionou/removeu algo, a resposta é **409** com "atualize
+  a página" — nunca embaralha o que outra pessoa mexeu.
+- Arte e pauta convivem na mesma grade com o mesmo formato: arte mostra a imagem
+  exportada (ou o rascunho com selo), pauta mostra tema, rede e briefing no bloco
+  de texto.
+- **Excluir a origem remove o item** (cascata): a prévia nunca aponta para um
+  arquivo que não existe mais. Remover da grade, por outro lado, não exclui o
+  conteúdo — ele volta para a lista de fontes.
+- O mesmo conteúdo não entra duas vezes (índice único por arte/pauta na grade),
+  nem em marcas diferentes: a checagem é por empresa + cliente.
+- Escritas deixam rastro em `audit_log` (`feed.added`, `feed.removed`,
+  `feed.reordered`).
+
 ### Próximos
 
-feed → relatórios → Meta. Cada um entra por migração aditiva do `Schema`
-(versão 2 = clientes, 3 = planejamento, 4 = estúdio, 5 = aprovações), então
-atualizar o pacote nunca apaga dados de uma instalação em uso.
+relatórios → Meta. Cada um entra por migração aditiva do `Schema` (versão 2 =
+clientes, 3 = planejamento, 4 = estúdio, 5 = aprovações — o feed usa a tabela
+`feed_items` já criada no 3), então atualizar o pacote nunca apaga dados de uma
+instalação em uso.
 
 ## Subpasta: como é resolvido
 
@@ -307,7 +342,7 @@ instalado na máquina:
 ```sh
 cd php
 npm install        # @php-wasm/universal + @php-wasm/node (só para testes)
-npm test           # parse de todos os arquivos + 560 verificações funcionais
+npm test           # parse de todos os arquivos + 645 verificações funcionais
 ```
 
 Cobre: normalização de subpasta, `.env`, detecção de caminho, token do
@@ -318,7 +353,8 @@ instâncias e o módulo de clientes (cadastro, edição, cores, upload validado
 por assinatura, permissões por papel, exclusão em cascata), planejamento, estúdio
 e aprovações (envio com fotografia, ciclos, decisão do cliente, 409 em resposta
 dupla, anexos, contas do portal, sessões separadas, mídia restrita, migração
-aditiva sobre banco antigo).
+aditiva sobre banco antigo) e feed (grade 3×3, fontes, arrastar com 409 quando a
+lista muda, remoção sem excluir o original, cascata ao excluir a arte).
 
 Para exercitar o caminho HTTP completo (cookies, redirecionamentos, HTML):
 

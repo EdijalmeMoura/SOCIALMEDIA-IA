@@ -12,11 +12,13 @@ use Smia\Controllers\ApprovalController;
 use Smia\Controllers\AuthController;
 use Smia\Controllers\ClientController;
 use Smia\Controllers\DashboardController;
+use Smia\Controllers\FeedController;
 use Smia\Controllers\InstallerController;
 use Smia\Controllers\PlannerController;
 use Smia\Controllers\PortalController;
 use Smia\Controllers\StudioController;
 use Smia\Database\Database;
+use Smia\Feed\FeedRepository;
 use Smia\Database\Schema;
 use Smia\Http\Request;
 use Smia\Http\Response;
@@ -112,6 +114,13 @@ final class Application
             $this->session,
             $this->view(),
         );
+        $feed = new FeedController(
+            $this->config,
+            new FeedRepository($this->db),
+            $auth,
+            $this->session,
+            $this->view(),
+        );
         $clientes = new ClientController(
             $this->config,
             new ClientRepository($this->db),
@@ -191,6 +200,13 @@ final class Application
         $this->router->post('/studio/posts/{id}/variation', $studio->variation(...));
         $this->router->post('/studio/posts/{id}/versions/{version}/restore', $studio->restore(...));
         $this->router->post('/studio/posts/{id}/delete', $studio->delete(...));
+
+        // --- Feed ------------------------------------------------------
+        $this->router->get('/feed', $feed->index(...));
+        $this->router->post('/feed/{client_id}/add/creative/{id}', $feed->addCreative(...));
+        $this->router->post('/feed/{client_id}/add/post/{id}', $feed->addPost(...));
+        $this->router->post('/feed/{client_id}/remove/{id}', $feed->remove(...));
+        $this->router->post('/feed/{client_id}/reorder', $feed->reorder(...));
 
         // --- Aprovações (agência) --------------------------------------
         $this->router->get('/approvals', $aprovacoes->index(...));

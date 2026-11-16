@@ -836,7 +836,7 @@ check('módulo não aparece como "em breve"', !preg_match('/Planejamento.{0,200}
 $modulos = \Smia\Support\Modules::all();
 $moduloPlanner = array_values(array_filter($modulos, static fn (array $m): bool => $m['slug'] === 'planner'))[0] ?? null;
 check('módulo planejamento marcado como pronto', ($moduloPlanner['ready'] ?? false) === true);
-check('os demais módulos seguem pendentes', count(array_filter($modulos, static fn (array $m): bool => $m['ready'] === false)) >= 4);
+check('os módulos ainda não portados seguem pendentes', count(array_filter($modulos, static fn (array $m): bool => $m['ready'] === false)) >= 3);
 
 echo "\n[30] Planejamento: conteúdo da IA é tratado como não confiável\n";
 $logar($app, $idUsuario);
@@ -1582,7 +1582,7 @@ $painelAprov = $app->handle(requisicao('GET', '/dashboard'));
 assertSame('dashboard responde 200 com aprovações', 200, $painelAprov->status);
 check('Aprovações aparece no menu', str_contains($painelAprov->body, 'Aprovações'));
 check('Aprovações aparece com link no dashboard', str_contains($painelAprov->body, '/approvals"'));
-check('dashboard conta quatro módulos prontos', str_contains($painelAprov->body, 'módulo 4 de 8 pronto'));
+check('dashboard conta quatro módulos prontos na época das aprovações', str_contains($painelAprov->body, 'módulo 5 de 8 pronto'));
 $logar($app, $idUsuario);
 check('lista aponta para o portal do cliente', str_contains($app->handle(requisicao('GET', '/approvals'))->body, 'Acessos do portal'));
 assertSame('rota inexistente de aprovação responde 404', 404, $app->handle(requisicao('GET', '/approvals/abc/xyz'))->status);
@@ -1613,7 +1613,195 @@ $appAntiga->db->run("INSERT INTO creative_posts (company_id, client_id, created_
 assertSame('migração segue idempotente', 'Arte antiga', $appAntiga->db->scalar('SELECT subject FROM creative_posts WHERE id = 1'));
 assertSame('uma linha na versão do esquema', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = ?', [\Smia\Database\Schema::VERSAO]));
 
-echo "\n[53] Sintaxe de todos os arquivos PHP\n";
+echo "\n[54] Feed: tela, perfil e fontes\n";
+$logar($app, $idUsuario);
+$telaFeed = $app->handle(requisicao('GET', '/feed'));
+assertSame('tela do feed responde 200', 200, $telaFeed->status);
+check('carrega o CSS do feed', str_contains($telaFeed->body, 'feed.css'));
+check('carrega o JS da grade', str_contains($telaFeed->body, 'feed.js'));
+check('mostra o perfil da marca', str_contains($telaFeed->body, 'class="ig-avatar"'));
+check('avisa que a grade é prévia interna', str_contains($telaFeed->body, 'prévia interna'));
+check('mostra as três colunas', str_contains($telaFeed->body, 'grade do Instagram') || str_contains($telaFeed->body, 'Grade do Instagram'));
+check('grade começa vazia com convite', str_contains($telaFeed->body, 'A grade está vazia'));
+check('lista as artes do estúdio fora da grade', str_contains($telaFeed->body, 'Artes do estúdio') && str_contains($telaFeed->body, 'Aula experimental gratuita'));
+check('lista as pautas do planejamento', str_contains($telaFeed->body, 'Pautas planejadas'));
+assertSame('feed exige login', '/edijalmemoura/socialai/login', appNova()[0]->handle(requisicao('GET', '/feed'))->header('Location'));
+assertSame('nada gravado na grade ainda', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items'));
+
+$semClienteFeed = appNova();
+[$appSemMarca, , $raizSemMarca] = $semClienteFeed;
+$appSemMarca->db->run("INSERT INTO companies (name, slug) VALUES ('Vazia', 'vazia')");
+$appSemMarca->db->run("INSERT INTO users (company_id, name, email, password_hash, role) VALUES (1, 'Vazio', 'vazio@exemplo.com', ?, 'owner')", [password_hash('SenhaForte123', PASSWORD_DEFAULT)]);
+$appSemMarca->session->start();
+$appSemMarca->session->put('user_id', 1);
+$feedSemMarca = $appSemMarca->handle(requisicao('GET', '/feed'));
+assertSame('feed sem clientes responde 200', 200, $feedSemMarca->status);
+check('feed sem clientes convida a cadastrar', str_contains($feedSemMarca->body, 'Cadastre um cliente para visualizar o feed'));
+
+echo "\n[55] Feed: adicionar arte e pauta à grade\n";
+$logar($app, $idUsuario);
+$semCsrfFeed = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/creative/' . $arteId, ['csrf_token' => 'x']));
+assertSame('adicionar sem CSRF não grava', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items'));
+check('erro de CSRF volta para a tela', str_contains(rawurldecode((string) $semCsrfFeed->header('Location')), 'Sessão expirada'));
+
+$logar($app, $idUsuario);
+$addArte = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/creative/' . $arteId, ['csrf_token' => $csrf]));
+assertSame('adicionar arte redireciona', 302, $addArte->status);
+check('redirect volta para a grade', str_contains((string) $addArte->header('Location'), '#grade'));
+$itemArte = $app->db->one('SELECT * FROM feed_items WHERE creative_id = ?', [$arteId]);
+check('arte na grade', $itemArte !== null && (int) $itemArte['position'] === 1);
+check('linha guarda a marca', (int) $itemArte['client_id'] === $clientePlano);
+assertSame('auditoria do item', 'feed.added', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'feed.added'"));
+
+$logar($app, $idUsuario);
+$addRepetida = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/creative/' . $arteId, ['csrf_token' => $csrf]));
+assertSame('arte repetida não duplica', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items WHERE creative_id = ?', [$arteId]));
+check('aviso de item repetido', str_contains(rawurldecode((string) $addRepetida->header('Location')), 'já está na prévia'));
+
+$logar($app, $idUsuario);
+assertSame('arte inexistente responde 404', 404, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/creative/99999', ['csrf_token' => $csrf]))->status);
+$logar($app, $idUsuario);
+assertSame('marca inexistente responde 404', 404, $app->handle(requisicao('POST', '/feed/99999/add/creative/' . $arteId, ['csrf_token' => $csrf]))->status);
+
+$postFeed = $app->db->one('SELECT * FROM posts WHERE calendar_id = ? ORDER BY publication_date LIMIT 1', [$planoRevisaoId]);
+$logar($app, $idUsuario);
+$addPauta = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/post/' . (int) $postFeed['id'], ['csrf_token' => $csrf]));
+assertSame('adicionar pauta redireciona', 302, $addPauta->status);
+$itemPauta = $app->db->one('SELECT * FROM feed_items WHERE planned_post_id = ?', [(int) $postFeed['id']]);
+check('pauta na grade em segundo lugar', $itemPauta !== null && (int) $itemPauta['position'] === 2);
+assertSame('duas linhas na grade', 2, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items'));
+
+$logar($app, $idUsuario);
+$telaFeed = $app->handle(requisicao('GET', '/feed'));
+check('grade mostra a arte', str_contains($telaFeed->body, 'data-feed-id="' . (int) $itemArte['id'] . '"'));
+check('grade mostra a pauta', str_contains($telaFeed->body, 'data-feed-id="' . (int) $itemPauta['id'] . '"'));
+check('arte exportada tem selo', str_contains($telaFeed->body, 'ARTE EXPORTADA'));
+check('pauta usa o bloco de texto', str_contains($telaFeed->body, 'feed-text-placeholder'));
+check('grade numerada', str_contains($telaFeed->body, 'class="tile-order">1<') && str_contains($telaFeed->body, 'class="tile-order">2<'));
+check('contadores do perfil', str_contains($telaFeed->body, 'na prévia'));
+check('arte sai da lista de fontes', !str_contains($telaFeed->body, '/add/creative/' . $arteId));
+check('pauta sai da lista de fontes', !str_contains($telaFeed->body, '/add/post/' . (int) $postFeed['id']));
+
+echo "\n[56] Feed: reordenar com trava de concorrência\n";
+$ordemInvertida = [$itemPauta['id'], $itemArte['id']];
+$logar($app, $idUsuario);
+$semToken = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => 'errado', 'order_json' => json_encode($ordemInvertida)]));
+assertSame('reordenar sem CSRF responde 400', 400, $semToken->status);
+check('erro de CSRF em JSON', str_contains((string) $semToken->header('Content-Type'), 'application/json'));
+check('mensagem em JSON', str_contains($semToken->body, 'error'));
+
+$logar($app, $idUsuario);
+$ordemInvalida = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => $csrf, 'order_json' => '[1,2,3]']));
+assertSame('ordem com id estranho responde 409', 409, $ordemInvalida->status);
+check('mensagem de lista alterada', str_contains($ordemInvalida->body, 'mudou'));
+$logar($app, $idUsuario);
+assertSame('ordem repetida responde 400', 400, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => $csrf, 'order_json' => '[' . $itemArte['id'] . ',' . $itemArte['id'] . ']']))->status);
+$logar($app, $idUsuario);
+assertSame('ordem vazia responde 400', 400, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => $csrf, 'order_json' => '[]']))->status);
+$logar($app, $idUsuario);
+assertSame('JSON quebrado responde 400', 400, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => $csrf, 'order_json' => '{isso não é json']))->status);
+assertSame('ordem salva continua a mesma', 1, (int) $app->db->scalar('SELECT position FROM feed_items WHERE id = ?', [$itemArte['id']]));
+
+$logar($app, $idUsuario);
+$reordenado = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => $csrf, 'order_json' => json_encode($ordemInvertida)]));
+assertSame('reordenar válido responde 200', 200, $reordenado->status);
+check('resposta JSON confirma', str_contains($reordenado->body, '"status":"ok"'));
+assertSame('pauta passou a primeira', 1, (int) $app->db->scalar('SELECT position FROM feed_items WHERE id = ?', [$itemPauta['id']]));
+assertSame('arte foi para segunda', 2, (int) $app->db->scalar('SELECT position FROM feed_items WHERE id = ?', [$itemArte['id']]));
+assertSame('auditoria da reordenação', 'feed.reordered', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'feed.reordered'"));
+
+$logar($app, $idUsuario);
+$telaFeed = $app->handle(requisicao('GET', '/feed'));
+$posicaoPauta = strpos($telaFeed->body, 'data-feed-id="' . (int) $itemPauta['id'] . '"');
+$posicaoArte = strpos($telaFeed->body, 'data-feed-id="' . (int) $itemArte['id'] . '"');
+check('tela respeita a nova ordem', $posicaoPauta !== false && $posicaoArte !== false && $posicaoPauta < $posicaoArte);
+
+echo "\n[57] Feed: remover, origem excluída e isolamento\n";
+$logar($app, $idUsuario);
+$removerSemCsrf = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/remove/' . (int) $itemPauta['id'], ['csrf_token' => 'x']));
+assertSame('remover sem CSRF não apaga', 2, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items'));
+check('erro de remoção volta para a tela', str_contains(rawurldecode((string) $removerSemCsrf->header('Location')), 'Sessão expirada'));
+
+$logar($app, $idUsuario);
+$removido = $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/remove/' . (int) $itemPauta['id'], ['csrf_token' => $csrf]));
+assertSame('remover item redireciona', 302, $removido->status);
+assertSame('item removido da grade', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items'));
+assertSame('pauta original preservada', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE id = ?', [(int) $postFeed['id']]));
+assertSame('auditoria da remoção', 'feed.removed', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'feed.removed'"));
+$logar($app, $idUsuario);
+assertSame('remover item inexistente não explode', 302, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/remove/' . (int) $itemPauta['id'], ['csrf_token' => $csrf]))->status);
+
+// Excluir a arte no estúdio tira o item da grade em cascata — a prévia nunca
+// fica apontando para um arquivo que não existe mais.
+$app->db->run(
+    "INSERT INTO creative_posts (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height, content_json, layout_json, background_color, status)
+     VALUES (?, ?, ?, 'Arte descartável', 'square', 1080, 1080, '{}', '{\"elements\":[]}', '#112244', 'draft')",
+    [$empresaTeste, $clientePlano, $idUsuario]
+);
+$arteDescartavel = (int) $app->db->pdo()->lastInsertId();
+$logar($app, $idUsuario);
+assertSame('arte nova entra na grade', 302, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/creative/' . $arteDescartavel, ['csrf_token' => $csrf]))->status);
+$contagemAntes = (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items WHERE company_id = ?', [$empresaTeste]);
+assertSame('linha criada para a arte nova', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items WHERE creative_id = ?', [$arteDescartavel]));
+$logar($app, $idUsuario);
+assertSame('excluir a arte no estúdio redireciona', 302, $app->handle(requisicao('POST', '/studio/posts/' . $arteDescartavel . '/delete', ['csrf_token' => $csrf]))->status);
+assertSame('grade perdeu a linha em cascata', $contagemAntes - 1, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items WHERE company_id = ?', [$empresaTeste]));
+assertSame('nenhuma linha órfã da arte excluída', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items WHERE creative_id = ?', [$arteDescartavel]));
+
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+assertSame('outra agência não vê a grade', 404, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/creative/' . $arteId, ['csrf_token' => $csrf]))->status);
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+assertSame('outra agência não remove item (a marca nem existe para ela)', 404, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/remove/' . (int) $itemArte['id'], ['csrf_token' => $csrf]))->status);
+check('item da outra agência intacto', (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items WHERE id = ?', [(int) $itemArte['id']]) === 1);
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+$feedOutra = $app->handle(requisicao('GET', '/feed'));
+assertSame('outra agência usa o próprio feed', 200, $feedOutra->status);
+check('grade da outra agência não mostra conteúdo alheio', !str_contains($feedOutra->body, 'Aula experimental gratuita'));
+
+echo "\n[58] Feed: permissões e navegação\n";
+$papelFeed = (string) $app->db->scalar('SELECT role FROM users WHERE id = ?', [$idUsuario]);
+$app->db->run("UPDATE users SET role = 'viewer' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+$feedViewer = $app->handle(requisicao('GET', '/feed'));
+assertSame('viewer abre a prévia', 200, $feedViewer->status);
+check('viewer não vê botão de adicionar', !str_contains($feedViewer->body, '/add/creative/'));
+check('viewer não vê botão de remover', !str_contains($feedViewer->body, '/remove/'));
+check('viewer não pode arrastar', str_contains($feedViewer->body, 'data-can-edit="false"'));
+$logar($app, $idUsuario);
+assertSame('viewer não adiciona', 403, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/add/creative/' . $arteId, ['csrf_token' => $csrf]))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não remove', 403, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/remove/' . (int) $itemArte['id'], ['csrf_token' => $csrf]))->status);
+$logar($app, $idUsuario);
+assertSame('viewer não reordena', 403, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => $csrf, 'order_json' => '[' . (int) $itemArte['id'] . ']']))->status);
+
+$app->db->run("UPDATE users SET role = 'editor' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('editor reordena', 200, $app->handle(requisicao('POST', '/feed/' . $clientePlano . '/reorder', ['csrf_token' => $csrf, 'order_json' => '[' . (int) $itemArte['id'] . ']']))->status);
+$app->db->run('UPDATE users SET role = ? WHERE id = ?', [$papelFeed, $idUsuario]);
+
+$logar($app, $idUsuario);
+$painelFeed = $app->handle(requisicao('GET', '/dashboard'));
+assertSame('dashboard responde 200 com feed', 200, $painelFeed->status);
+check('Feed aparece no menu', str_contains($painelFeed->body, '/feed"'));
+check('dashboard conta cinco módulos prontos', str_contains($painelFeed->body, 'módulo 5 de 8 pronto'));
+$modulosFeed = \Smia\Support\Modules::all();
+$moduloFeed = array_values(array_filter($modulosFeed, static fn (array $m): bool => $m['slug'] === 'feed'))[0] ?? null;
+check('módulo feed marcado como pronto', ($moduloFeed['ready'] ?? false) === true);
+check('relatórios seguem pendentes', (array_values(array_filter($modulosFeed, static fn (array $m): bool => $m['slug'] === 'reports'))[0]['ready'] ?? true) === false);
+$rotasFeed = array_values(array_filter($app->router->patterns(), static fn (string $r): bool => str_contains($r, '/feed')));
+check('rotas do feed registradas (' . count($rotasFeed) . ')', count($rotasFeed) === 5);
+check('views do feed compilam', is_file(__DIR__ . '/../app/views/feed/index.php'));
+
+echo "\n[59] Feed: migração aditiva mantém a grade da v1.4\n";
+$appAntiga->db->run("INSERT INTO creative_posts (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height, content_json, layout_json, background_color, status) VALUES (1, 1, 1, 'Arte antiga', 'square', 1080, 1080, '{}', '{\"elements\":[]}', '#112244', 'draft')");
+$arteAntiga = (int) $appAntiga->db->pdo()->lastInsertId();
+$appAntiga->db->run('INSERT INTO feed_items (company_id, client_id, creative_id, position) VALUES (1, 1, ?, 1)', [$arteAntiga]);
+\Smia\Database\Schema::migrate($appAntiga->db);
+assertSame('grade antiga preservada', $arteAntiga, (int) $appAntiga->db->scalar('SELECT creative_id FROM feed_items WHERE position = 1'));
+assertSame('tabela de feed presente', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'feed_items'"));
+assertSame('uma linha na versão do esquema depois do feed', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = ?', [\Smia\Database\Schema::VERSAO]));
+
+echo "\n[60] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];
 $iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));
 foreach ($iterador as $arquivo) {
@@ -1634,7 +1822,7 @@ foreach ($arquivosPhp as $arquivo) {
     }
 }
 check('todos os arquivos PHP compilam (' . count($arquivosPhp) . ' arquivos)', $comErro === [], implode(' | ', $comErro));
-check('views de aprovações e portal incluídas na checagem', count(array_filter($arquivosPhp, static fn (string $a): bool => str_contains($a, '/views/approvals/') || str_contains($a, '/views/portal/'))) >= 8);
+check('views de aprovações, portal e feed incluídas na checagem', count(array_filter($arquivosPhp, static fn (string $a): bool => str_contains($a, '/views/approvals/') || str_contains($a, '/views/portal/') || str_contains($a, '/views/feed/'))) >= 11);
 $rotasAprov = array_values(array_filter($app->router->patterns(), static fn (string $r): bool => str_contains($r, '/approvals') || str_contains($r, '/portal')));
 check('rotas de aprovações e portal registradas (' . count($rotasAprov) . ')', count($rotasAprov) >= 18);
 

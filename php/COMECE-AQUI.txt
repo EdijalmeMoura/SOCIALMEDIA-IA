@@ -38,8 +38,8 @@ DEPOIS DE INSTALAR
 ATUALIZANDO DE UMA VERSÃO ANTERIOR
   Envie por cima apenas app/ e public/ (mantenha .env e data/).
   O banco é migrado sozinho na primeira abertura; nada é apagado.
-  v1.4 acrescenta as tabelas de aprovações (portal do cliente, revisões,
-  eventos, comentários e avisos).
+  v1.5 não cria tabela nova: usa a grade (feed_items) que já existia. Nada é
+  apagado ao atualizar.
 
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
@@ -56,6 +56,8 @@ O QUE ESTA VERSÃO JÁ FAZ
   Aprovações: envie arte exportada ou pauta para o cliente revisar no portal
     (/portal/login), com fotografia do conteúdo, ciclos, comentários com
     anexo e avisos dentro do produto
+  Feed: grade 3x3 do Instagram montada com artes e pautas — arraste para
+    reordenar, veja a legenda de cada publicação. É prévia: nada é publicado
 
 ATIVAR A IA (OPCIONAL)
   Acrescente no .env:  OPENAI_API_KEY=sk-...
@@ -70,7 +72,7 @@ PORTAL DO CLIENTE
   Pausar a conta derruba o acesso na hora.
 
 PRÓXIMOS MÓDULOS
-  feed → relatórios → Meta
+  relatórios → Meta
 
 PROBLEMAS COMUNS
   500 .............. log de erros do cPanel; falta permissão em data/

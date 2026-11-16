@@ -148,6 +148,14 @@ createServer(async (req, res) => {
         type: parte.mime,
       };
     }
+  } else if (tipoConteudo.startsWith('application/json')) {
+    // fetch manda JSON puro. No navegador o PHP lê php://input; aqui o corpo
+    // é entregue no campo que o controller também aceita, para o caminho ser
+    // o mesmo do formulário.
+    try {
+      const dados = JSON.parse(bruto.toString() || '{}');
+      if (Object.prototype.hasOwnProperty.call(dados, 'order')) post.order_json = JSON.stringify(dados.order);
+    } catch { /* corpo inválido segue vazio */ }
   } else {
     for (const [campo, valor] of new URLSearchParams(bruto.toString()).entries()) {
       adicionarCampo(post, campo, valor);
@@ -165,6 +173,7 @@ createServer(async (req, res) => {
     post,
     files: arquivos,
     cookies: parseCookies(req.headers.cookie || ''),
+    headers: { 'x-csrf-token': String(req.headers['x-csrf-token'] || '') },
   };
   await php.writeFile('/www/php/.request.json', JSON.stringify(ambiente));
 
@@ -181,6 +190,7 @@ $_SERVER['HTTP_HOST'] = $r['host'];
 $_SERVER['SERVER_PORT'] = '80';
 $_SERVER['HTTPS'] = '';
 $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+if (!empty($r['headers']['x-csrf-token'])) { $_SERVER['HTTP_X_CSRF_TOKEN'] = $r['headers']['x-csrf-token']; }
 $_GET = $r['get'];
 $_POST = $r['post'];
 $_COOKIE = $r['cookies'];

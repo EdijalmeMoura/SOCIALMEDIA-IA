@@ -30,6 +30,9 @@ $iniciais = mb_strtoupper(mb_substr((string) $user['name'], 0, 1) . mb_substr((s
   <?php if (($active ?? null) === 'approvals'): ?>
     <link rel="stylesheet" href="<?= e(smia_asset('/assets/approvals.css')) ?>">
   <?php endif; ?>
+  <?php if (($active ?? null) === 'feed'): ?>
+    <link rel="stylesheet" href="<?= e(smia_asset('/assets/feed.css')) ?>">
+  <?php endif; ?>
   <script src="<?= e(smia_asset('/assets/app.js')) ?>" defer></script>
 </head>
 <body>
