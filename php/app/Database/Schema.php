@@ -16,10 +16,11 @@ namespace Smia\Database;
  *           3 = planejamento (calendário editorial e publicações)
  *           4 = estúdio (artes, versões e itens de feed)
  *           5 = aprovações (revisões, histórico, portal do cliente, avisos)
+ *           6 = Meta (agenda de publicação, conexões de Página, tentativas)
  */
 final class Schema
 {
-    public const VERSAO = 5;
+    public const VERSAO = 6;
 
     public static function migrate(Database $db): void
     {
@@ -327,6 +328,130 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_agency_unread ON notifications(company_id, recipient_user_id, read_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_client_unread ON notifications(company_id, recipient_portal_user_id, read_at, created_at DESC);
+
+-- Agenda interna: quando cada conteúdo aprovado deve sair. A agenda NÃO
+-- publica sozinha — o envio à Meta é sempre um clique de uma pessoa, e só em
+-- Facebook/Instagram. TikTok e LinkedIn ficam como registro interno.
+CREATE TABLE IF NOT EXISTS scheduled_publications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    approval_id INTEGER NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+    scheduled_by INTEGER NOT NULL REFERENCES users(id),
+    network TEXT NOT NULL CHECK (network IN ('Instagram','Facebook','TikTok','LinkedIn')),
+    scheduled_at_utc TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','cancelled')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_publications_tenant ON scheduled_publications(company_id, status, scheduled_at_utc);
+-- Um horário ativo por conteúdo + rede: dois horários iguais seriam ambíguos.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_publications_active_channel ON scheduled_publications(approval_id, network) WHERE status = 'scheduled';
+CREATE TABLE IF NOT EXISTS schedule_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheduled_publication_id INTEGER NOT NULL REFERENCES scheduled_publications(id) ON DELETE CASCADE,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('scheduled','rescheduled','cancelled')),
+    scheduled_at_utc TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_events_item ON schedule_events(scheduled_publication_id, created_at);
+
+-- Conexões Meta: um registro por Página do Facebook da agência. O token da
+-- Página é guardado CRIPTOGRAFADO (AES-256-GCM) e nunca volta para a tela.
+CREATE TABLE IF NOT EXISTS meta_page_connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    connected_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    page_id TEXT NOT NULL,
+    page_name TEXT NOT NULL,
+    instagram_user_id TEXT,
+    instagram_username TEXT,
+    page_access_token_encrypted TEXT NOT NULL,
+    token_expires_at TEXT,
+    connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (company_id, page_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_connections_tenant ON meta_page_connections(company_id, page_name);
+CREATE TABLE IF NOT EXISTS meta_token_expiry_notices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    connection_id INTEGER NOT NULL REFERENCES meta_page_connections(id) ON DELETE CASCADE,
+    token_expires_at TEXT NOT NULL,
+    notice_type TEXT NOT NULL CHECK (notice_type IN ('expiring','expired')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (connection_id, token_expires_at, notice_type)
+);
+CREATE TABLE IF NOT EXISTS meta_connection_permissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    connection_id INTEGER NOT NULL REFERENCES meta_page_connections(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('granted','declined','unknown')),
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (connection_id, permission)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_permissions_tenant ON meta_connection_permissions(company_id, connection_id);
+CREATE TABLE IF NOT EXISTS meta_connection_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    connection_id INTEGER NOT NULL REFERENCES meta_page_connections(id) ON DELETE CASCADE,
+    checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK (status IN ('ok','failed')),
+    details TEXT NOT NULL DEFAULT '',
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_connection_checks_latest ON meta_connection_checks(company_id, connection_id, checked_at DESC);
+CREATE TABLE IF NOT EXISTS meta_graph_connectivity_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK (status IN ('ok','failed')),
+    details TEXT NOT NULL DEFAULT '',
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS meta_public_media_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    base_url TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK (status IN ('ok','failed')),
+    details TEXT NOT NULL DEFAULT '',
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Cada clique em "publicar" vira uma tentativa. O índice único garante, no
+-- banco, que um horário nunca tenha duas publicações ativas ao mesmo tempo.
+CREATE TABLE IF NOT EXISTS meta_publication_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    schedule_id INTEGER NOT NULL REFERENCES scheduled_publications(id) ON DELETE CASCADE,
+    connection_id INTEGER REFERENCES meta_page_connections(id) ON DELETE SET NULL,
+    attempted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    network TEXT NOT NULL CHECK (network IN ('Instagram','Facebook')),
+    status TEXT NOT NULL CHECK (status IN ('publishing','published','failed','unknown')),
+    remote_publication_id TEXT,
+    error_message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_publications_schedule ON meta_publication_attempts(company_id, schedule_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_publications_single_active ON meta_publication_attempts(schedule_id) WHERE status IN ('publishing','published','unknown');
+CREATE TABLE IF NOT EXISTS meta_publication_reconciliations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    attempt_id INTEGER NOT NULL UNIQUE REFERENCES meta_publication_attempts(id) ON DELETE CASCADE,
+    reconciled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('confirmed_published','confirmed_not_published')),
+    remote_publication_id TEXT,
+    note TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 SQL);
 
         $versao = (int) ($db->scalar('SELECT MAX(version) FROM schema_version') ?? 0);

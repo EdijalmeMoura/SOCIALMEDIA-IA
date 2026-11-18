@@ -16,7 +16,9 @@ use Smia\Controllers\FeedController;
 use Smia\Controllers\InstallerController;
 use Smia\Controllers\PlannerController;
 use Smia\Controllers\PortalController;
+use Smia\Controllers\MetaController;
 use Smia\Controllers\ReportController;
+use Smia\Controllers\ScheduleController;
 use Smia\Controllers\StudioController;
 use Smia\Database\Database;
 use Smia\Feed\FeedRepository;
@@ -25,6 +27,8 @@ use Smia\Http\Request;
 use Smia\Http\Response;
 use Smia\Http\Router;
 use Smia\Installer\Installer;
+use Smia\Meta\MetaRepository;
+use Smia\Meta\ScheduleRepository;
 use Smia\Planner\PlanGenerator;
 use Smia\Planner\PlannerRepository;
 use Smia\Reports\ReportRepository;
@@ -123,6 +127,26 @@ final class Application
             $this->session,
             $this->view(),
         );
+        // Agenda e conexões Meta compartilham o mesmo repositório de conexões:
+        // a agenda decide se o botão de publicar aparece com base nele.
+        $metaRepo = new MetaRepository($this->db, new \Smia\Approvals\PortalRepository($this->db));
+        $agendaPub = new ScheduleRepository($this->db);
+        $agenda = new ScheduleController(
+            $this->config,
+            $agendaPub,
+            $metaRepo,
+            $auth,
+            $this->session,
+            $this->view(),
+        );
+        $meta = new MetaController(
+            $this->config,
+            $metaRepo,
+            $agendaPub,
+            $auth,
+            $this->session,
+            $this->view(),
+        );
         $relatorios = new ReportController(
             $this->config,
             new ReportRepository($this->db),
@@ -216,6 +240,21 @@ final class Application
         $this->router->post('/feed/{client_id}/add/post/{id}', $feed->addPost(...));
         $this->router->post('/feed/{client_id}/remove/{id}', $feed->remove(...));
         $this->router->post('/feed/{client_id}/reorder', $feed->reorder(...));
+
+        // --- Agenda interna e Meta --------------------------------------
+        $this->router->get('/schedule', $agenda->index(...));
+        $this->router->post('/schedule', $agenda->store(...));
+        $this->router->post('/schedule/{id}/reschedule', $agenda->reschedule(...));
+        $this->router->post('/schedule/{id}/cancel', $agenda->cancel(...));
+        $this->router->post('/schedule/{id}/publish', $agenda->publish(...));
+        $this->router->post('/schedule/meta-attempt/{id}/reconcile', $meta->reconcile(...));
+        $this->router->get('/meta', $meta->index(...));
+        $this->router->post('/meta/connect', $meta->connect(...));
+        $this->router->get('/integrations/meta/callback', $meta->callback(...));
+        $this->router->post('/meta/{id}/test', $meta->test(...));
+        $this->router->post('/meta/{id}/disconnect', $meta->disconnect(...));
+        $this->router->post('/meta/graph-check', $meta->graphCheck(...));
+        $this->router->get('/meta/media/{arquivo}', $meta->media(...));
 
         // --- Relatórios ------------------------------------------------
         $this->router->get('/reports', $relatorios->index(...));

@@ -3,20 +3,19 @@
 Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 (cPanel): sobe os arquivos e funciona. Sem Composer, sem Node, sem Passenger.
 
-> Estado atual: **base funcional + clientes + planejamento + estúdio +
-> aprovações + feed + relatórios** —
-> instalador de 3 telas, login, dashboard, banco SQLite, sessão/CSRF, tratamento
-> de subpasta, portfólio de clientes (perfil, identidade visual, logo e
-> referências), calendário editorial com IA, criação de artes com prancheta,
-> histórico de versões e exportação, revisão pelo cliente em portal próprio com
-> histórico e ciclos, a prévia do feed montada a partir do que já foi
-> produzido e o relatório operacional com exportação em CSV. Falta só o módulo
-> Meta (conexões e publicação), que entra reaproveitando esta mesma base e o
-> mesmo esquema de dados.
+> Estado atual: **produto completo** — instalador de 3 telas, login, dashboard,
+> banco SQLite, sessão/CSRF, tratamento de subpasta, portfólio de clientes
+> (perfil, identidade visual, logo e referências), calendário editorial com IA,
+> criação de artes com prancheta, histórico de versões e exportação, revisão pelo
+> cliente em portal próprio com histórico e ciclos, a prévia do feed montada a
+> partir do que já foi produzido, o relatório operacional com exportação em CSV e
+> o módulo **Meta**: conexões de Páginas Facebook/Instagram por OAuth, agenda
+> interna e publicação manual real (com resultado incerto quando a Meta não
+> responde).
 
 ## Baixar o pacote pronto
 
-`downloads/SOCIALMEDIA-IA-php-v1.6.zip` nesta pasta é o pacote completo (`.env`
+`downloads/SOCIALMEDIA-IA-php-v1.7.zip` nesta pasta é o pacote completo (`.env`
 com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
 publicada em
 [`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
@@ -352,12 +351,55 @@ Regras que valem a pena saber:
 - Relatório é leitura: **nenhuma tabela nova**, nenhuma auditoria, nenhum dado
   alterado. A versão do esquema continua a mesma do feed (5).
 
-### Próximos
+### Meta — conexões e publicação (pronto)
 
-Meta. Cada módulo entra por migração aditiva do `Schema` (versão 2 = clientes,
-3 = planejamento, 4 = estúdio, 5 = aprovações — o feed usa a tabela `feed_items`
-já criada no 3, e os relatórios não criam tabela), então atualizar o pacote
-nunca apaga dados de uma instalação em uso.
+O módulo que fecha o produto: conectar Páginas do Facebook e contas profissionais
+do Instagram e publicar, na mão, o que o cliente aprovou. Guia completo em
+[`docs/meta.md`](docs/meta.md).
+
+| Rota | Método | O que faz | Quem pode |
+|---|---|---|---|
+| `/meta` | GET | painel de conexões e evidências | owner/admin |
+| `/meta/connect` | POST | inicia o OAuth (state na sessão, 600 s) | owner/admin |
+| `/integrations/meta/callback` | GET | troca código por token e grava as Páginas | owner/admin |
+| `/meta/{id}/test` | POST | teste de leitura do Graph na Página | owner/admin |
+| `/meta/{id}/disconnect` | POST | remove a Página e o token cifrado | owner/admin |
+| `/meta/graph-check` | POST | handshake TLS com `graph.facebook.com` | owner/admin |
+| `/meta/media/{arquivo}` | GET | imagem assinada que a Meta baixa (sem sessão) | qualquer um com assinatura |
+| `/schedule` | GET/POST | agenda interna e inclusão de ciclo aprovado | todos leem; owner/admin/editor escrevem |
+| `/schedule/{id}/reschedule` | POST | novo horário (UTC + fuso) | owner/admin/editor |
+| `/schedule/{id}/cancel` | POST | cancela mantendo o histórico | owner/admin/editor |
+| `/schedule/{id}/publish` | POST | publica **agora** na Página escolhida | owner/admin/editor |
+| `/schedule/meta-attempt/{id}/reconcile` | POST | registra a conferência manual de um resultado incerto | owner/admin |
+
+O que vale saber antes de confiar no módulo:
+
+- **Falha fechado.** Sem `META_APP_ID`, `META_APP_SECRET`, `META_REDIRECT_URI`,
+  `META_GRAPH_VERSION` e `META_TOKEN_ENCRYPTION_KEY` no `.env`, nenhuma chamada
+  é feita e a tela lista o que falta. As chaves estão no `.env.example`.
+- **Token cifrado em repouso** (AES-256-GCM, prefixo `v1:`) e nunca exibido.
+  Trocar `META_TOKEN_ENCRYPTION_KEY` torna os tokens ilegíveis: é preciso
+  reconectar as Páginas.
+- **Ler o Graph ≠ poder publicar.** Cada evidência do painel diz o que provou; a
+  publicação só fica verde com ID devolvido pela Meta.
+- **Publicação é manual** e só depois do horário agendado. Não há robô, cron nem
+  agendamento do lado da Meta — e a tela diz isso.
+- **Resultado incerto é um estado de primeira classe**: 5xx, timeout ou resposta
+  ilegível marcam a tentativa como `unknown`, bloqueiam nova tentativa e pedem
+  conferência na conta. Tentativa parada em `publishing` por 10 min vira
+  `unknown` sozinha ao abrir a agenda.
+- **Facebook** publica foto (com arte aprovada) ou texto; **Instagram** passa por
+  contêiner + verificação de estado + `media_publish`, com PNG convertido para
+  JPEG temporário. **TikTok e LinkedIn** ficam só como registro interno da
+  agenda.
+- **Mídia pública assinada**: HMAC com a `SECRET_KEY`, prazo de 10 min, só
+  PNG/JPG da pasta de uploads, `noindex`. A rota é pública porque quem busca é a
+  Meta.
+- **Reconciliação não é confirmação da API.** A conferência humana fica
+  registrada e move a fila, mas o relatório continua contando apenas o que a Meta
+  respondeu.
+- Esquema **6**: as dez tabelas novas entram por migração aditiva; atualizar o
+  pacote nunca apaga dados de uma instalação em uso.
 
 ## Subpasta: como é resolvido
 
@@ -381,7 +423,7 @@ instalado na máquina:
 ```sh
 cd php
 npm install        # @php-wasm/universal + @php-wasm/node (só para testes)
-npm test           # parse de todos os arquivos + 725 verificações funcionais
+npm test           # parse de todos os arquivos + 895 verificações funcionais
 ```
 
 Cobre: normalização de subpasta, `.env`, detecção de caminho, token do
@@ -393,10 +435,21 @@ por assinatura, permissões por papel, exclusão em cascata), planejamento, est�
 e aprovações (envio com fotografia, ciclos, decisão do cliente, 409 em resposta
 dupla, anexos, contas do portal, sessões separadas, mídia restrita, migração
 aditiva sobre banco antigo), feed (grade 3×3, fontes, arrastar com 409 quando a
-lista muda, remoção sem excluir o original, cascata ao excluir a arte) e
+lista muda, remoção sem excluir o original, cascata ao excluir a arte),
 relatórios (recorte de período com limite de 366 dias, contagem por registro,
 isolamento por empresa, CSV com BOM e proteção contra fórmula, limite de 300
-linhas e migração sem tabela nova).
+linhas e migração sem tabela nova) e Meta (configuração que falha fechado,
+`state` de 600 s consumido uma vez, callback com subpasta, permissões guardadas
+por conexão, token cifrado, URL de mídia assinada servida de verdade, agenda com
+fuso, publicação real de foto/texto no Facebook e de contêiner + `media_publish`
+no Instagram **contra um Graph simulado**, erro 5xx virando resultado incerto,
+reconciliação manual com nota mínima, prazo de token, desconexão apagando o token
+e preservando o histórico).
+
+O servidor falso do Graph (`tests/fake-graph.mjs`) é o que permite testar
+publicação de verdade sem internet: a suíte sobe o processo, escreve o endereço
+em `tests/.grafo-falso` e aponta `META_GRAPH_ENDPOINT` para ele. Em produção essa
+variável fica vazia.
 
 Para exercitar o caminho HTTP completo (cookies, redirecionamentos, HTML):
 
@@ -417,7 +470,9 @@ Sem `SECRET_KEY` persistente a sessão não sobrevive a reinícios; sem
 
 ## Diferenças em relação à versão Python (por enquanto)
 
-- Módulos de negócio ainda não portados (aparecem como "EM BREVE" no painel).
+- Todos os módulos do produto estão portados; não há mais "EM BREVE" no painel.
+- A publicação automática por agendador continua fora de escopo nas duas
+  versões: publicar é uma ação humana em horário vencido.
 - Instalação automática por variáveis (`SOCIALMEDIA_AUTO_INSTALL`) entra junto
   com o módulo de configurações.
 - O `requirements.txt`/Docker continuam válidos para a versão Python, que

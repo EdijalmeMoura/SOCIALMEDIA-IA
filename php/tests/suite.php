@@ -53,10 +53,18 @@ function requisicao(string $metodo, string $caminhoInterno, array $post = [], ar
     );
 }
 
+/**
+ * Monta uma instalação isolada.
+ *
+ * `$env` aceita `token` (instalador) e `meta` (configuração da integração
+ * Meta). Sem `meta`, o app roda como uma instalação que não configurou a
+ * integração — que é o estado inicial de todo mundo.
+ */
 function appNova(array $env = []): array
 {
     $raiz = sys_get_temp_dir() . '/smia-teste-' . bin2hex(random_bytes(4));
     mkdir($raiz, 0o700, true);
+    $meta = is_array($env['meta'] ?? null) ? $env['meta'] : null;
     $config = new Config(
         root: $raiz,
         dataDir: $raiz,
@@ -64,10 +72,17 @@ function appNova(array $env = []): array
         envFile: $raiz . '/installer.env',
         basePath: '/edijalmemoura/socialai',
         publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
-        secretKey: '',
+        secretKey: $env['secret'] ?? '',
         cookieSecure: true,
         installToken: $env['token'] ?? null,
         timezone: 'America/Sao_Paulo',
+        metaAppId: $meta['app_id'] ?? '',
+        metaAppSecret: $meta['app_secret'] ?? '',
+        metaRedirectUri: $meta['redirect_uri'] ?? '',
+        metaGraphVersion: $meta['graph_version'] ?? '',
+        metaTokenKey: $meta['token_key'] ?? '',
+        metaPublicBaseUrl: $meta['public_base'] ?? '',
+        metaGraphEndpoint: $meta['endpoint'] ?? '',
     );
 
     return [new Application($config), $config, $raiz];
@@ -1977,14 +1992,602 @@ $rotasRel = array_values(array_filter($app->router->patterns(), static fn (strin
 check('rotas de relatórios registradas (' . count($rotasRel) . ')', count($rotasRel) === 2);
 check('views de relatórios compilam', is_file(__DIR__ . '/../app/views/reports/index.php') && is_file(__DIR__ . '/../app/views/reports/not_found.php'));
 // Relatório é leitura: nada de tabela nova, nada de migração de dados.
-assertSame('versão do esquema segue a do feed', 5, \Smia\Database\Schema::VERSAO);
 assertSame('relatórios não criam tabela', 0, (int) $app->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE '%report%'"));
 \Smia\Database\Schema::migrate($app->db);
-assertSame('migração segue idempotente', 5, \Smia\Database\Schema::VERSAO);
+assertSame('migração segue idempotente', \Smia\Database\Schema::VERSAO, \Smia\Database\Schema::version($app->db));
 assertSame('relatório não altera dados de clientes', 'Bravo Fitness', $app->db->scalar('SELECT company_name FROM clients WHERE id = ?', [$clientePlano]));
 assertSame('nenhuma auditoria inventada pelo relatório', 0, (int) $app->db->scalar("SELECT COUNT(*) FROM audit_log WHERE action LIKE 'report%'"));
 
-echo "\n[66] Sintaxe de todos os arquivos PHP\n";
+
+echo "\n[66] Meta: configuração falha fechada\n";
+$metaErro = static function (callable $acao): string {
+    try {
+        $acao();
+    } catch (\Smia\Meta\MetaError $erro) {
+        return $erro->getMessage();
+    }
+
+    return '';
+};
+$configMetaVazia = new Config('', '', '', '', '/p', 'https://x.com/p', 'segredo', false, null, 'UTC');
+check('sem .env a integração explica o que falta', str_contains($metaErro(static fn () => \Smia\Meta\MetaSettings::fromConfig($configMetaVazia)), 'META_APP_ID'));
+check('erro de configuração lista todos os campos', str_contains($metaErro(static fn () => \Smia\Meta\MetaSettings::fromConfig($configMetaVazia)), 'META_TOKEN_ENCRYPTION_KEY'));
+
+$chaveMeta = base64_encode(random_bytes(32));
+$configCompleta = static fn (array $troca = []) => new Config(
+    root: '', dataDir: '', dbPath: '', envFile: '', basePath: '/p',
+    publicOrigin: 'https://agencia.example/p', secretKey: 'segredo-de-teste-com-32-caracteres!!',
+    cookieSecure: true, installToken: null, timezone: 'UTC',
+    metaAppId: $troca['app_id'] ?? '1234567890',
+    metaAppSecret: $troca['app_secret'] ?? 'segredo-do-app',
+    metaRedirectUri: $troca['redirect'] ?? 'https://agencia.example/p/integrations/meta/callback',
+    metaGraphVersion: $troca['versao'] ?? 'v23.0',
+    metaTokenKey: $troca['chave'] ?? $chaveMeta,
+    metaPublicBaseUrl: $troca['midia'] ?? 'https://agencia.example/p',
+);
+assertSame('configuração válida é aceita', 'v23.0', \Smia\Meta\MetaSettings::fromConfig($configCompleta())->graphVersion);
+check('versão Graph fora do formato é recusada', str_contains($metaErro(static fn () => \Smia\Meta\MetaSettings::fromConfig($configCompleta(['versao' => '23']))), 'vNN.N'));
+check('callback em HTTP é recusado', str_contains($metaErro(static fn () => \Smia\Meta\MetaSettings::fromConfig($configCompleta(['redirect' => 'http://agencia.example/p/integrations/meta/callback']))), 'HTTPS'));
+assertSame('callback em localhost aceita HTTP', 'v23.0', \Smia\Meta\MetaSettings::fromConfig($configCompleta(['redirect' => 'http://localhost:8099/integrations/meta/callback']))->graphVersion);
+check('chave de token fraca é recusada', str_contains($metaErro(static fn () => \Smia\Meta\MetaSettings::fromConfig($configCompleta(['chave' => base64_encode('curta')]))), 'META_TOKEN_ENCRYPTION_KEY'));
+check('callback de outro host não confere', \Smia\Meta\MetaSettings::fromConfig($configCompleta(['redirect' => 'https://outra.example/integrations/meta/callback']))->callbackConfere('agencia.example') === false);
+check('callback certo confere', \Smia\Meta\MetaSettings::fromConfig($configCompleta())->callbackConfere('agencia.example'));
+check('callback com subpasta confere', \Smia\Meta\MetaSettings::fromConfig(new Config(
+    root: '', dataDir: '', dbPath: '', envFile: '', basePath: '/edijalmemoura/socialai',
+    publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai', secretKey: 'segredo',
+    cookieSecure: true, installToken: null, timezone: 'UTC',
+    metaAppId: '1', metaAppSecret: 's', metaRedirectUri: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai/integrations/meta/callback',
+    metaGraphVersion: 'v23.0', metaTokenKey: $chaveMeta,
+))->callbackConfere('projetoredesnordeste.com.br'));
+check('callback sem a subpasta não confere', \Smia\Meta\MetaSettings::fromConfig(new Config(
+    root: '', dataDir: '', dbPath: '', envFile: '', basePath: '/p',
+    publicOrigin: 'https://x.com/p', secretKey: 'segredo', cookieSecure: true, installToken: null, timezone: 'UTC',
+    metaAppId: '1', metaAppSecret: 's', metaRedirectUri: 'https://x.com/integrations/meta/callback',
+    metaGraphVersion: 'v23.0', metaTokenKey: $chaveMeta,
+))->callbackConfere('x.com') === false);
+check('callback com consulta não confere', \Smia\Meta\MetaSettings::fromConfig($configCompleta(['redirect' => 'https://agencia.example/integrations/meta/callback?x=1']))->callbackConfere('agencia.example') === false);
+
+$cifra = new \Smia\Meta\TokenCipher($chaveMeta);
+$cifrado = $cifra->cifrar('TOKEN-SECRETO-DA-PAGINA');
+check('token não fica em claro no banco', !str_contains($cifrado, 'TOKEN-SECRETO'));
+check('token cifrado começa com versão', str_starts_with($cifrado, 'v1:'));
+assertSame('token volta igual', 'TOKEN-SECRETO-DA-PAGINA', $cifra->decifrar($cifrado));
+check('cifra usa IV diferente a cada vez', $cifra->cifrar('igual') !== $cifra->cifrar('igual'));
+$outraChave = new \Smia\Meta\TokenCipher(base64_encode(random_bytes(32)));
+check('chave trocada não abre o token', str_contains($metaErro(static fn () => $outraChave->decifrar($cifrado)), 'META_TOKEN_ENCRYPTION_KEY'));
+check('token adulterado é recusado', str_contains($metaErro(static fn () => $cifra->decifrar('v1:' . base64_encode(random_bytes(60)))), 'Não foi possível abrir'));
+
+echo "\n[67] Meta: URL pública assinada da arte\n";
+$midiaOk = \Smia\Meta\MediaUrl::resolver($configCompleta());
+$urlArte = $midiaOk->para('arte-exportada.png', 1_800_000_000);
+check('URL aponta para a rota de mídia', str_contains($urlArte, 'https://agencia.example/p/meta/media/arte-exportada.png'));
+check('URL carrega prazo e assinatura', str_contains($urlArte, 'expires=1800000600') && str_contains($urlArte, 'signature='));
+parse_str((string) parse_url($urlArte, PHP_URL_QUERY), $partesUrl);
+check('assinatura válida dentro do prazo', $midiaOk->valida('arte-exportada.png', (string) $partesUrl['expires'], (string) $partesUrl['signature'], 1_800_000_100));
+check('assinatura expira', $midiaOk->valida('arte-exportada.png', (string) $partesUrl['expires'], (string) $partesUrl['signature'], 1_800_001_000) === false);
+check('outro arquivo com a mesma assinatura é recusado', $midiaOk->valida('outra-arte.png', (string) $partesUrl['expires'], (string) $partesUrl['signature'], 1_800_000_100) === false);
+check('assinatura vazia é recusada', $midiaOk->valida('arte-exportada.png', (string) $partesUrl['expires'], '', 1_800_000_100) === false);
+check('prazo absurdo é recusado', $midiaOk->valida('arte-exportada.png', (string) (1_800_000_000 + 5_000), $midiaOk->para('arte-exportada.png', 1_800_000_000) === '' ? '' : (string) $partesUrl['signature'], 1_800_000_000) === false);
+check('nome com caminho é recusado', $midiaOk->valida('../socialmedia.sqlite', (string) $partesUrl['expires'], (string) $partesUrl['signature'], 1_800_000_100) === false);
+check('extensão proibida é recusada', str_contains($metaErro(static fn () => $midiaOk->para('banco.sqlite')), 'PNG ou JPG'));
+check('origem HTTP não serve para a Meta', str_contains($metaErro(static fn () => \Smia\Meta\MediaUrl::resolver($configCompleta(['midia' => 'http://agencia.example/p']))), 'META_PUBLIC_BASE_URL'));
+check('origem sem SECRET_KEY não assina', str_contains($metaErro(static fn () => \Smia\Meta\MediaUrl::resolver(new Config('', '', '', '', '', 'https://x.com', '', false, null, 'UTC'))), 'SECRET_KEY'));
+
+echo "\n[68] Meta: horário da agenda e fuso\n";
+assertSame('fuso desconhecido cai no padrão', 'America/Recife', \Smia\Meta\ScheduleRepository::fuso('Marte/Olympus'));
+$daquiUmaSemana = (new \DateTimeImmutable('+7 days', new \DateTimeZone('America/Recife')))->format('Y-m-d\TH:i');
+$convertido = \Smia\Meta\ScheduleRepository::validarHorario($daquiUmaSemana, 'America/Recife');
+check('horário local vira UTC com fuso guardado', str_ends_with($convertido[0], ':00') && $convertido[1] === 'America/Recife');
+assertSame('mesmo instante em outro fuso', strtotime($convertido[0] . ' UTC'), strtotime(\Smia\Meta\ScheduleRepository::validarHorario(
+    (new \DateTimeImmutable($daquiUmaSemana, new \DateTimeZone('America/Recife')))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i'),
+    'UTC'
+)[0] . ' UTC'));
+check('horário no passado é recusado', str_contains($metaErro(static fn () => \Smia\Meta\ScheduleRepository::validarHorario('2020-01-01T10:00', 'UTC')), '5 minutos'));
+check('formato inválido é recusado', str_contains($metaErro(static fn () => \Smia\Meta\ScheduleRepository::validarHorario('31/12/2026 10:00', 'UTC')), 'data, hora e fuso'));
+assertSame('rótulo local no fuso pedido', '01/01/2026 às 07:00', \Smia\Meta\ScheduleRepository::rotuloLocal('2026-01-01 10:00:00', 'America/Recife'));
+assertSame('entrada do formulário no fuso pedido', '2026-01-01T07:00', \Smia\Meta\ScheduleRepository::entradaLocal('2026-01-01 10:00:00', 'America/Recife'));
+$sugestaoMeta = \Smia\Meta\ScheduleRepository::proximoHorarioSugerido();
+check('sugestão respeita o formato do input', preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/', $sugestaoMeta) === 1);
+check('sugestão está no futuro', strtotime(str_replace('T', ' ', $sugestaoMeta) . ' America/Recife') > time());
+
+echo "\n[69] Meta: agenda interna sem publicar nada\n";
+// A fila só aceita ciclo aprovado pelo cliente: aprova a arte aqui, como o
+// portal faria, para que o resto do teste exercite o caminho real.
+// A revisão da arte passou por "alterações solicitadas" nos testes do portal;
+// nenhum ciclo dela está aprovado. Aprova a revisão da pauta (ciclo paralelo),
+// que é a que uma agência levaria para a agenda.
+$aprovParaAgenda = (int) $app->db->scalar(
+    "SELECT id FROM approvals WHERE company_id = ? AND id <> ? AND status IN ('pending','changes_requested') ORDER BY id LIMIT 1",
+    [$empresaTeste, $aprovId]
+);
+check('existe ciclo para aprovar na agenda', $aprovParaAgenda > 0);
+$app->db->run("UPDATE approvals SET status = 'approved', resolved_at = CURRENT_TIMESTAMP WHERE id = ?", [$aprovParaAgenda]);
+$logar($app, $idUsuario);
+$telaAgenda = $app->handle(requisicao('GET', '/schedule'));
+assertSame('agenda responde 200', 200, $telaAgenda->status);
+check('carrega o CSS do módulo', str_contains($telaAgenda->body, 'meta.css'));
+check('aviso de que a agenda não publica sozinha', str_contains($telaAgenda->body, 'A agenda não publica sozinha'));
+check('explica que Facebook/Instagram são envio real', str_contains($telaAgenda->body, 'TikTok e LinkedIn ficam como'));
+check('sem configuração Meta avisa', str_contains($telaAgenda->body, 'Configuração pendente'));
+check('fila começa vazia', str_contains($telaAgenda->body, 'Nenhum horário organizado ainda'));
+assertSame('agenda não cria nada ao abrir', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM scheduled_publications'));
+
+$proximoMeta = (new \DateTimeImmutable('+7 days', new \DateTimeZone('America/Recife')))->format('Y-m-d\TH:i');
+$logar($app, $idUsuario);
+$semCsrfAgenda = $app->handle(requisicao('POST', '/schedule', ['csrf_token' => 'x', 'approval_id' => (string) $aprovId, 'network' => 'Facebook', 'scheduled_local' => $proximoMeta, 'timezone' => 'America/Recife']));
+assertSame('agendar sem CSRF não grava', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM scheduled_publications'));
+check('erro de CSRF volta para a agenda', str_contains(rawurldecode((string) $semCsrfAgenda->header('Location')), 'Sessão expirada'));
+
+$agendar = static function (array $extra = []) use ($app, $logar, $idUsuario, $csrf, $proximoMeta, $aprovParaAgenda): \Smia\Http\Response {
+    $logar($app, $idUsuario);
+    return $app->handle(requisicao('POST', '/schedule', array_merge([
+        'csrf_token' => $csrf,
+        'approval_id' => (string) $aprovParaAgenda,
+        'network' => 'Facebook',
+        'scheduled_local' => $proximoMeta,
+        'timezone' => 'America/Recife',
+    ], $extra)));
+};
+check('ciclo reprovado não entra na fila', str_contains(rawurldecode((string) $agendar(['approval_id' => (string) $aprovId])->header('Location')), 'aprovados'));
+check('rede inválida é recusada', str_contains(rawurldecode((string) $agendar(['network' => 'Orkut'])->header('Location')), 'rede social válida'));
+check('horário no passado é recusado', str_contains(rawurldecode((string) $agendar(['scheduled_local' => '2020-01-01T10:00'])->header('Location')), '5 minutos'));
+assertSame('nada gravado nos casos inválidos', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM scheduled_publications'));
+
+$criadoAgenda = $agendar();
+assertSame('agendar redireciona', 302, $criadoAgenda->status);
+check('redirect confirma a criação', str_contains((string) $criadoAgenda->header('Location'), 'created='), (string) $criadoAgenda->header('Location'));
+$horario = $app->db->one('SELECT * FROM scheduled_publications ORDER BY id DESC LIMIT 1');
+check('horário gravado em UTC', (bool) preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', (string) $horario['scheduled_at_utc']), (string) $horario['scheduled_at_utc']);
+assertSame('fuso do horário guardado', 'America/Recife', $horario['timezone']);
+assertSame('marca do horário', $clientePlano, (int) $horario['client_id']);
+assertSame('evento de criação registrado', 'scheduled', $app->db->scalar('SELECT event_type FROM schedule_events WHERE scheduled_publication_id = ?', [(int) $horario['id']]));
+assertSame('auditoria do agendamento', 'schedule.created', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'schedule.created'"));
+check('duplicar a mesma rede é recusado', str_contains(rawurldecode((string) $agendar()->header('Location')), 'já está agendado'));
+assertSame('continua um horário só', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM scheduled_publications'));
+$outraRede = $agendar(['network' => 'TikTok']);
+assertSame('outra rede é permitida', 302, $outraRede->status);
+assertSame('agenda agora tem dois horários', 2, (int) $app->db->scalar('SELECT COUNT(*) FROM scheduled_publications'));
+$app->db->run("DELETE FROM scheduled_publications WHERE network = 'TikTok'");
+
+$logar($app, $idUsuario);
+$telaComFila = $app->handle(requisicao('GET', '/schedule'));
+check('fila mostra o horário com fuso e cliente', str_contains($telaComFila->body, 'America/Recife') && str_contains($telaComFila->body, 'Bravo'));
+check('fila mostra a auditoria do horário', str_contains($telaComFila->body, 'Agendado internamente'));
+check('publicação só aparece depois do horário', str_contains($telaComFila->body, 'Publicação manual disponível no horário agendado'));
+
+echo "\n[70] Meta: conexões, OAuth e publicação real contra um Graph simulado\n";
+$grafoFalso = trim((string) @file_get_contents(__DIR__ . '/.grafo-falso'));
+if ($grafoFalso === '' || !str_starts_with($grafoFalso, 'http://127.0.0.1:')) {
+    check('Graph simulado disponível', false, 'tests/.grafo-falso não foi escrito pelo runner');
+} else {
+    check('Graph simulado disponível', true);
+    $chaveMetaTeste = base64_encode(random_bytes(32));
+    $configMeta = [
+        'app_id' => '1234567890',
+        'app_secret' => 'segredo-do-app-de-teste',
+        'redirect_uri' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai/integrations/meta/callback',
+        'graph_version' => 'v23.0',
+        'token_key' => $chaveMetaTeste,
+        'public_base' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+        'endpoint' => $grafoFalso,
+    ];
+    $imagemMeta = sys_get_temp_dir() . '/smia-meta-' . bin2hex(random_bytes(4)) . '.png';
+    $lonaMeta = imagecreatetruecolor(1080, 1080);
+    imagefill($lonaMeta, 0, 0, imagecolorallocate($lonaMeta, 24, 52, 120));
+    imagepng($lonaMeta, $imagemMeta);
+    imagedestroy($lonaMeta);
+    $arteMeta = $app->db->one('SELECT * FROM creative_posts ORDER BY id LIMIT 1');
+    $app->db->run("UPDATE creative_posts SET status = 'exported', export_path = ? WHERE id = ?", [basename($imagemMeta), (int) $arteMeta['id']]);
+    if (!is_dir($raiz . '/uploads')) { mkdir($raiz . '/uploads', 0o700, true); }
+    copy($imagemMeta, $raiz . '/uploads/' . basename($imagemMeta));
+
+    [$appMeta, $configMetaObj, $raizMeta] = appNova(['secret' => str_repeat('a', 40), 'meta' => $configMeta]);
+    $appMeta->db->run("INSERT INTO companies (id, name, slug) VALUES (1, 'Agência Meta', 'agencia-meta')");
+    $appMeta->db->run("INSERT INTO users (id, company_id, name, email, password_hash, role) VALUES (1, 1, 'Ana Meta', 'ana@meta.example', ?, 'owner')", [password_hash('SenhaForte2026', PASSWORD_DEFAULT)]);
+    $appMeta->db->run("INSERT INTO users (id, company_id, name, email, password_hash, role) VALUES (2, 1, 'Eva Editor', 'eva@meta.example', ?, 'editor')", [password_hash('SenhaForte2026', PASSWORD_DEFAULT)]);
+    $appMeta->db->run("INSERT INTO companies (id, name, slug) VALUES (2, 'Outra Agência', 'outra-meta')");
+    $appMeta->db->run("INSERT INTO users (id, company_id, name, email, password_hash, role) VALUES (3, 2, 'Outro', 'outro@meta.example', ?, 'owner')", [password_hash('SenhaForte2026', PASSWORD_DEFAULT)]);
+    $appMeta->db->run("INSERT INTO clients (id, company_id, company_name, trade_name) VALUES (1, 1, 'Bravo Fitness', 'Bravo')");
+    $appMeta->db->run("INSERT INTO clients (id, company_id, company_name, trade_name) VALUES (2, 2, 'Cliente Alheio', 'Alheio')");
+    $appMeta->db->run("INSERT INTO creative_posts (id, company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height, content_json, layout_json, background_color, export_path, status)
+        VALUES (1, 1, 1, 1, 'Arte aprovada', 'square', 1080, 1080, ?, '{\"elements\":[]}', '#183478', ?, 'exported')", [json_encode(['title' => 'Treino', 'caption' => 'Legenda aprovada', 'hashtags' => '#treino']), basename($imagemMeta)]);
+    mkdir($raizMeta . '/uploads', 0o700, true);
+    copy($imagemMeta, $raizMeta . '/uploads/' . basename($imagemMeta));
+    $csrfMeta = $appMeta->session->csrfToken();
+
+    // --- tela de conexões ---------------------------------------------
+    $logarMeta = static function (int $id) use ($appMeta): void {
+        $appMeta->session->start();
+        $appMeta->session->put('user_id', $id);
+    };
+    $logarMeta(1);
+    $appMeta->session->put('user_id', 1);
+    $csrfMeta = $appMeta->session->csrfToken();
+    $telaMeta = $appMeta->handle(requisicao('GET', '/meta'));
+    assertSame('conexões Meta respondem 200', 200, $telaMeta->status);
+    check('mostra configuração detectada', str_contains($telaMeta->body, 'Configuração detectada'));
+    check('não finge publicação comprovada', str_contains($telaMeta->body, 'Ainda não comprovada'));
+    check('lista os escopos pedidos', str_contains($telaMeta->body, 'instagram_content_publish'));
+    check('aviso de que publicação é manual', str_contains($telaMeta->body, 'Publicação é manual'));
+
+    $logarMeta(2);
+    assertSame('editor não abre conexões Meta', 403, $appMeta->handle(requisicao('GET', '/meta'))->status);
+    $logarMeta(3);
+    $metaAlheia = $appMeta->handle(requisicao('GET', '/meta'));
+    assertSame('outra agência abre a própria tela', 200, $metaAlheia->status);
+    check('outra agência não vê páginas desta', !str_contains($metaAlheia->body, 'Página Bravo'));
+
+    // --- OAuth --------------------------------------------------------
+    $logarMeta(1);
+    $semCsrfConnect = $appMeta->handle(requisicao('POST', '/meta/connect', ['csrf_token' => 'x']));
+    assertSame('conectar sem CSRF não cria state', null, $appMeta->session->get('meta_oauth_state'));
+    check('erro de CSRF volta com aviso', str_contains(rawurldecode((string) $semCsrfConnect->header('Location')), 'Sessão expirada'));
+
+    $logarMeta(1);
+    $inicio = $appMeta->handle(requisicao('POST', '/meta/connect', ['csrf_token' => $appMeta->session->csrfToken()]));
+    assertSame('conectar redireciona para a Meta', 302, $inicio->status);
+    $destinoMeta = (string) $inicio->header('Location');
+    check('URL de autorização é a oficial', str_starts_with($destinoMeta, 'https://www.facebook.com/v23.0/dialog/oauth?'));
+    check('pede exatamente os escopos do produto', str_contains($destinoMeta, 'scope=pages_show_list%2Cpages_read_engagement%2Cpages_manage_posts%2Cinstagram_basic%2Cinstagram_content_publish'));
+    parse_str((string) parse_url($destinoMeta, PHP_URL_QUERY), $consultaOauth);
+    $stateMeta = (string) ($consultaOauth['state'] ?? '');
+    check('state é aleatório e longo', strlen($stateMeta) >= 40);
+    assertSame('state fica na sessão', $stateMeta, $appMeta->session->get('meta_oauth_state'));
+
+    $logarMeta(1);
+    $callbackErrado = $appMeta->handle(requisicao('GET', '/integrations/meta/callback', [], ['code' => 'abc', 'state' => 'inventado']));
+    check('state diferente é recusado', str_contains(rawurldecode((string) $callbackErrado->header('Location')), 'expirou ou não corresponde'));
+    assertSame('nada conectado com state errado', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_page_connections'));
+
+    $logarMeta(1);
+    $inicio2 = $appMeta->handle(requisicao('POST', '/meta/connect', ['csrf_token' => $appMeta->session->csrfToken()]));
+    parse_str((string) parse_url((string) $inicio2->header('Location'), PHP_URL_QUERY), $consulta2);
+    $state2 = (string) $consulta2['state'];
+    $logarMeta(1);
+    $callback = $appMeta->handle(requisicao('GET', '/integrations/meta/callback', [], ['code' => 'codigo-bom', 'state' => $state2]));
+    assertSame('callback conclui e redireciona', 302, $callback->status);
+    check('callback confirma as páginas', str_contains((string) $callback->header('Location'), 'connected=2'));
+    assertSame('duas páginas conectadas', 2, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_page_connections'));
+    assertSame('página com Instagram gravada', 'bravo.fitness', $appMeta->db->scalar("SELECT instagram_username FROM meta_page_connections WHERE page_id = 'PAGE-1'"));
+    check('token gravado cifrado', !str_contains((string) $appMeta->db->scalar('SELECT page_access_token_encrypted FROM meta_page_connections LIMIT 1'), 'TOKEN-PAGINA'));
+    assertSame('permissões só dos escopos pedidos, por Página', 5, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_connection_permissions WHERE connection_id = (SELECT id FROM meta_page_connections WHERE page_id = \'PAGE-1\')'));
+    assertSame('escopo desconhecido não é guardado', 0, (int) $appMeta->db->scalar("SELECT COUNT(*) FROM meta_connection_permissions WHERE permission = 'esporte_radical'"));
+    assertSame('permissão recusada guardada como tal', 'declined', $appMeta->db->scalar("SELECT status FROM meta_connection_permissions WHERE permission = 'pages_read_engagement'"));
+    assertSame('prazo do token longo guardado nas duas Páginas', 2, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_page_connections WHERE token_expires_at IS NOT NULL'));
+    assertSame('auditoria da conexão', 'meta.connected', $appMeta->db->scalar("SELECT action FROM audit_log WHERE action = 'meta.connected'"));
+    assertSame('nada é publicado ao conectar', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts'));
+
+    // Página com token de outro dono: o Graph responde outra página -> falha.
+    $logarMeta(1);
+    $testeOk = $appMeta->handle(requisicao('POST', '/meta/' . (int) $appMeta->db->scalar("SELECT id FROM meta_page_connections WHERE page_id = 'PAGE-1'") . '/test', ['csrf_token' => $appMeta->session->csrfToken()]));
+    check('teste de leitura confirma', str_contains((string) $testeOk->header('Location'), 'connection_check=ok'));
+    assertSame('teste registrado no histórico', 'ok', $appMeta->db->scalar('SELECT status FROM meta_connection_checks ORDER BY id DESC LIMIT 1'));
+    check('teste diz que não testa publicação', str_contains((string) $appMeta->db->scalar('SELECT details FROM meta_connection_checks ORDER BY id DESC LIMIT 1'), 'não testa permissões de publicação'));
+
+    // --- agenda com o app configurado ---------------------------------
+    $logarMeta(1);
+    $agendaMeta = $appMeta->handle(requisicao('GET', '/schedule'));
+    assertSame('agenda configurada responde 200', 200, $agendaMeta->status);
+    check('agenda reconhece as páginas conectadas', str_contains($agendaMeta->body, 'Página Bravo') || str_contains($agendaMeta->body, '2 página(s)'));
+
+    // --- publicação real contra o Graph simulado ----------------------
+    // Um ciclo aprovado para publicar agora: o horário venceu (10 min atrás),
+    // que é exatamente a condição em que o botão aparece.
+    $arquivoMeta = basename($imagemMeta);
+    $criarCiclo = static function (string $rede, string $legenda, int $vencido = 10) use ($appMeta, $imagemMeta, $arquivoMeta): int {
+        $appMeta->db->run(
+            "INSERT INTO creative_posts (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height, content_json, layout_json, background_color, export_path, status)
+             VALUES (1, 1, 1, ?, 'square', 1080, 1080, ?, '{\"elements\":[]}', '#183478', ?, 'exported')",
+            ['Arte ' . $rede, json_encode(['title' => 'Treino', 'caption' => $legenda, 'hashtags' => '#treino']), $arquivoMeta]
+        );
+        $arteId = (int) $appMeta->db->pdo()->lastInsertId();
+        $snapshot = [
+            'type' => 'creative',
+            'title' => 'Arte ' . $rede,
+            'format' => 'Quadrado 1080 × 1080',
+            'width' => 1080,
+            'height' => 1080,
+            'content' => ['title' => 'Treino', 'caption' => $legenda, 'hashtags' => '#treino'],
+            'background_color' => '#183478',
+            'image_path' => $arquivoMeta,
+            'export_path' => $arquivoMeta,
+        ];
+        $appMeta->db->run(
+            "INSERT INTO approvals (company_id, client_id, created_by, source_type, creative_id, cycle_number, title, snapshot_json, status, resolved_at)
+             VALUES (1, 1, 1, 'creative', ?, 1, ?, ?, 'approved', CURRENT_TIMESTAMP)",
+            [$arteId, 'Arte ' . $rede, json_encode($snapshot, JSON_UNESCAPED_UNICODE)]
+        );
+        $aprovId = (int) $appMeta->db->pdo()->lastInsertId();
+        $appMeta->db->run(
+            "INSERT INTO scheduled_publications (company_id, client_id, approval_id, scheduled_by, network, scheduled_at_utc, timezone)
+             VALUES (1, 1, ?, 1, ?, ?, 'America/Recife')",
+            [$aprovId, $rede, gmdate('Y-m-d\TH:i:s', time() - $vencido * 60)]
+        );
+
+        return (int) $appMeta->db->pdo()->lastInsertId();
+    };
+    $conexaoBravo = (int) $appMeta->db->scalar("SELECT id FROM meta_page_connections WHERE page_id = 'PAGE-1'");
+    $conexaoSegunda = (int) $appMeta->db->scalar("SELECT id FROM meta_page_connections WHERE page_id = 'PAGE-2'");
+
+    // A tela mostra o botão só com horário vencido.
+    $futuroMeta = $criarCiclo('Facebook', 'Legenda ainda no futuro', -1440);
+    $logarMeta(1);
+    $agendaFutura = $appMeta->handle(requisicao('GET', '/schedule'));
+    check('horário no futuro não oferece publicação', str_contains($agendaFutura->body, 'Publicação manual disponível no horário agendado.'));
+
+    $semCsrfPublicar = $appMeta->handle(requisicao('POST', '/schedule/' . $futuroMeta . '/publish', ['csrf_token' => 'x', 'connection_id' => (string) $conexaoBravo]));
+    assertSame('publicar sem CSRF não cria tentativa', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts'));
+    check('erro de CSRF na publicação', str_contains(rawurldecode((string) $semCsrfPublicar->header('Location')), 'Sessão expirada'));
+
+    $logarMeta(1);
+    $cedoDemais = $appMeta->handle(requisicao('POST', '/schedule/' . $futuroMeta . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    check('publicar antes do horário é recusado', str_contains(rawurldecode((string) $cedoDemais->header('Location')), 'ainda não chegou'),
+        rawurldecode((string) $cedoDemais->header('Location')));
+    assertSame('recusa antes do horário não abre tentativa', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts'));
+
+    $logarMeta(1);
+    $vencidoSemPagina = $criarCiclo('Facebook', 'Legenda para escolher a Página');
+    $semConexao = $appMeta->handle(requisicao('POST', '/schedule/' . $vencidoSemPagina . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => '0']));
+    check('publicar sem Página escolhida é recusado', str_contains(rawurldecode((string) $semConexao->header('Location')), 'Escolha uma Página Meta'),
+        rawurldecode((string) $semConexao->header('Location')));
+
+    // Facebook com foto: caminho completo (URL assinada + POST /photos + ID).
+    $fbComFoto = $criarCiclo('Facebook', 'Treino funcional na Bravo');
+    $logarMeta(1);
+    $publicouFb = $appMeta->handle(requisicao('POST', '/schedule/' . $fbComFoto . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    assertSame('publicar foto no Facebook redireciona', 302, $publicouFb->status);
+    check('redirect confirma a publicação', str_contains((string) $publicouFb->header('Location'), 'published=' . $fbComFoto), (string) $publicouFb->header('Location'));
+    assertSame('tentativa fica publicada', 'published', $appMeta->db->scalar('SELECT status FROM meta_publication_attempts WHERE schedule_id = ?', [$fbComFoto]));
+    assertSame('ID remoto guardado', 'PAGE-1_FB-PHOTO-1', $appMeta->db->scalar('SELECT remote_publication_id FROM meta_publication_attempts WHERE schedule_id = ?', [$fbComFoto]));
+    assertSame('publicação auditada', 'meta.published.published', $appMeta->db->scalar("SELECT action FROM audit_log WHERE action LIKE 'meta.published.%' ORDER BY id DESC LIMIT 1"));
+    check('token não aparece na URL de mídia enviada', !str_contains((string) $appMeta->db->scalar('SELECT error_message FROM meta_publication_attempts WHERE schedule_id = ?', [$fbComFoto]), 'TOKEN'));
+    check('agência avisada da publicação', (int) $appMeta->db->scalar("SELECT COUNT(*) FROM notifications WHERE company_id = 1 AND title = 'Publicação confirmada pela Meta'") >= 1);
+
+    // A URL que foi enviada à Meta precisa funcionar de verdade: mesma
+    // assinatura, mesmo prazo e servida pela rota pública sem sessão.
+    $chamadasFb = json_decode((string) file_get_contents($grafoFalso . '/__chamadas'), true);
+    $urlFoto = '';
+    $legendaFoto = '';
+    foreach ($chamadasFb['chamadas'] as $chamada) {
+        if (($chamada['caminho'] ?? '') === '/PAGE-1/photos') {
+            $urlFoto = (string) ($chamada['params']['url'] ?? '');
+            $legendaFoto = (string) ($chamada['params']['caption'] ?? '');
+        }
+    }
+    check('Meta recebeu a URL assinada da arte', str_contains($urlFoto, '/meta/media/') && str_contains($urlFoto, 'signature='), $urlFoto);
+    check('legenda foi a aprovada', str_contains($legendaFoto, 'Treino funcional na Bravo'), $legendaFoto);
+    $partesFoto = (string) parse_url($urlFoto, PHP_URL_QUERY);
+    parse_str($partesFoto, $consultaFoto);
+    $midiaPublica = $appMeta->handle(requisicao('GET', '/meta/media/' . $arquivoMeta, [], [
+        'expires' => (string) ($consultaFoto['expires'] ?? ''),
+        'signature' => (string) ($consultaFoto['signature'] ?? ''),
+    ]));
+    assertSame('a URL enviada à Meta serve a imagem sem sessão', 200, $midiaPublica->status);
+    assertSame('imagem vai como PNG', 'image/png', (string) $midiaPublica->header('Content-Type'));
+    assertSame('mídia assinada é cacheável só por 5 min', 'public, max-age=300', (string) $midiaPublica->header('Cache-Control'));
+    assertSame('rota de mídia não é indexável', 'noindex, nofollow', (string) $midiaPublica->header('X-Robots-Tag'));
+    assertSame('mídia com assinatura trocada é 404', 404, $appMeta->handle(requisicao('GET', '/meta/media/' . $arquivoMeta, [], ['expires' => (string) ($consultaFoto['expires'] ?? ''), 'signature' => '0']))->status);
+    assertSame('mídia sem assinatura é 404', 404, $appMeta->handle(requisicao('GET', '/meta/media/' . $arquivoMeta))->status);
+    assertSame('mídia de arquivo inexistente é 404', 404, $appMeta->handle(requisicao('GET', '/meta/media/nao-existe.png', [], [
+        'expires' => (string) ($consultaFoto['expires'] ?? ''),
+        'signature' => (string) ($consultaFoto['signature'] ?? ''),
+    ]))->status);
+
+    // Publicar duas vezes no mesmo horário: a segunda não pode ir à Meta.
+    $logarMeta(1);
+    $repetido = $appMeta->handle(requisicao('POST', '/schedule/' . $fbComFoto . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    check('publicar de novo é recusado', str_contains(rawurldecode((string) $repetido->header('Location')), 'Já existe uma tentativa'));
+    assertSame('segunda tentativa não é criada', 1, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts WHERE schedule_id = ?', [$fbComFoto]));
+
+    // Facebook sem arte: texto no feed.
+    $appMeta->db->run(
+        "INSERT INTO content_calendar (id, company_id, client_id, created_by, title, period_days, start_date, objective, networks_json, target_posts, ai_model)
+         VALUES (1, 1, 1, 1, 'Plano do mês', 30, '2026-11-01', 'Vender plano', '[\"Facebook\"]', 1, 'manual')"
+    );
+    $appMeta->db->run(
+        "INSERT INTO posts (id, company_id, client_id, calendar_id, position, publication_date, network, theme, strategic_objective, content_type, main_text, caption, hashtags, visual_brief, image_suggestion)
+         VALUES (1, 1, 1, 1, 1, '2026-11-20', 'Facebook', 'Aula aberta', 'Captar alunos', 'Texto', 'Aula aberta sábado', 'Venha treinar com a gente', '#aulaaberta', 'Sem arte', 'Foto da turma')"
+    );
+    $snapshotPlano = [
+        'type' => 'planned',
+        'title' => 'Aula aberta',
+        'network' => 'Facebook',
+        'publication_date' => '2026-11-20',
+        'content_type' => 'Texto',
+        'strategic_objective' => 'Captar alunos',
+        'main_text' => 'Aula aberta sábado',
+        'caption' => 'Venha treinar com a gente',
+        'hashtags' => '#aulaaberta',
+        'cta' => '',
+        'visual_brief' => 'Sem arte',
+        'image_suggestion' => 'Foto da turma',
+    ];
+    $appMeta->db->run(
+        "INSERT INTO approvals (company_id, client_id, created_by, source_type, planned_post_id, cycle_number, title, snapshot_json, status, resolved_at)
+         VALUES (1, 1, 1, 'planned', 1, 1, 'Aula aberta', ?, 'approved', CURRENT_TIMESTAMP)",
+        [json_encode($snapshotPlano, JSON_UNESCAPED_UNICODE)]
+    );
+    $aprovPlano = (int) $appMeta->db->pdo()->lastInsertId();
+    $appMeta->db->run(
+        "INSERT INTO scheduled_publications (company_id, client_id, approval_id, scheduled_by, network, scheduled_at_utc, timezone)
+         VALUES (1, 1, ?, 1, 'Facebook', ?, 'America/Recife')",
+        [$aprovPlano, gmdate('Y-m-d\TH:i:s', time() - 3600)]
+    );
+    $planoAgenda = (int) $appMeta->db->pdo()->lastInsertId();
+    $logarMeta(1);
+    $publicouTexto = $appMeta->handle(requisicao('POST', '/schedule/' . $planoAgenda . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    check('publicar texto no Facebook confirma', str_contains((string) $publicouTexto->header('Location'), 'published=' . $planoAgenda));
+    assertSame('texto foi para /feed', 'PAGE-1_FB-TEXTO-1', $appMeta->db->scalar('SELECT remote_publication_id FROM meta_publication_attempts WHERE schedule_id = ?', [$planoAgenda]));
+    check('texto usa a rede aprovada', true);
+
+    // Instagram: PNG -> cópia JPEG temporária -> contêiner -> poll -> publish.
+    $igAgenda = $criarCiclo('Instagram', 'Treino de hoje no Instagram');
+    $logarMeta(1);
+    $publicouIg = $appMeta->handle(requisicao('POST', '/schedule/' . $igAgenda . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    check('publicar no Instagram confirma', str_contains((string) $publicouIg->header('Location'), 'published=' . $igAgenda), rawurldecode((string) $publicouIg->header('Location')));
+    assertSame('ID de mídia do Instagram guardado', 'IG-MEDIA-1', $appMeta->db->scalar('SELECT remote_publication_id FROM meta_publication_attempts WHERE schedule_id = ?', [$igAgenda]));
+    $chamadasIg = json_decode((string) file_get_contents($grafoFalso . '/__chamadas'), true);
+    $urlIg = '';
+    $foiContainer = false;
+    $foiPoll = false;
+    $foiPublish = false;
+    foreach ($chamadasIg['chamadas'] as $chamada) {
+        if (($chamada['caminho'] ?? '') === '/IG-1/media') {
+            $foiContainer = true;
+            $urlIg = (string) ($chamada['params']['image_url'] ?? '');
+        }
+        if (($chamada['caminho'] ?? '') === '/CONTAINER-1') {
+            $foiPoll = true;
+        }
+        if (($chamada['caminho'] ?? '') === '/IG-1/media_publish') {
+            $foiPublish = true;
+        }
+    }
+    check('Instagram passou pelo contêiner, pelo estado e pela publicação', $foiContainer && $foiPoll && $foiPublish);
+    check('Instagram recebeu uma URL JPEG', str_ends_with((string) parse_url($urlIg, PHP_URL_PATH), '.jpg'), $urlIg);
+    check('a cópia JPEG temporária foi apagada', !str_contains(implode(',', array_map('basename', glob($raizMeta . '/uploads/*') ?: [])), 'meta_instagram_'));
+
+    // Instagram numa Página sem conta profissional: recusa com motivo.
+    $appMeta->db->run(
+        "INSERT INTO meta_page_connections (company_id, connected_by, page_id, page_name, page_access_token_encrypted, instagram_user_id)
+         VALUES (1, 1, 'PAGE-3', 'Página Sem Instagram', 'v1:invalido', NULL)"
+    );
+    $conexaoSemIg = (int) $appMeta->db->pdo()->lastInsertId();
+    $igSemConta = $criarCiclo('Instagram', 'Sem Instagram vinculado');
+    $logarMeta(1);
+    $semIg = $appMeta->handle(requisicao('POST', '/schedule/' . $igSemConta . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoSemIg]));
+    check('Instagram em Página sem conta é recusado', str_contains(rawurldecode((string) $semIg->header('Location')), 'não possui uma conta profissional'), rawurldecode((string) $semIg->header('Location')));
+    $logarMeta(1);
+    $igOutraPagina = $appMeta->handle(requisicao('POST', '/schedule/' . $igSemConta . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoSegunda]));
+    check('Instagram usa a conta profissional da Página escolhida', str_contains((string) $igOutraPagina->header('Location'), 'published=' . $igSemConta), rawurldecode((string) $igOutraPagina->header('Location')));
+
+    // Erro 5xx do Graph: incerto, não "falhou" — e sem repetição automática.
+    $duplicado = $criarCiclo('Facebook', 'LEGENDA DUPLICADO aqui');
+    $logarMeta(1);
+    $incerta = $appMeta->handle(requisicao('POST', '/schedule/' . $duplicado . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    check('erro 5xx vira resultado incerto', str_contains(rawurldecode((string) $incerta->header('Location')), 'incerto'), rawurldecode((string) $incerta->header('Location')));
+    assertSame('tentativa marcada como incerta', 'unknown', $appMeta->db->scalar('SELECT status FROM meta_publication_attempts WHERE schedule_id = ?', [$duplicado]));
+    $tentativaIncerta = (int) $appMeta->db->scalar('SELECT id FROM meta_publication_attempts WHERE schedule_id = ?', [$duplicado]);
+    assertSame('incerteza não vira publicação confirmada', 0, (int) $appMeta->db->scalar("SELECT COUNT(*) FROM meta_publication_attempts WHERE company_id = 1 AND network = 'Facebook' AND status = 'published' AND schedule_id = ?", [$duplicado]));
+    check('agência avisada da incerteza', (int) $appMeta->db->scalar("SELECT COUNT(*) FROM notifications WHERE company_id = 1 AND title = 'Resultado da publicação incerto'") >= 1);
+    assertSame('o erro não expõe o token', 0, (int) $appMeta->db->scalar("SELECT COUNT(*) FROM meta_publication_attempts WHERE error_message LIKE '%TOKEN%'"));
+
+    // A tela oferece a conferência manual para o caso incerto.
+    $logarMeta(1);
+    $agendaIncerta = $appMeta->handle(requisicao('GET', '/schedule'));
+    check('tela oferece conferir o resultado incerto', str_contains($agendaIncerta->body, 'Conferir resultado na Meta'));
+    check('tela avisa que a conferência não é resposta da API', str_contains($agendaIncerta->body, 'não entra'));
+
+    // Reconciliação: exige observação real e ID coerente.
+    $logarMeta(1);
+    $csrfRecon = $appMeta->session->csrfToken();
+    $semNota = $appMeta->handle(requisicao('POST', '/schedule/meta-attempt/' . $tentativaIncerta . '/reconcile', [
+        'csrf_token' => $csrfRecon, 'outcome' => 'confirmed_published', 'remote_publication_id' => 'PAGE-1_999', 'note' => 'curto',
+    ]));
+    check('conferência exige observação mínima', str_contains(rawurldecode((string) $semNota->header('Location')), '12 caracteres'));
+    $logarMeta(1);
+    $semId = $appMeta->handle(requisicao('POST', '/schedule/meta-attempt/' . $tentativaIncerta . '/reconcile', [
+        'csrf_token' => $appMeta->session->csrfToken(), 'outcome' => 'confirmed_published', 'remote_publication_id' => '', 'note' => 'Conferi a Página e o post está no ar.',
+    ]));
+    check('encontrada exige ID real', str_contains(rawurldecode((string) $semId->header('Location')), 'Informe o ID real'));
+    $logarMeta(1);
+    $idIndevido = $appMeta->handle(requisicao('POST', '/schedule/meta-attempt/' . $tentativaIncerta . '/reconcile', [
+        'csrf_token' => $appMeta->session->csrfToken(), 'outcome' => 'confirmed_not_published', 'remote_publication_id' => 'PAGE-1_999', 'note' => 'Conferi a Página e não há publicação.',
+    ]));
+    check('não encontrada recusa ID', str_contains(rawurldecode((string) $idIndevido->header('Location')), 'Não informe um ID'));
+    assertSame('nada registrado antes de uma conferência válida', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_reconciliations'));
+
+    $logarMeta(1);
+    $conferido = $appMeta->handle(requisicao('POST', '/schedule/meta-attempt/' . $tentativaIncerta . '/reconcile', [
+        'csrf_token' => $appMeta->session->csrfToken(),
+        'outcome' => 'confirmed_published',
+        'remote_publication_id' => 'PAGE-1_CONFERIDO',
+        'note' => 'Conferi a Página Bravo e o post está publicado.',
+    ]));
+    assertSame('conferência válida redireciona', 302, $conferido->status);
+    check('redirect confirma a conferência', str_contains((string) $conferido->header('Location'), 'reconciled=confirmed_published'));
+    assertSame('conferência registrada com o autor', 1, (int) $appMeta->db->scalar('SELECT reconciled_by FROM meta_publication_reconciliations WHERE attempt_id = ?', [$tentativaIncerta]));
+    assertSame('conferência auditada', 'meta.reconciled.confirmed_published', $appMeta->db->scalar("SELECT action FROM audit_log WHERE action LIKE 'meta.reconciled.%' ORDER BY id DESC LIMIT 1"));
+    assertSame('conferência não altera o status da API', 'unknown', $appMeta->db->scalar('SELECT status FROM meta_publication_attempts WHERE id = ?', [$tentativaIncerta]));
+    $logarMeta(1);
+    $deNovo = $appMeta->handle(requisicao('POST', '/schedule/meta-attempt/' . $tentativaIncerta . '/reconcile', [
+        'csrf_token' => $appMeta->session->csrfToken(), 'outcome' => 'confirmed_published', 'remote_publication_id' => 'X', 'note' => 'Conferindo outra vez agora.',
+    ]));
+    check('não se confere duas vezes', str_contains(rawurldecode((string) $deNovo->header('Location')), 'já foi conferida'));
+
+    // Outra agência não confere nem publica o que não é dela.
+    $logarMeta(3);
+    $alheiaRecon = $appMeta->handle(requisicao('POST', '/schedule/meta-attempt/' . $tentativaIncerta . '/reconcile', [
+        'csrf_token' => $appMeta->session->csrfToken(), 'outcome' => 'confirmed_not_published', 'note' => 'Nada aqui nesta conta.',
+    ]));
+    assertSame('outra agência não confere tentativa alheia', 404, $alheiaRecon->status);
+    $alheiaPub = $appMeta->handle(requisicao('POST', '/schedule/' . $igAgenda . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    assertSame('outra agência não publica horário alheio', 404, $alheiaPub->status);
+
+    // Editor publica (a agenda é operação), mas não mexe em conexões.
+    $appMeta->db->run("UPDATE users SET role = 'editor' WHERE id = 2");
+    $editorAgenda = $criarCiclo('Facebook', 'Legenda do editor');
+    $logarMeta(2);
+    $publicouEditor = $appMeta->handle(requisicao('POST', '/schedule/' . $editorAgenda . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    check('editor pode publicar horário vencido', str_contains((string) $publicouEditor->header('Location'), 'published=' . $editorAgenda));
+    $appMeta->db->run("UPDATE users SET role = 'viewer' WHERE id = 2");
+    $leitorAgenda = $criarCiclo('Facebook', 'Legenda do leitor');
+    $logarMeta(2);
+    $leitorPublica = $appMeta->handle(requisicao('POST', '/schedule/' . $leitorAgenda . '/publish', ['csrf_token' => $appMeta->session->csrfToken(), 'connection_id' => (string) $conexaoBravo]));
+    assertSame('papel somente leitura não publica', 403, $leitorPublica->status);
+    assertSame('papel somente leitura não cria tentativa', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts WHERE schedule_id = ?', [$leitorAgenda]));
+
+    // Tentativa travada em "publicando" há mais de 10 minutos vira incerta.
+    $appMeta->db->run("UPDATE users SET role = 'editor' WHERE id = 2");
+    $travado = $criarCiclo('Facebook', 'Legenda travada');
+    $appMeta->db->run(
+        "INSERT INTO meta_publication_attempts (company_id, schedule_id, connection_id, attempted_by, network, status, created_at)
+         VALUES (1, ?, ?, 1, 'Facebook', 'publishing', datetime('now', '-11 minutes'))",
+        [$travado, $conexaoBravo]
+    );
+    $logarMeta(1);
+    $appMeta->handle(requisicao('GET', '/schedule'));
+    assertSame('tentativa parada há 11 min vira incerta', 'unknown', $appMeta->db->scalar('SELECT status FROM meta_publication_attempts WHERE schedule_id = ?', [$travado]));
+
+    // --- tokens: prazo e desconexão -----------------------------------
+    $appMeta->db->run("UPDATE meta_page_connections SET token_expires_at = datetime('now', '+2 days') WHERE company_id = 1");
+    $logarMeta(1);
+    $painelPrazo = $appMeta->handle(requisicao('GET', '/meta'));
+    check('painel mostra prazo do token', str_contains($painelPrazo->body, 'Prazo registrado do token OAuth'));
+    check('aviso de prazo informado, não garantido', str_contains($painelPrazo->body, 'se aproxima'));
+    $avisosPrazo = (int) $appMeta->db->scalar("SELECT COUNT(*) FROM notifications WHERE company_id = 1 AND title = 'Prazo informado do token Meta se aproxima'");
+    check('prazo se aproximando gera um aviso', $avisosPrazo >= 1);
+    $appMeta->handle(requisicao('GET', '/meta'));
+    assertSame('o aviso de prazo não se repete', $avisosPrazo, (int) $appMeta->db->scalar("SELECT COUNT(*) FROM notifications WHERE company_id = 1 AND title = 'Prazo informado do token Meta se aproxima'"));
+    $appMeta->db->run("UPDATE meta_page_connections SET token_expires_at = datetime('now', '-1 day') WHERE company_id = 1");
+    $appMeta->handle(requisicao('GET', '/meta'));
+    check('token vencido avisa para reconectar', (int) $appMeta->db->scalar("SELECT COUNT(*) FROM notifications WHERE company_id = 1 AND title = 'Prazo informado do token Meta passou'") >= 1);
+    check('painel diz que o prazo passou', str_contains($appMeta->handle(requisicao('GET', '/meta'))->body, 'reconecte e teste a leitura'));
+
+    // Desconexão apaga o token e mantém o histórico.
+    $historico = (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts WHERE company_id = 1');
+    $logarMeta(1);
+    $desconectou = $appMeta->handle(requisicao('POST', '/meta/' . $conexaoBravo . '/disconnect', ['csrf_token' => $appMeta->session->csrfToken()]));
+    check('desconectar confirma na tela', str_contains((string) $desconectou->header('Location'), 'disconnected=1'));
+    assertSame('conexão removida', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_page_connections WHERE page_id = ?', ['PAGE-1']));
+    assertSame('permissões da conexão removidas', 0, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_connection_permissions WHERE connection_id = ?', [$conexaoBravo]));
+    assertSame('histórico de publicações preservado', $historico, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts WHERE company_id = 1'));
+    assertSame('tentativa perde o vínculo, não o registro', 1, (int) $appMeta->db->scalar('SELECT COUNT(*) FROM meta_publication_attempts WHERE schedule_id = ? AND connection_id IS NULL', [$fbComFoto]));
+    check('desconexão auditada', $appMeta->db->scalar("SELECT 1 FROM audit_log WHERE action = 'meta.disconnected'") !== null);
+    assertSame('desconectar exige ser dono', 404, (static function () use ($appMeta, $logarMeta, $conexaoSegunda): int {
+        $logarMeta(3);
+
+        return $appMeta->handle(requisicao('POST', '/meta/' . $conexaoSegunda . '/disconnect', ['csrf_token' => $appMeta->session->csrfToken()]))->status;
+    })());
+
+    // Sem Página compatível, a agenda explica em vez de mostrar botão morto.
+    $logarMeta(1);
+    $semConexaoTela = $appMeta->handle(requisicao('GET', '/schedule'));
+    check('agenda avisa quando não há Página compatível', str_contains($semConexaoTela->body, 'Nenhuma Página compatível')
+        || str_contains($semConexaoTela->body, 'Publicação manual disponível'));
+}
+
+echo "\n[71] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];
 $iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));
 foreach ($iterador as $arquivo) {
@@ -2005,7 +2608,7 @@ foreach ($arquivosPhp as $arquivo) {
     }
 }
 check('todos os arquivos PHP compilam (' . count($arquivosPhp) . ' arquivos)', $comErro === [], implode(' | ', $comErro));
-check('views de aprovações, portal, feed e relatórios incluídas na checagem', count(array_filter($arquivosPhp, static fn (string $a): bool => str_contains($a, '/views/approvals/') || str_contains($a, '/views/portal/') || str_contains($a, '/views/feed/') || str_contains($a, '/views/reports/'))) >= 13);
+check('views de aprovações, portal, feed, relatórios, agenda e Meta incluídas na checagem', count(array_filter($arquivosPhp, static fn (string $a): bool => (bool) preg_match('#/views/(approvals|portal|feed|reports|schedule|meta)/#', $a))) >= 18);
 $rotasAprov = array_values(array_filter($app->router->patterns(), static fn (string $r): bool => str_contains($r, '/approvals') || str_contains($r, '/portal')));
 check('rotas de aprovações e portal registradas (' . count($rotasAprov) . ')', count($rotasAprov) >= 18);
 

@@ -5,3 +5,4 @@ data/installer-drafts/
 data/*.db
 .env
 downloads-privado/
+tests/.grafo-falso

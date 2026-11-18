@@ -46,7 +46,22 @@ async function iniciarProvedor() {
   return { filho, endpoint };
 }
 
+// Graph falso: mesmo motivo, para o caminho de publicação Meta.
+async function iniciarGrafo() {
+  const filho = spawn(process.execPath, [join(ROOT, 'tests', 'fake-graph.mjs')], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const endpoint = await new Promise((resolve, rejeitar) => {
+    const limite = setTimeout(() => rejeitar(new Error('Graph falso não subiu')), 10000);
+    filho.stdout.on('data', (parte) => {
+      const achado = /GRAFO_FALSO=(\S+)/.exec(parte.toString());
+      if (achado) { clearTimeout(limite); resolve(achado[1]); }
+    });
+    filho.on('exit', (codigo) => rejeitar(new Error(`Graph falso saiu com código ${codigo}`)));
+  });
+  return { filho, endpoint };
+}
+
 const provedor = await iniciarProvedor();
+const grafo = await iniciarGrafo();
 
 // processId é exigido pelo runtime do php-wasm antes do init.
 const php = new PHP(await loadNodeRuntime('8.3', { emscriptenOptions: { processId: 1 } }));
@@ -61,6 +76,7 @@ for (const rel of arquivos) {
 
 // env não atravessa o wasm: o endpoint do provedor falso vai por arquivo.
 await php.writeFile(`${DOC_ROOT}/tests/.provedor-ia`, provedor.endpoint + '\n');
+await php.writeFile(`${DOC_ROOT}/tests/.grafo-falso`, grafo.endpoint + '\n');
 
 // Uma única execução: parse de todos os arquivos + suíte funcional.
 let resultado;
@@ -84,6 +100,7 @@ require '${DOC_ROOT}/tests/suite.php';
   });
 } catch (erro) {
   provedor.filho.kill();
+  grafo.filho.kill();
   const parcial = erro?.response?.bytes ? Buffer.from(erro.response.bytes).toString('utf8') : '';
   process.stdout.write(parcial);
   process.stderr.write(`\nErro fatal no PHP: ${erro.message}\n${erro?.response?.errors ?? ''}\n`);
@@ -91,6 +108,7 @@ require '${DOC_ROOT}/tests/suite.php';
 }
 
 provedor.filho.kill();
+grafo.filho.kill();
 
 process.stdout.write(resultado.text);
 if (resultado.errors) process.stderr.write(String(resultado.errors));

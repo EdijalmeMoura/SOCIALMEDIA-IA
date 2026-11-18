@@ -28,6 +28,13 @@ final class Config
         public readonly string $openaiEndpoint = '',
         public readonly string $openaiImageModel = 'gpt-image-1',
         public readonly string $openaiImageEndpoint = '',
+        public readonly string $metaAppId = '',
+        public readonly string $metaAppSecret = '',
+        public readonly string $metaRedirectUri = '',
+        public readonly string $metaGraphVersion = '',
+        public readonly string $metaTokenKey = '',
+        public readonly string $metaPublicBaseUrl = '',
+        public readonly string $metaGraphEndpoint = '',
     ) {
     }
 
@@ -55,6 +62,13 @@ final class Config
             openaiEndpoint: self::env('OPENAI_ENDPOINT') ?: '',
             openaiImageModel: self::env('OPENAI_IMAGE_MODEL') ?: 'gpt-image-1',
             openaiImageEndpoint: self::env('OPENAI_IMAGE_ENDPOINT') ?: '',
+            metaAppId: self::env('META_APP_ID') ?? '',
+            metaAppSecret: self::env('META_APP_SECRET') ?? '',
+            metaRedirectUri: self::env('META_REDIRECT_URI') ?? '',
+            metaGraphVersion: self::env('META_GRAPH_VERSION') ?: 'v23.0',
+            metaTokenKey: self::env('META_TOKEN_ENCRYPTION_KEY') ?? '',
+            metaPublicBaseUrl: self::env('META_PUBLIC_BASE_URL') ?? '',
+            metaGraphEndpoint: self::env('META_GRAPH_ENDPOINT') ?: \Smia\Meta\Graph::HOST,
         );
     }
 
@@ -84,6 +98,13 @@ final class Config
             openaiEndpoint: $this->openaiEndpoint,
             openaiImageModel: $this->openaiImageModel,
             openaiImageEndpoint: $this->openaiImageEndpoint,
+            metaAppId: $this->metaAppId,
+            metaAppSecret: $this->metaAppSecret,
+            metaRedirectUri: $this->metaRedirectUri,
+            metaGraphVersion: $this->metaGraphVersion,
+            metaTokenKey: $this->metaTokenKey,
+            metaPublicBaseUrl: $this->metaPublicBaseUrl,
+            metaGraphEndpoint: $this->metaGraphEndpoint,
         );
     }
 

@@ -38,8 +38,9 @@ DEPOIS DE INSTALAR
 ATUALIZANDO DE UMA VERSÃO ANTERIOR
   Envie por cima apenas app/ e public/ (mantenha .env e data/).
   O banco é migrado sozinho na primeira abertura; nada é apagado.
-  v1.6 não cria tabela nova: o relatório lê pautas, artes, aprovações e
-  consumo de IA que já estão no banco. Nada é apagado ao atualizar.
+  v1.7 cria 10 tabelas novas (agenda interna e conexões Meta) por migração
+  aditiva: o que já existe fica intacto. Nada é apagado ao atualizar, mas
+  configure as chaves META_* no .env para o módulo Meta funcionar.
 
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
@@ -61,6 +62,11 @@ O QUE ESTA VERSÃO JÁ FAZ
   Relatórios: o que a agência fez no período, com recorte de datas e filtro
     por cliente, e exportação em CSV para planilha. Sem métricas de rede:
     alcance, curtidas e cliques não são inventados
+  Meta: conecte Páginas do Facebook e contas profissionais do Instagram por
+    OAuth, teste a leitura do Graph e organize a agenda interna. A publicação
+    é MANUAL, num clique em horário vencido — não há robô publicando. Se a
+    Meta não responder, a tentativa fica INCERTA e o produto pede conferência
+    na conta em vez de tentar de novo. TikTok e LinkedIn ficam só na agenda
 
 ATIVAR A IA (OPCIONAL)
   Acrescente no .env:  OPENAI_API_KEY=sk-...
@@ -74,8 +80,17 @@ PORTAL DO CLIENTE
   temporária. Ele vê só os conteúdos dele — nunca o painel da agência.
   Pausar a conta derruba o acesso na hora.
 
-PRÓXIMOS MÓDULOS
-  Meta (conexões de páginas e publicação)
+ATIVAR A META (OPCIONAL)
+  Crie um app em developers.facebook.com/apps e preencha no .env:
+    META_APP_ID, META_APP_SECRET, META_GRAPH_VERSION (ex.: v23.0),
+    META_REDIRECT_URI (HTTPS, terminando em /integrations/meta/callback,
+      já com a subpasta: .../edijalmemoura/socialai/integrations/meta/callback),
+    META_TOKEN_ENCRYPTION_KEY (php -r "echo base64_encode(random_bytes(32));").
+  META_PUBLIC_BASE_URL é opcional quando SOCIALMEDIA_PUBLIC_ORIGIN já está certo.
+  Sem essas chaves o módulo fica fechado e a tela diz o que falta.
+  NÃO troque META_TOKEN_ENCRYPTION_KEY depois de conectar: os tokens salvos
+  ficam ilegíveis e será preciso reconectar as Páginas.
+  Guia completo: docs/meta.md
 
 PROBLEMAS COMUNS
   500 .............. log de erros do cPanel; falta permissão em data/

@@ -42,6 +42,14 @@ for (const pasta of ['app', 'public']) {
   await copiar(pasta);
 }
 
+// .env do projeto, quando existir: é o que permite testar o módulo Meta no
+// navegador apontando META_GRAPH_ENDPOINT para um servidor de teste.
+for (const rel of ['.env', 'installer.env']) {
+  try {
+    await php.writeFile(`/www/php/${rel}`, readFileSync(join(ROOT, rel)));
+  } catch { /* arquivo opcional */ }
+}
+
 /**
  * Lê multipart/form-data (o navegador envia upload assim).
  *
