@@ -16,6 +16,7 @@ use Smia\Controllers\FeedController;
 use Smia\Controllers\InstallerController;
 use Smia\Controllers\PlannerController;
 use Smia\Controllers\PortalController;
+use Smia\Controllers\ReportController;
 use Smia\Controllers\StudioController;
 use Smia\Database\Database;
 use Smia\Feed\FeedRepository;
@@ -26,6 +27,7 @@ use Smia\Http\Router;
 use Smia\Installer\Installer;
 use Smia\Planner\PlanGenerator;
 use Smia\Planner\PlannerRepository;
+use Smia\Reports\ReportRepository;
 use Smia\Studio\StudioGenerator;
 use Smia\Studio\StudioRepository;
 use Smia\Support\Config;
@@ -121,6 +123,13 @@ final class Application
             $this->session,
             $this->view(),
         );
+        $relatorios = new ReportController(
+            $this->config,
+            new ReportRepository($this->db),
+            $auth,
+            $this->session,
+            $this->view(),
+        );
         $clientes = new ClientController(
             $this->config,
             new ClientRepository($this->db),
@@ -207,6 +216,10 @@ final class Application
         $this->router->post('/feed/{client_id}/add/post/{id}', $feed->addPost(...));
         $this->router->post('/feed/{client_id}/remove/{id}', $feed->remove(...));
         $this->router->post('/feed/{client_id}/reorder', $feed->reorder(...));
+
+        // --- Relatórios ------------------------------------------------
+        $this->router->get('/reports', $relatorios->index(...));
+        $this->router->get('/reports/export.csv', $relatorios->export(...));
 
         // --- Aprovações (agência) --------------------------------------
         $this->router->get('/approvals', $aprovacoes->index(...));

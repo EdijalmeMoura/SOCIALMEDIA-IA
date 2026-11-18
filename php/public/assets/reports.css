@@ -1,0 +1,120 @@
+/*
+ * Relatórios: recorte, quatro números, quebras e a lista de registros.
+ *
+ * Tipografia pequena e bastante respiro, como o resto do produto: relatório é
+ * para ler número, não para impressionar.
+ */
+
+/* --- cabeçalho ------------------------------------------------------ */
+/* app.css não define .page-head/.page-sub; aqui o topo do relatório ganha
+   a mesma escala dos outros módulos, sem depender de estilo global novo. */
+.report-head{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;margin:0 0 16px}
+.report-head h1{font:800 26px Manrope,sans-serif;letter-spacing:-1.1px;margin:7px 0 5px}
+.report-head .page-sub{font-size:11px;color:#8d93a2;margin:0}
+.report-head .page-actions{display:flex;gap:8px;flex:none}
+.report-truth{display:flex;align-items:flex-start;gap:9px;padding:12px 14px;border-radius:8px;
+  background:#f2f4ff;border:1px solid #e0e4fb;margin:14px 0}
+.report-truth span{color:#6678d8;font-size:15px;line-height:1.1;flex:none}
+.report-truth p{margin:0;font-size:9.5px;line-height:1.65;color:#4a5580}
+.report-truth b{color:#33406e}
+
+/* --- recorte -------------------------------------------------------- */
+.report-filter{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:14px 16px}
+.report-filter .field{font-size:8px;min-width:132px}
+.report-filter input[type=date],.report-filter select{height:33px;border:1px solid #e6e8ef;border-radius:6px;
+  background:#fff;color:#4d5465;font-size:10px;padding:0 9px;width:100%;outline:0}
+.report-filter input[type=date]:focus,.report-filter select:focus{border-color:#8794ef;box-shadow:0 0 0 3px #5369e213}
+.report-client{min-width:190px}
+.report-filter .button{margin-bottom:1px}
+.report-period{margin-left:auto;font-size:8px;color:#9298a7;align-self:center;text-align:right}
+
+/* --- números -------------------------------------------------------- */
+.report-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:14px 0}
+.report-card{border:1px solid #ebeef3;background:#fff;border-radius:9px;padding:14px 15px;display:flex;flex-direction:column;gap:5px}
+.report-icon{width:25px;height:25px;border-radius:7px;display:grid;place-items:center;font-size:12px;margin-bottom:3px}
+.report-icon.blue{background:#eff0ff;color:#5b68d8}
+.report-icon.coral{background:#fff0ec;color:#e77959}
+.report-icon.mint{background:#e8f8f2;color:#27a882}
+.report-icon.violet{background:#f3efff;color:#7b62cf}
+.report-label{font-size:8px;letter-spacing:.8px;font-weight:700;color:#9298a7}
+.report-card b{font:700 22px Manrope,sans-serif;letter-spacing:-.6px}
+.report-card b i{font:400 10px 'DM Sans',sans-serif;color:#999eab;font-style:normal;letter-spacing:0}
+.report-card small{font-size:8.5px;color:#8d93a1;line-height:1.5}
+
+/* --- painéis -------------------------------------------------------- */
+.report-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px;align-items:start}
+.report-panel{padding:16px 17px}
+.report-panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px}
+.report-panel-head h2{font:700 12px Manrope,sans-serif;margin:0 0 4px}
+.report-panel-head p{font-size:9px;color:#969bab;margin:0}
+.report-chip{font-size:8px;color:#6a7285;background:#f4f5f9;border:1px solid #eaecf2;border-radius:12px;
+  padding:4px 8px;white-space:nowrap}
+.report-note{font-size:8.5px;color:#8d93a1;line-height:1.6;margin:10px 0 0}
+
+.report-status-list{list-style:none;margin:0;padding:0;display:grid;gap:1px}
+.report-status-list li{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #f0f1f5;
+  font-size:9.5px;color:#4d5465}
+.report-status-list li:first-child{border-top:0}
+.report-status-list b{margin-left:auto;font:700 12px Manrope,sans-serif}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.pending{background:#e9b254}
+.dot.approved{background:#2bb38a}
+.dot.changes{background:#f09063}
+.dot.rejected{background:#d97070}
+
+.report-networks,.report-ia,.report-table{display:grid;gap:0}
+.report-network-head,.report-ia-head,.report-table-head{display:grid;gap:8px;font-size:7.5px;letter-spacing:.6px;
+  color:#9298a7;font-weight:700;padding:0 0 7px;border-bottom:1px solid #eff0f4}
+.report-network-head,.report-network-row{grid-template-columns:1fr 80px 46px;align-items:center}
+.report-network-row{display:grid;gap:8px;padding:8px 0;border-bottom:1px solid #f4f5f8;font-size:9.5px}
+.report-network-row b{font-size:9.5px}
+.report-network-row span{color:#6d7487}
+.report-network-row span:last-child{color:#9298a7}
+.report-ia-head,.report-ia-row{grid-template-columns:1.2fr 1fr 70px 90px;align-items:center;gap:8px}
+.report-ia-row{display:grid;padding:8px 0;border-bottom:1px solid #f4f5f8;font-size:9px;color:#5b6478}
+.report-ia-row b{font-size:9px}
+.report-consumption{margin-top:13px}
+
+/* --- registros ------------------------------------------------------ */
+.report-activity{margin-top:13px}
+.report-table-head,.report-table-row{grid-template-columns:118px minmax(90px,.8fr) minmax(160px,1.6fr) 90px 130px;
+  align-items:center;gap:10px}
+.report-table-row{display:grid;padding:9px 0;border-bottom:1px solid #f4f5f8;font-size:9px;color:#5b6478}
+.report-table-row:last-child{border-bottom:0}
+.report-content{display:flex;flex-direction:column;gap:3px;min-width:0}
+.report-content small{font-size:7.5px;color:#969bab;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+.report-content b{font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.report-state{display:inline-block;font-style:normal;font-size:8px;border-radius:11px;padding:4px 7px;
+  background:#f2f3f7;color:#6d7487;white-space:nowrap}
+.report-state.state-planejada,.report-state.state-em-produção{background:#eef2ff;color:#5063c9}
+.report-state.state-exportada,.report-state.state-aprovado{background:#e8f8f2;color:#1a7f5a}
+.report-state.state-rascunho{background:#fff5e8;color:#a8762c}
+.report-state.state-aguardando-cliente{background:#fff5e8;color:#a8762c}
+.report-state.state-alterações-solicitadas{background:#fff0ec;color:#c1673f}
+.report-state.state-rejeitado{background:#fdecec;color:#b64444}
+
+/* --- 404 do recorte -------------------------------------------------- */
+.report-missing{padding:56px 20px}
+.report-missing h2{font:700 20px/1.35 Manrope,sans-serif;letter-spacing:-.5px;margin:10px 0 6px}
+.report-missing p{max-width:380px;font-size:10.5px}
+.report-missing .button{margin-top:4px}
+
+@media(max-width:1100px){
+  .report-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .report-table-head,.report-table-row{grid-template-columns:96px minmax(80px,.8fr) minmax(140px,1.5fr) 70px 110px}
+}
+@media(max-width:760px){
+  .report-head{flex-direction:column;align-items:flex-start}
+  .report-grid{grid-template-columns:1fr}
+  .report-period{margin-left:0;text-align:left;width:100%}
+  .report-filter{flex-direction:column;align-items:stretch}
+  .report-filter .field{min-width:0}
+  /* a lista de registros vira cartões: cinco colunas não cabem no celular */
+  .report-table-head{display:none}
+  .report-table-row{grid-template-columns:1fr auto;gap:4px 10px;padding:11px 0}
+  .report-table-row>span:nth-child(1){font-size:8px;color:#969bab;grid-column:1}
+  .report-table-row>span:nth-child(5){grid-column:2;grid-row:1 / span 2;align-self:center}
+  .report-table-row>span:nth-child(2){grid-column:1;font-weight:600;color:#3c4356}
+  .report-table-row>span:nth-child(3){grid-column:1 / span 2}
+  .report-table-row>span:nth-child(4){grid-column:1;font-size:8px;color:#969bab}
+}

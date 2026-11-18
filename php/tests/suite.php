@@ -836,7 +836,7 @@ check('módulo não aparece como "em breve"', !preg_match('/Planejamento.{0,200}
 $modulos = \Smia\Support\Modules::all();
 $moduloPlanner = array_values(array_filter($modulos, static fn (array $m): bool => $m['slug'] === 'planner'))[0] ?? null;
 check('módulo planejamento marcado como pronto', ($moduloPlanner['ready'] ?? false) === true);
-check('os módulos ainda não portados seguem pendentes', count(array_filter($modulos, static fn (array $m): bool => $m['ready'] === false)) >= 3);
+check('os módulos ainda não portados seguem pendentes', count(array_filter($modulos, static fn (array $m): bool => $m['ready'] === false)) >= 1);
 
 echo "\n[30] Planejamento: conteúdo da IA é tratado como não confiável\n";
 $logar($app, $idUsuario);
@@ -1582,7 +1582,10 @@ $painelAprov = $app->handle(requisicao('GET', '/dashboard'));
 assertSame('dashboard responde 200 com aprovações', 200, $painelAprov->status);
 check('Aprovações aparece no menu', str_contains($painelAprov->body, 'Aprovações'));
 check('Aprovações aparece com link no dashboard', str_contains($painelAprov->body, '/approvals"'));
-check('dashboard conta quatro módulos prontos na época das aprovações', str_contains($painelAprov->body, 'módulo 5 de 8 pronto'));
+// O número de módulos prontos cresce a cada entrega: em vez de congelar "5 de 8",
+// o teste confere que o rodapé do card reflete a lista real de Modules.
+$prontosAprov = count(array_filter(\Smia\Support\Modules::all(), static fn (array $m): bool => $m['ready']));
+check('dashboard conta os módulos prontos na época das aprovações', str_contains($painelAprov->body, 'módulo ' . $prontosAprov . ' de 8 pronto'));
 $logar($app, $idUsuario);
 check('lista aponta para o portal do cliente', str_contains($app->handle(requisicao('GET', '/approvals'))->body, 'Acessos do portal'));
 assertSame('rota inexistente de aprovação responde 404', 404, $app->handle(requisicao('GET', '/approvals/abc/xyz'))->status);
@@ -1783,11 +1786,12 @@ $logar($app, $idUsuario);
 $painelFeed = $app->handle(requisicao('GET', '/dashboard'));
 assertSame('dashboard responde 200 com feed', 200, $painelFeed->status);
 check('Feed aparece no menu', str_contains($painelFeed->body, '/feed"'));
-check('dashboard conta cinco módulos prontos', str_contains($painelFeed->body, 'módulo 5 de 8 pronto'));
+$prontosFeed = count(array_filter(\Smia\Support\Modules::all(), static fn (array $m): bool => $m['ready']));
+check('dashboard conta os módulos prontos depois do feed', str_contains($painelFeed->body, 'módulo ' . $prontosFeed . ' de 8 pronto'));
 $modulosFeed = \Smia\Support\Modules::all();
 $moduloFeed = array_values(array_filter($modulosFeed, static fn (array $m): bool => $m['slug'] === 'feed'))[0] ?? null;
 check('módulo feed marcado como pronto', ($moduloFeed['ready'] ?? false) === true);
-check('relatórios seguem pendentes', (array_values(array_filter($modulosFeed, static fn (array $m): bool => $m['slug'] === 'reports'))[0]['ready'] ?? true) === false);
+check('módulo relatórios marcado como pronto', (array_values(array_filter($modulosFeed, static fn (array $m): bool => $m['slug'] === 'reports'))[0]['ready'] ?? false) === true);
 $rotasFeed = array_values(array_filter($app->router->patterns(), static fn (string $r): bool => str_contains($r, '/feed')));
 check('rotas do feed registradas (' . count($rotasFeed) . ')', count($rotasFeed) === 5);
 check('views do feed compilam', is_file(__DIR__ . '/../app/views/feed/index.php'));
@@ -1801,7 +1805,186 @@ assertSame('grade antiga preservada', $arteAntiga, (int) $appAntiga->db->scalar(
 assertSame('tabela de feed presente', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'feed_items'"));
 assertSame('uma linha na versão do esquema depois do feed', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = ?', [\Smia\Database\Schema::VERSAO]));
 
-echo "\n[60] Sintaxe de todos os arquivos PHP\n";
+
+echo "\n[60] Relatórios: recorte de período\n";
+use Smia\Reports\ReportError;
+use Smia\Reports\ReportRepository;
+
+assertSame('período padrão começa no dia 1º', ['2026-03-01', '2026-03-15'], ReportRepository::periodoPadrao('2026-03-15'));
+$recorteOk = ReportRepository::validarPeriodo('2026-02-01', '2026-02-28');
+assertSame('recorte válido é aceito', '2026-02-01', $recorteOk['inicio']);
+assertSame('recorte válido mantém o fim', '2026-02-28', $recorteOk['fim']);
+$recorteVazio = ReportRepository::validarPeriodo(null, '');
+assertSame('recorte vazio cai no padrão', ReportRepository::periodoPadrao(), [$recorteVazio['inicio'], $recorteVazio['fim']]);
+assertSame('ano bissexto aceita 366 dias', '2025-01-01', ReportRepository::validarPeriodo('2024-01-01', '2025-01-01')['fim']);
+
+$mensagemDe = static function (?string $inicio, ?string $fim): string {
+    try {
+        ReportRepository::validarPeriodo($inicio, $fim);
+    } catch (ReportError $falha) {
+        return $falha->getMessage();
+    }
+
+    return '';
+};
+assertSame('fim antes do início é recusado', 'A data final precisa ser igual ou posterior à data inicial.', $mensagemDe('2026-03-10', '2026-03-09'));
+check('período acima de 366 dias é recusado', str_contains($mensagemDe('2024-01-01', '2025-01-02'), '366 dias'));
+check('data malformada é recusada', str_contains($mensagemDe('31/02/2026', '2026-03-01'), 'datas válidas'));
+check('data impossível é recusada', str_contains($mensagemDe('2026-02-30', '2026-03-01'), 'datas válidas'));
+
+echo "\n[61] Relatórios: tela, números e o que o relatório não mede\n";
+$logar($app, $idUsuario);
+$telaRel = $app->handle(requisicao('GET', '/reports'));
+assertSame('relatórios respondem 200', 200, $telaRel->status);
+check('carrega o CSS do módulo', str_contains($telaRel->body, 'reports.css'));
+check('menu marca relatórios como ativo', str_contains($telaRel->body, 'nav-link active'));
+check('aviso de ausência de métricas de rede', str_contains($telaRel->body, 'Sem métricas de rede'));
+check('explica o que não entra no relatório', str_contains($telaRel->body, 'Alcance, curtidas, impressões e cliques não entram'));
+check('não inventa alcance em nenhum card', !preg_match('/alcance médio|impressões totais|taxa de engajamento/i', $telaRel->body));
+check('mostra os quatro números', str_contains($telaRel->body, 'POSTS PLANEJADOS') && str_contains($telaRel->body, 'ARTES EXPORTADAS')
+    && str_contains($telaRel->body, 'APROVAÇÕES ENVIADAS') && str_contains($telaRel->body, 'NA PRÉVIA DO FEED'));
+check('lista de status das aprovações', str_contains($telaRel->body, 'Aguardando cliente') && str_contains($telaRel->body, 'Alterações solicitadas'));
+check('painel de consumo de IA', str_contains($telaRel->body, 'Consumo de IA'));
+check('cliente atual aparece no seletor', (bool) preg_match('/<option value="' . $clientePlano . '"[^>]*>\s*Bravo/', $telaRel->body));
+
+// Os números são COUNT de registros reais do período, não estimativa.
+[$inicioPadrao, $fimPadrao] = ReportRepository::periodoPadrao();
+$postsEsperados = (int) $app->db->scalar(
+    'SELECT COUNT(*) FROM posts WHERE company_id = ? AND date(created_at) BETWEEN ? AND ?',
+    [$empresaTeste, $inicioPadrao, $fimPadrao]
+);
+$artesEsperadas = (int) $app->db->scalar(
+    'SELECT COUNT(*) FROM creative_posts WHERE company_id = ? AND date(created_at) BETWEEN ? AND ?',
+    [$empresaTeste, $inicioPadrao, $fimPadrao]
+);
+$aprovEsperadas = (int) $app->db->scalar(
+    'SELECT COUNT(*) FROM approvals WHERE company_id = ? AND date(submitted_at) BETWEEN ? AND ?',
+    [$empresaTeste, $inicioPadrao, $fimPadrao]
+);
+$feedEsperado = (int) $app->db->scalar('SELECT COUNT(*) FROM feed_items WHERE company_id = ?', [$empresaTeste]);
+preg_match_all('/<span class="report-label">([^<]+)<\/span>\s*<b>(\d+)/', $telaRel->body, $cartoes, PREG_SET_ORDER);
+$porEtiqueta = [];
+foreach ($cartoes as $cartao) {
+    $porEtiqueta[trim($cartao[1])] = (int) $cartao[2];
+}
+assertSame('card de pautas conta os posts do período', $postsEsperados, $porEtiqueta['POSTS PLANEJADOS'] ?? -1);
+assertSame('card de artes conta as artes do período', $artesEsperadas, $porEtiqueta['ARTES EXPORTADAS'] ?? -1);
+assertSame('card de aprovações conta os ciclos do período', $aprovEsperadas, $porEtiqueta['APROVAÇÕES ENVIADAS'] ?? -1);
+assertSame('card do feed conta a grade atual', $feedEsperado, $porEtiqueta['NA PRÉVIA DO FEED'] ?? -1);
+
+$logar($app, $idUsuario);
+$telaVazia = $app->handle(requisicao('GET', '/reports', [], ['start_date' => '2000-01-01', 'end_date' => '2000-01-31']));
+assertSame('período sem registros continua 200', 200, $telaVazia->status);
+check('período sem registros mostra estado vazio', str_contains($telaVazia->body, 'Nenhuma atividade neste período'));
+check('período vazio respeita o recorte escolhido', str_contains($telaVazia->body, 'value="2000-01-01"'));
+
+$logar($app, $idUsuario);
+$telaInvalida = $app->handle(requisicao('GET', '/reports', [], ['start_date' => '2026-03-10', 'end_date' => '2026-03-01']));
+assertSame('recorte inválido não derruba a tela', 200, $telaInvalida->status);
+check('recorte inválido avisa o motivo', str_contains($telaInvalida->body, 'A data final precisa ser igual ou posterior à data inicial.'));
+check('recorte inválido volta ao padrão do mês', str_contains($telaInvalida->body, 'value="' . $inicioPadrao . '"'));
+
+echo "\n[62] Relatórios: isolamento por empresa\n";
+$logar($app, $idUsuario);
+$relAlheio = $app->handle(requisicao('GET', '/reports', [], ['client_id' => (string) $idSigiloso]));
+assertSame('cliente de outra agência responde 404', 404, $relAlheio->status);
+check('não revela o nome do cliente alheio no relatório', !str_contains($relAlheio->body, 'Cliente Sigiloso'));
+check('404 do relatório oferece a volta', str_contains($relAlheio->body, 'Esse cliente não está neste workspace'));
+assertSame('cliente inexistente responde 404', 404, $app->handle(requisicao('GET', '/reports', [], ['client_id' => '999999']))->status);
+$logar($app, $idUsuario);
+$relMalformado = $app->handle(requisicao('GET', '/reports', [], ['client_id' => 'abc']));
+assertSame('id malformado não quebra a tela', 200, $relMalformado->status);
+check('id malformado avisa', str_contains($relMalformado->body, 'Escolha um cliente válido.'));
+$logar($app, (int) $app->db->scalar("SELECT id FROM users WHERE email = 'outro@exemplo.com'"));
+$relOutra = $app->handle(requisicao('GET', '/reports'));
+assertSame('outra agência abre o próprio relatório', 200, $relOutra->status);
+check('outra agência não vê pautas daqui', !str_contains($relOutra->body, 'Bravo Fitness'));
+check('outra agência não vê métricas daqui', !str_contains($relOutra->body, 'Aula experimental gratuita'));
+
+$semLoginRel = appNova();
+[$appSemLoginRel] = $semLoginRel;
+assertSame('relatórios exigem login', '/edijalmemoura/socialia/login' === '' ? '' : '/edijalmemoura/socialai/login', $appSemLoginRel->handle(requisicao('GET', '/reports'))->header('Location'));
+
+echo "\n[63] Relatórios: exportação em CSV\n";
+$logar($app, $idUsuario);
+$csv = $app->handle(requisicao('GET', '/reports/export.csv'));
+assertSame('CSV responde 200', 200, $csv->status);
+check('CSV tem tipo de planilha', str_starts_with((string) $csv->header('Content-Type'), 'text/csv'));
+check('CSV é download com nome datado', (bool) preg_match('/attachment; filename="relatorio-socialmedia-\d{4}-\d{2}-\d{2}-a-\d{4}-\d{2}-\d{2}\.csv"/', (string) $csv->header('Content-Disposition')));
+assertSame('CSV começa com BOM para o Excel', "\u{FEFF}", substr($csv->body, 0, 3));
+check('CSV usa ponto e vírgula', str_contains($csv->body, 'Indicador;Quantidade'));
+check('CSV traz os números do período', str_contains($csv->body, 'Posts planejados;' . $postsEsperados));
+check('CSV registra o recorte exato', str_contains($csv->body, $inicioPadrao . ';' . $fimPadrao));
+check('CSV repete o aviso de escopo', str_contains($csv->body, 'Não inclui alcance, curtidas, impressões ou cliques'));
+check('CSV lista os registros', str_contains($csv->body, 'Categoria;Cliente;Conteúdo;Rede;Data registrada (UTC);Status interno'));
+check('CSV não vaza conteúdo de outra agência', !str_contains($csv->body, 'Cliente Sigiloso'));
+
+$logar($app, $idUsuario);
+$csvCliente = $app->handle(requisicao('GET', '/reports/export.csv', [], ['client_id' => (string) $clientePlano]));
+assertSame('CSV por cliente responde 200', 200, $csvCliente->status);
+check('CSV por cliente nomeia a marca', str_contains($csvCliente->body, 'Cliente;Bravo'));
+check('CSV por cliente traz só o recorte pedido', !str_contains($csvCliente->body, 'Cliente Sigiloso'));
+
+$logar($app, $idUsuario);
+$csvInvalido = $app->handle(requisicao('GET', '/reports/export.csv', [], ['start_date' => '2026-03-10', 'end_date' => '2026-03-01']));
+assertSame('CSV com recorte inválido responde 400', 400, $csvInvalido->status);
+check('CSV inválido explica o motivo', str_contains($csvInvalido->body, 'A data final precisa ser igual ou posterior'));
+assertSame('CSV de cliente alheio responde 400', 400, $app->handle(requisicao('GET', '/reports/export.csv', [], ['client_id' => (string) $idSigiloso]))->status);
+assertSame('CSV de cliente malformado responde 400', 400, $app->handle(requisicao('GET', '/reports/export.csv', [], ['client_id' => 'x']))->status);
+
+// Planilha não deve executar texto que veio do banco.
+assertSame('célula com fórmula é neutralizada', "'=1+1", \Smia\Controllers\ReportController::celula('=1+1'));
+assertSame('célula com soma é neutralizada', "'+55", \Smia\Controllers\ReportController::celula('+55'));
+assertSame('célula com hífen é neutralizada', "'-2", \Smia\Controllers\ReportController::celula('-2'));
+assertSame('célula com arroba é neutralizada', "'@user", \Smia\Controllers\ReportController::celula('@user'));
+assertSame('célula com tabulação é neutralizada', "'\tvalor", \Smia\Controllers\ReportController::celula("\tvalor"));
+assertSame('célula com ponto e vírgula é citada', '"a;b"', \Smia\Controllers\ReportController::celula('a;b'));
+assertSame('aspas são duplicadas', '"diz ""oi"""', \Smia\Controllers\ReportController::celula('diz "oi"'));
+assertSame('texto comum passa inteiro', 'Reels de segunda', \Smia\Controllers\ReportController::celula('Reels de segunda'));
+
+echo "\n[64] Relatórios: atividade limitada e dados que só existem aqui\n";
+// Um relatório de 300 linhas é o que cabe numa tela; o resto fica no banco.
+$antesDoLimite = (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE company_id = ?', [$empresaTeste]);
+for ($i = 1; $i <= 305; $i++) {
+    $app->db->run(
+        "INSERT INTO posts (company_id, client_id, calendar_id, position, publication_date, network, theme,
+            strategic_objective, content_type, main_text, caption, visual_brief, image_suggestion)
+         VALUES (?, ?, ?, ?, '2026-04-01', 'Instagram', ?, 'teste de limite', 'carrossel', 'texto', 'legenda', 'brief', 'imagem')",
+        [$empresaTeste, $clientePlano, $planoRevisaoId, 900 + $i, 'Pauta em massa ' . $i]
+    );
+}
+$logar($app, $idUsuario);
+$telaCheia = $app->handle(requisicao('GET', '/reports', [], ['start_date' => $inicioPadrao, 'end_date' => $fimPadrao]));
+assertSame('tela com muitos registros responde 200', 200, $telaCheia->status);
+check('avisa que a lista foi cortada', str_contains($telaCheia->body, 'Mostrando os 300 registros mais recentes'));
+preg_match('/<span class="report-chip">(\d+) registro\(s\)<\/span>/', $telaCheia->body, $chipRel);
+check('o chip mostra o total real, não o recortado', (int) ($chipRel[1] ?? 0) >= ($antesDoLimite + 305));
+$linhasCsv = substr_count($app->handle(requisicao('GET', '/reports/export.csv'))->body, 'Planejamento;');
+assertSame('CSV também respeita o limite de 300', 300, $linhasCsv);
+
+$logar($app, $idUsuario);
+$painelRel = $app->handle(requisicao('GET', '/reports', [], ['client_id' => (string) $clientePlano]));
+assertSame('relatório por cliente responde 200', 200, $painelRel->status);
+check('mostra o consumo de IA com recurso nomeado', str_contains($painelRel->body, 'Planejamento'));
+check('mostra o modelo que atendeu (rascunho local)', str_contains($painelRel->body, 'local-draft'));
+check('mostra as chamadas de IA do cliente', str_contains($painelRel->body, 'CHAMADAS'));
+
+echo "\n[65] Relatórios: navegação, rotas e migração\n";
+$logar($app, $idUsuario);
+$painelRel2 = $app->handle(requisicao('GET', '/dashboard'));
+check('Relatórios aparece no menu', str_contains($painelRel2->body, '/reports"'));
+$rotasRel = array_values(array_filter($app->router->patterns(), static fn (string $r): bool => str_contains($r, '/reports')));
+check('rotas de relatórios registradas (' . count($rotasRel) . ')', count($rotasRel) === 2);
+check('views de relatórios compilam', is_file(__DIR__ . '/../app/views/reports/index.php') && is_file(__DIR__ . '/../app/views/reports/not_found.php'));
+// Relatório é leitura: nada de tabela nova, nada de migração de dados.
+assertSame('versão do esquema segue a do feed', 5, \Smia\Database\Schema::VERSAO);
+assertSame('relatórios não criam tabela', 0, (int) $app->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE '%report%'"));
+\Smia\Database\Schema::migrate($app->db);
+assertSame('migração segue idempotente', 5, \Smia\Database\Schema::VERSAO);
+assertSame('relatório não altera dados de clientes', 'Bravo Fitness', $app->db->scalar('SELECT company_name FROM clients WHERE id = ?', [$clientePlano]));
+assertSame('nenhuma auditoria inventada pelo relatório', 0, (int) $app->db->scalar("SELECT COUNT(*) FROM audit_log WHERE action LIKE 'report%'"));
+
+echo "\n[66] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];
 $iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));
 foreach ($iterador as $arquivo) {
@@ -1822,7 +2005,7 @@ foreach ($arquivosPhp as $arquivo) {
     }
 }
 check('todos os arquivos PHP compilam (' . count($arquivosPhp) . ' arquivos)', $comErro === [], implode(' | ', $comErro));
-check('views de aprovações, portal e feed incluídas na checagem', count(array_filter($arquivosPhp, static fn (string $a): bool => str_contains($a, '/views/approvals/') || str_contains($a, '/views/portal/') || str_contains($a, '/views/feed/'))) >= 11);
+check('views de aprovações, portal, feed e relatórios incluídas na checagem', count(array_filter($arquivosPhp, static fn (string $a): bool => str_contains($a, '/views/approvals/') || str_contains($a, '/views/portal/') || str_contains($a, '/views/feed/') || str_contains($a, '/views/reports/'))) >= 13);
 $rotasAprov = array_values(array_filter($app->router->patterns(), static fn (string $r): bool => str_contains($r, '/approvals') || str_contains($r, '/portal')));
 check('rotas de aprovações e portal registradas (' . count($rotasAprov) . ')', count($rotasAprov) >= 18);
 

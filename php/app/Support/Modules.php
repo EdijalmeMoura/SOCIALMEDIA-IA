@@ -23,7 +23,7 @@ final class Modules
             ['slug' => 'studio', 'name' => 'Estúdio', 'hint' => 'Criação de artes e legendas', 'path' => '/studio', 'icon' => '✦', 'ready' => true],
             ['slug' => 'approvals', 'name' => 'Aprovações', 'hint' => 'Portal do cliente e revisões', 'path' => '/approvals', 'icon' => '◷', 'ready' => true],
             ['slug' => 'feed', 'name' => 'Feed', 'hint' => 'Prévia do perfil e grade', 'path' => '/feed', 'icon' => '▦', 'ready' => true],
-            ['slug' => 'reports', 'name' => 'Relatórios', 'hint' => 'Métricas e entregas', 'path' => '/reports', 'icon' => '◑', 'ready' => false],
+            ['slug' => 'reports', 'name' => 'Relatórios', 'hint' => 'Entregas registradas e exportação', 'path' => '/reports', 'icon' => '◑', 'ready' => true],
             ['slug' => 'meta', 'name' => 'Conexões Meta', 'hint' => 'Páginas, Instagram e publicação', 'path' => '/meta', 'icon' => '◎', 'ready' => false],
             ['slug' => 'settings', 'name' => 'Configurações', 'hint' => 'Equipe, segurança e integrações', 'path' => '/settings', 'icon' => '⚙', 'ready' => false],
         ];

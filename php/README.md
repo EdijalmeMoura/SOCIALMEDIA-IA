@@ -4,18 +4,19 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 (cPanel): sobe os arquivos e funciona. Sem Composer, sem Node, sem Passenger.
 
 > Estado atual: **base funcional + clientes + planejamento + estúdio +
-> aprovações + feed** —
+> aprovações + feed + relatórios** —
 > instalador de 3 telas, login, dashboard, banco SQLite, sessão/CSRF, tratamento
 > de subpasta, portfólio de clientes (perfil, identidade visual, logo e
 > referências), calendário editorial com IA, criação de artes com prancheta,
 > histórico de versões e exportação, revisão pelo cliente em portal próprio com
-> histórico e ciclos, e a prévia do feed montada a partir do que já foi
-> produzido. Os demais módulos (relatórios, Meta) entram um a um, reaproveitando
-> esta mesma base e o mesmo esquema de dados.
+> histórico e ciclos, a prévia do feed montada a partir do que já foi
+> produzido e o relatório operacional com exportação em CSV. Falta só o módulo
+> Meta (conexões e publicação), que entra reaproveitando esta mesma base e o
+> mesmo esquema de dados.
 
 ## Baixar o pacote pronto
 
-`downloads/SOCIALMEDIA-IA-php-v1.5.zip` nesta pasta é o pacote completo (`.env`
+`downloads/SOCIALMEDIA-IA-php-v1.6.zip` nesta pasta é o pacote completo (`.env`
 com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
 publicada em
 [`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
@@ -313,12 +314,50 @@ Regras que valem a pena saber:
 - Escritas deixam rastro em `audit_log` (`feed.added`, `feed.removed`,
   `feed.reordered`).
 
+### Relatórios (pronto)
+
+O que a agência **fez** no período, contado a partir dos registros do próprio
+produto — e nada além disso.
+
+| Rota | Método | O que faz | Quem pode |
+|---|---|---|---|
+| `/reports` | GET | recorte por período, números do mês, quebras e registros | todos |
+| `/reports/export.csv` | GET | o mesmo recorte em CSV para planilha | todos |
+
+Parâmetros (todos opcionais): `start_date`, `end_date` (AAAA-MM-DD) e
+`client_id`.
+
+Regras que valem a pena saber:
+
+- **Não existe métrica de rede aqui.** Alcance, curtidas, impressões e cliques
+  só viriam de API de rede social; sem isso, o relatório não mostra — e a tela
+  diz isso em um aviso fixo. Um número honesto a menos vale mais que um gráfico
+  inventado.
+- O recorte é por **data de registro** em UTC (quando o item entrou no produto),
+  não pela data editorial da pauta. O padrão é do dia 1º do mês até hoje.
+- Período máximo de **366 dias**. `fim` antes de `início` é recusado.
+- Recorte inválido **não derruba a tela**: a página volta ao padrão com um aviso
+  âmbar. No CSV, o mesmo recorte inválido responde **400** com o motivo em texto
+  puro — planilha não deve receber um arquivo pela metade.
+- `client_id` de outra empresa → **404** (a marca nem existe para você). Id
+  malformado volta com "Escolha um cliente válido." e o relatório completo.
+- A lista de registros mostra os **300 mais recentes** e avisa quando cortou; o
+  CSV tem o mesmo limite, para tela e planilha contarem a mesma história.
+- O CSV sai com `;` (padrão do Excel em português), BOM UTF-8 e apóstrofo antes
+  de `=`, `+`, `-`, `@`, tabulação e retorno de carro: texto vindo do banco nunca
+  vira fórmula na sua planilha.
+- Dois painéis só existem aqui: **Consumo de IA** (`ai_generations` — chamadas,
+  modelo e tokens por recurso; rascunho local aparece como `local-draft` com
+  zero token) e o card **Na prévia do feed** (`feed_items`).
+- Relatório é leitura: **nenhuma tabela nova**, nenhuma auditoria, nenhum dado
+  alterado. A versão do esquema continua a mesma do feed (5).
+
 ### Próximos
 
-relatórios → Meta. Cada um entra por migração aditiva do `Schema` (versão 2 =
-clientes, 3 = planejamento, 4 = estúdio, 5 = aprovações — o feed usa a tabela
-`feed_items` já criada no 3), então atualizar o pacote nunca apaga dados de uma
-instalação em uso.
+Meta. Cada módulo entra por migração aditiva do `Schema` (versão 2 = clientes,
+3 = planejamento, 4 = estúdio, 5 = aprovações — o feed usa a tabela `feed_items`
+já criada no 3, e os relatórios não criam tabela), então atualizar o pacote
+nunca apaga dados de uma instalação em uso.
 
 ## Subpasta: como é resolvido
 
@@ -342,7 +381,7 @@ instalado na máquina:
 ```sh
 cd php
 npm install        # @php-wasm/universal + @php-wasm/node (só para testes)
-npm test           # parse de todos os arquivos + 645 verificações funcionais
+npm test           # parse de todos os arquivos + 725 verificações funcionais
 ```
 
 Cobre: normalização de subpasta, `.env`, detecção de caminho, token do
@@ -353,8 +392,11 @@ instâncias e o módulo de clientes (cadastro, edição, cores, upload validado
 por assinatura, permissões por papel, exclusão em cascata), planejamento, estúdio
 e aprovações (envio com fotografia, ciclos, decisão do cliente, 409 em resposta
 dupla, anexos, contas do portal, sessões separadas, mídia restrita, migração
-aditiva sobre banco antigo) e feed (grade 3×3, fontes, arrastar com 409 quando a
-lista muda, remoção sem excluir o original, cascata ao excluir a arte).
+aditiva sobre banco antigo), feed (grade 3×3, fontes, arrastar com 409 quando a
+lista muda, remoção sem excluir o original, cascata ao excluir a arte) e
+relatórios (recorte de período com limite de 366 dias, contagem por registro,
+isolamento por empresa, CSV com BOM e proteção contra fórmula, limite de 300
+linhas e migração sem tabela nova).
 
 Para exercitar o caminho HTTP completo (cookies, redirecionamentos, HTML):
 
