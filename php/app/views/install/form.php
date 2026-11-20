@@ -49,8 +49,8 @@ ob_start();
 
 <form class="install-form" method="post" action="<?= e($config->url('/install/validate')) ?>" data-installer-form>
   <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
-  <?php if ($token_required): ?>
-    <input type="hidden" name="access_token" value="<?= e($token) ?>">
+  <?php if ($token_required ?? ($config->installToken !== null)): ?>
+    <input type="hidden" name="access_token" value="<?= e($token ?? '') ?>">
   <?php endif; ?>
 
   <section class="install-card">

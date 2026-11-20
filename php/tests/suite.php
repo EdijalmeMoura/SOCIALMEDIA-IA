@@ -200,7 +200,7 @@ check('a tela do instalador mostra a versão', str_contains(
     $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']))->body,
     'v' . \Smia\Support\Config::VERSAO
 ), 'versão não aparece no rodapé');
-check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.12', '>='), \Smia\Support\Config::VERSAO);
+check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.13', '>='), \Smia\Support\Config::VERSAO);
 // Defeito real: todo redirecionamento interno voltava para /install SEM o
 // token, então o próprio guarda de acesso devolvia 403 no meio do assistente.
 $semToken = $app->handle(requisicao('GET', '/install'));
@@ -439,6 +439,70 @@ $diagTrilha = $appOk->handle(requisicao('GET', '/install/diagnostico'));
 check('diagnóstico mostra a última tentativa', str_contains($diagTrilha->body, 'Última tentativa de instalação'));
 check('diagnóstico mostra a etapa fim', str_contains($diagTrilha->body, '<code>fim</code>'));
 check('diagnóstico não vaza o token', !str_contains($diagTrilha->body, 'token-secreto-123'));
+
+echo "\n[6g] O token da URL cobre o POST que esqueceu o campo\n";
+// Defeito real (v1.12, diagnosticado em produção): a tela de revisão não
+// recebia `token_required`, então não renderizava o <input name="access_token">.
+// O POST chegava sem token e a confirmação era recusada como
+// `recusa:token_invalido` — aparecia no diagnóstico, mas a causa era o HTML.
+$appUrl = appNova(['token' => 'token-secreto-123']);
+[$appUrl] = $appUrl;
+$appUrl->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$csrfU = $appUrl->session->csrfToken();
+$valUrl = $appUrl->handle(requisicao('POST', '/install/validate', [
+    'csrf_token' => $csrfU, 'access_token' => 'token-secreto-123',
+    'agency_name' => 'Agência URL', 'admin_name' => 'Ana', 'admin_email' => 'ana@url.example',
+    'admin_password' => 'PastaForte2026', 'admin_password_confirm' => 'PastaForte2026',
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]));
+preg_match('/draft=([a-f0-9]+)/', (string) $valUrl->header('Location'), $mU);
+$draftU = $mU[1] ?? '';
+
+// A revisão PRECISA trazer o campo hidden do token.
+$revUrl = $appUrl->handle(requisicao('GET', '/install/review', [], [
+    'draft' => $draftU, 'access_token' => 'token-secreto-123',
+]));
+assertSame('revisão abre', 200, $revUrl->status);
+check(
+    'revisão inclui o token nos formulários',
+    substr_count($revUrl->body, 'name="access_token" value="token-secreto-123"') >= 2,
+    'campos encontrados: ' . substr_count($revUrl->body, 'name="access_token"')
+);
+
+// E mesmo sem o campo no corpo, o token da URL vale.
+[$appSem] = appNova(['token' => 'token-secreto-123']);
+$appSem->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$csrfS = $appSem->session->csrfToken();
+$valSem = $appSem->handle(requisicao('POST', '/install/validate', [
+    'csrf_token' => $csrfS, 'access_token' => 'token-secreto-123',
+    'agency_name' => 'Agência Sem Campo', 'admin_name' => 'Ana', 'admin_email' => 'ana@sem.example',
+    'admin_password' => 'PastaForte2026', 'admin_password_confirm' => 'PastaForte2026',
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]));
+preg_match('/draft=([a-f0-9]+)/', (string) $valSem->header('Location'), $mS);
+$confirmacaoSemCampo = $appSem->handle(requisicao(
+    'POST',
+    '/install/run',
+    ['csrf_token' => $csrfS, 'draft' => $mS[1] ?? ''],           // sem access_token no corpo
+    ['access_token' => 'token-secreto-123']                      // token só na URL
+));
+assertSame('confirmação sem campo, com token na URL, instala', 302, $confirmacaoSemCampo->status);
+check('e a tela final é a conclusão', !$appSem->installer->needed());
+check(
+    'não registra recusa de token',
+    !in_array('recusa:token_invalido', array_map(static fn ($e) => (string) ($e['etapa'] ?? ''), $appSem->installer->lastRunTrail()), true),
+    implode(' → ', array_map(static fn ($e) => (string) ($e['etapa'] ?? ''), $appSem->installer->lastRunTrail()))
+);
+
+// Token errado na URL e no corpo continua sendo recusado.
+[$appErrado] = appNova(['token' => 'token-secreto-123']);
+$appErrado->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$recusa = $appErrado->handle(requisicao(
+    'POST', '/install/run',
+    ['csrf_token' => $appErrado->session->csrfToken(), 'draft' => str_repeat('c', 24), 'access_token' => 'errado'],
+    ['access_token' => 'tambem-errado']
+));
+assertSame('token errado na URL e no corpo é recusado', 403, $recusa->status);
 
 echo "\n[7] Instalação completa\n";
 $valido = $app->handle(requisicao('POST', '/install/validate', $base + [

@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.12`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.11)** — todos os módulos,
+**Última versão: [`php-v1.13`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.11)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.12** | **Trilha da confirmação**: o diagnóstico mostra em que etapa a instalação parou | [php-v1.12](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.12) | [`SOCIALMEDIA-IA-php-v1.12.zip`](downloads/SOCIALMEDIA-IA-php-v1.12.zip) |
+| **v1.13** | **Correção do 403 na confirmação**: o formulário de revisão não enviava o token | [php-v1.13](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.13) | [`SOCIALMEDIA-IA-php-v1.13.zip`](downloads/SOCIALMEDIA-IA-php-v1.13.zip) |
+| v1.12 | **Trilha da confirmação**: o diagnóstico mostra em que etapa a instalação parou | [php-v1.12](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.12) | [`SOCIALMEDIA-IA-php-v1.12.zip`](downloads/SOCIALMEDIA-IA-php-v1.12.zip) |
 | v1.11 | **Diagnóstico** em `/install/diagnostico` e falhas que dizem a causa (arquivo:linha) | [php-v1.11](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.11) | [`SOCIALMEDIA-IA-php-v1.11.zip`](downloads/SOCIALMEDIA-IA-php-v1.11.zip) |
 | v1.10 | **Token do instalador**: não se perde no fluxo e a tela de 403 aceita colar o token | [php-v1.10](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.10) | [`SOCIALMEDIA-IA-php-v1.11.zip`](downloads/SOCIALMEDIA-IA-php-v1.10.zip) |
 | v1.9 | **Instalador completo**: tela final "Instância pronta" e `/install/run` sem 405 | [php-v1.9](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.9) | [`SOCIALMEDIA-IA-php-v1.9.zip`](downloads/SOCIALMEDIA-IA-php-v1.9.zip) |
@@ -55,7 +56,7 @@ Cada `.zip` é o pacote completo (`.env` com o endereço preenchido,
 download:
 
 ```sh
-sha256sum SOCIALMEDIA-IA-php-v1.12.zip   # compare com SHA256SUMS.txt
+sha256sum SOCIALMEDIA-IA-php-v1.13.zip   # compare com SHA256SUMS.txt
 ```
 
 O pacote publicado **não contém segredos seus**: o `.env` vem com `SECRET_KEY` e
@@ -70,6 +71,13 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.13 — Correção do 403 na confirmação.** A trilha da v1.12 apontou
+  `recusa:token_invalido` na confirmação. Causa: `review()` não passava
+  `token_required` para a view, então **os campos `access_token` do formulário
+  de revisão nunca eram renderizados** — o passo 1 herdava o token, a revisão
+  não. Três correções: a view deriva `token_required` de `$config->installToken`
+  (não de uma variável opcional), o formulário sempre inclui o campo, e o
+  controlador aceita o token **da URL ou do POST**.
 - **v1.12 — Trilha da confirmação.** Cada tentativa de instalar registra as
   etapas em `data/installer-last-run.json` (**inclusive as recusas**: token
   inválido, CSRF inválido, rascunho expirado, “já instalado”). O diagnóstico
@@ -122,7 +130,7 @@ git archive --format=zip -o socialai-php.zip HEAD:php
   artes com prancheta.
 - **v1.1 / v1.2** — primeiras entregas (base instalável, clientes e
   planejamento). Ficam publicadas para quem precisa reproduzir uma instalação
-  antiga; a v1.12 já contém tudo delas.
+  antiga; a v1.13 já contém tudo delas.
 
 Atualizando de qualquer versão anterior: envie **por cima apenas `app/` e
 `public/`**, mantenha `.env` e `data/`. O esquema migra sozinho e nada é
@@ -140,8 +148,8 @@ dependência para instalar.
 0. **Baixe o pacote** (não precisa clonar nada):
 
    ```sh
-   curl -LO https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/raw/php-v1.12/php/downloads/SOCIALMEDIA-IA-php-v1.12.zip
-   unzip SOCIALMEDIA-IA-php-v1.12.zip -d socialai-php
+   curl -LO https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/raw/php-v1.13/php/downloads/SOCIALMEDIA-IA-php-v1.13.zip
+   unzip SOCIALMEDIA-IA-php-v1.13.zip -d socialai-php
    ```
 
    Versão mais nova: <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases>.

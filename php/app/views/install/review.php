@@ -10,7 +10,10 @@
  * @var \Smia\Support\Config $config
  */
 $dados = $draft['data'];
-$token_required = $token_required ?? false;
+// Deriva da configuração, não de uma variável opcional: esquecer de passar
+// `$token_required` fazia o formulário perder o token e a confirmação virar
+// 403 "recusa:token_invalido".
+$token_required = $token_required ?? ($config->installToken !== null);
 $token = $token ?? '';
 $errors = $errors ?? [];
 ob_start();

@@ -117,9 +117,14 @@ final class InstallerController
             return Response::redirect($this->url($req, '/install'));
         }
 
+        // `token_required` PRECISA vir aqui. Sem ele a view assumia `false` e
+        // não renderizava o <input name="access_token"> — o POST da revisão
+        // chegava sem token e o guarda de acesso recusava com 403. Foi o
+        // "parou na etapa recusa:token_invalido" visto no diagnóstico.
         return $this->render('install/review', [
             'draft' => $rascunho,
-            'token' => $req->input('access_token', ''),
+            'token' => (string) $req->input('access_token', ''),
+            'token_required' => $this->installer->tokenRequired(),
         ]);
     }
 
@@ -253,8 +258,8 @@ final class InstallerController
             [
                 'rotulo' => 'Versão do pacote',
                 'valor' => 'v' . Config::VERSAO,
-                'ok' => version_compare(Config::VERSAO, '1.12', '>='),
-                'dica' => version_compare(Config::VERSAO, '1.12', '<')
+                'ok' => version_compare(Config::VERSAO, '1.13', '>='),
+                'dica' => version_compare(Config::VERSAO, '1.13', '<')
                     ? 'Este servidor está com um pacote antigo. Envie app/ e public/ da versão nova.'
                     : 'Pacote atual.',
             ],
@@ -437,9 +442,25 @@ final class InstallerController
         return $this->safePath((string) parse_url($pedido, PHP_URL_PATH));
     }
 
+    /**
+     * Guarda de acesso ao instalador.
+     *
+     * Aceita o token do POST **ou** o da query string. A duplicação é
+     * deliberada: o token viaja na URL durante todo o assistente, e qualquer
+     * formulário que esqueça o campo hidden (já aconteceu na tela de revisão)
+     * derrubava a confirmação com 403 sem explicação.
+     */
     private function guardAccess(Request $req): bool
     {
-        return !$this->installer->tokenRequired() || $this->installer->tokenValid($req->input('access_token'));
+        if (!$this->installer->tokenRequired()) {
+            return true;
+        }
+        if ($this->installer->tokenValid($req->input('access_token'))) {
+            return true;
+        }
+        $naUrl = is_string($req->query['access_token'] ?? null) ? (string) $req->query['access_token'] : '';
+
+        return $this->installer->tokenValid($naUrl);
     }
 
     /**

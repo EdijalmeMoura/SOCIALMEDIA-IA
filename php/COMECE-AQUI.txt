@@ -55,6 +55,9 @@ ATUALIZANDO DE UMA VERSÃO ANTERIOR
   v1.11 idem: adiciona /install/diagnostico (só leitura, abre sem token) e faz
   a tela de falha dizer a causa com arquivo e linha.
 
+  v1.13 corrige a confirmação que respondia 403: o formulário da revisão não
+  enviava o token exigido pelo instalador.
+
 SE ALGO NÃO FECHAR
   Abra  .../socialai/install/diagnostico
   A seção "Última tentativa de instalação" mostra até onde a confirmação foi.
