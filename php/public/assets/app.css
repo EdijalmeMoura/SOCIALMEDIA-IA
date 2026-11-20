@@ -74,3 +74,20 @@
 .admin-log-what em{display:block;font-style:normal;color:#8a91a4;font-size:8.5px}
 .plain-list{margin:8px 0 12px;padding-left:18px;font-size:10px;line-height:1.8}
 @media(max-width:900px){.settings-facts{grid-template-columns:1fr}.settings-form-inline{flex-direction:column;align-items:stretch}}
+
+/* --- Configurações em abas (v1.17) --------------------------------- */
+.settings-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid #e9ebf1;margin:0 0 16px}
+.settings-tab{padding:9px 14px;font-size:11.5px;font-weight:700;color:#78808f;border-bottom:2px solid transparent;margin-bottom:-1px}
+.settings-tab:hover{color:#3c4a8c}
+.settings-tab.is-active{color:#3e56d7;border-bottom-color:#3e56d7}
+.settings-status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:6px}
+.settings-status-grid>div{border:1px solid #eceef4;border-radius:8px;padding:10px 12px;background:#fafbfe}
+.settings-status-grid>div.is-warn{border-color:#f0e2c0;background:#fdf8ec}
+.settings-status-grid strong{display:block;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#8a90a2}
+.settings-status-grid span{display:block;margin-top:3px;font-size:12px;font-weight:700;color:#293044}
+.settings-detail{font-size:10px;color:#78808f;display:block}
+.settings-path{font-size:10px;word-break:break-all;color:#5b6478;background:#f4f5fa;padding:2px 5px;border-radius:4px}
+.settings-subtitle{font-size:12px;margin:0 0 4px}
+.settings-plain-list{margin:6px 0 0;padding-left:18px;font-size:11px;line-height:1.7;color:#5b6478}
+.settings-plain-list li{margin-bottom:6px}
+.panel-hint-only{min-height:0}

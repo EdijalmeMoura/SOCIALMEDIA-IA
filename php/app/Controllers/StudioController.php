@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Smia\Controllers;
 
+use Smia\Admin\SettingsRepository;
 use Smia\Auth\Authenticator;
 use Smia\Http\Request;
 use Smia\Http\Response;
@@ -61,6 +62,7 @@ final class StudioController
         private readonly Authenticator $auth,
         private readonly Session $session,
         private readonly View $view,
+        private readonly ?SettingsRepository $ajustes = null,
     ) {
     }
 
@@ -79,7 +81,7 @@ final class StudioController
 
         return $this->render('studio/index', $req, $this->dadosCriacao($usuario, $filtros) + [
             'artes' => $this->repo->artes($empresa, 40, $filtros),
-            'form' => [],
+            'form' => $this->formComPreferencias($empresa),
             'erro' => $req->input('erro'),
             'aviso' => $this->avisoDaQuery($req),
         ]);
@@ -129,7 +131,7 @@ final class StudioController
         $assunto = Layout::textoCurto($req->input('subject') ?? '', 300);
         $formato = (string) ($req->input('format_key') ?? '');
         $clientId = (int) ($req->input('client_id') ?? 0);
-        $pedido = $this->pedidoDaCriacao($req);
+        $pedido = $this->pedidoDaCriacao($req, $empresa);
 
         $erros = [];
         if ($clientId <= 0) {
@@ -220,6 +222,27 @@ final class StudioController
     }
 
     /**
+     * Formulário de criação já preenchido com o padrão da agência.
+     *
+     * A pessoa pode trocar em cada arte; isto só evita repetir "Instagram,
+     * tom direto" em toda criação nova.
+     *
+     * @return array<string,string>
+     */
+    private function formComPreferencias(int $companyId): array
+    {
+        if ($this->ajustes === null) {
+            return [];
+        }
+        $prefs = $this->ajustes->preferencias($companyId, StudioGenerator::REDES, StudioGenerator::TONS);
+
+        return [
+            'network' => $prefs['rede'],
+            'tone' => $prefs['tom'],
+        ];
+    }
+
+    /**
      * Lê as escolhas da criação e devolve tudo já dentro do contrato.
      *
      * Campo desconhecido não derruba a criação: vira o padrão. O que importa
@@ -227,15 +250,22 @@ final class StudioController
      *
      * @return array{network:string,objective:string,tone:string,reference:string,com_imagem:bool}
      */
-    private function pedidoDaCriacao(Request $req): array
+    private function pedidoDaCriacao(Request $req, int $companyId = 0): array
     {
-        $rede = (string) ($req->input('network') ?? 'generico');
+        // Sem escolha explícita no formulário, valem as preferências da
+        // agência (Configurações → Preferências); sem elas, o padrão do
+        // produto. É o que faz a preferência deixar de ser enfeite.
+        $padrao = $companyId > 0 && $this->ajustes !== null
+            ? $this->ajustes->preferencias($companyId, StudioGenerator::REDES, StudioGenerator::TONS)
+            : ['rede' => 'instagram', 'tom' => 'marca'];
+
+        $rede = (string) ($req->input('network') ?? '');
         if (!isset(StudioGenerator::REDES[$rede])) {
-            $rede = 'generico';
+            $rede = $padrao['rede'];
         }
-        $tom = (string) ($req->input('tone') ?? 'marca');
+        $tom = (string) ($req->input('tone') ?? '');
         if (!isset(StudioGenerator::TONS[$tom])) {
-            $tom = 'marca';
+            $tom = $padrao['tom'];
         }
 
         return [
@@ -355,7 +385,8 @@ final class StudioController
         }
 
         $prompt = Layout::textoCurto($req->input('image_prompt') ?? '', 4000);
-        $pedido = $this->pedidoDaCriacao($req);
+        // No salvamento vale a empresa da arte (o $empresa não existe fora do index).
+        $pedido = $this->pedidoDaCriacao($req, (int) $arte['company_id']);
         $this->repo->atualizar((int) $arte['id'], (int) $arte['company_id'], (int) $usuario['id'], [
             'network' => $pedido['network'],
             'objective' => $pedido['objective'],

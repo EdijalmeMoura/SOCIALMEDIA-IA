@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Smia;
 
 use Smia\Admin\AdminRepository;
+use Smia\Admin\SystemReport;
 use Smia\Admin\SettingsRepository;
 use Smia\Approvals\ApprovalRepository;
 use Smia\Approvals\PortalRepository;
@@ -203,6 +204,10 @@ final class Application
         $this->router->get('/dashboard', $dashboard->index(...));
 
         // --- Configurações e área do dono ------------------------------
+        // O instalador é reusado: as checagens de ambiente dele são as mesmas
+        // que a aba Sistema mostra, e duplicar a lógica faria as duas
+        // discordarem com o tempo.
+        $instaladorAjustes = new Installer($this->config, $this->db, $this->config->dataDir . '/installer-drafts');
         $ajustesCtl = new SettingsController(
             $this->config,
             $ajustes,
@@ -210,12 +215,19 @@ final class Application
             $auth,
             $this->session,
             $this->view(),
+            new SystemReport($this->config, $this->db, $instaladorAjustes),
+            $instaladorAjustes,
         );
         $this->router->get('/settings', $ajustesCtl->index(...));
         $this->router->post('/settings/ia/chave', $ajustesCtl->saveKey(...));
         $this->router->post('/settings/ia/chave/remover', $ajustesCtl->forgetKey(...));
         $this->router->post('/settings/ia/testar', $ajustesCtl->testKey(...));
         $this->router->post('/settings/ia/modelos', $ajustesCtl->saveModels(...));
+        $this->router->post('/settings/agencia', $ajustesCtl->saveCompany(...));
+        $this->router->post('/settings/preferencias', $ajustesCtl->savePreferences(...));
+        $this->router->post('/settings/preferencias/restaurar', $ajustesCtl->resetPreferences(...));
+        $this->router->post('/settings/conta', $ajustesCtl->saveAccount(...));
+        $this->router->post('/settings/sistema/backup', $ajustesCtl->downloadBackup(...));
 
         $dono = new AdminController(
             $this->config,
@@ -250,6 +262,8 @@ final class Application
             $auth,
             $this->session,
             $this->view(),
+            // O estúdio começa com as preferências da agência (Configurações).
+            $ajustes,
         );
 
         $this->router->get('/clients', $clientes->index(...));

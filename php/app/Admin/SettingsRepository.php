@@ -23,6 +23,17 @@ final class SettingsRepository
     public const MODELO_TEXTO = 'openai_model';
     public const MODELO_IMAGEM = 'openai_image_model';
 
+    /**
+     * Preferências com que o estúdio e o planejamento já vêm preenchidos.
+     *
+     * São valores por agência: a escolha de "Instagram, tom direto" de uma
+     * agência não pode mudar o padrão de outra no mesmo banco.
+     */
+    public const PREF_REDE = 'studio.default_network';
+    public const PREF_TOM = 'studio.default_tone';
+    public const PREF_TAGS = 'studio.default_hashtags';
+    public const PREF_ASSINATURA = 'studio.default_signature';
+
     private SecretBox $cofre;
 
     public function __construct(private readonly Database $db, Config $config)
@@ -33,6 +44,99 @@ final class SettingsRepository
     public function cofre(): SecretBox
     {
         return $this->cofre;
+    }
+
+    /**
+     * Dados da agência que a pessoa vê e (se for admin) edita aqui.
+     *
+     * Lê direto de `companies`: são colunas comuns, sem segredo nenhum, e a
+     * tela precisa mostrá-las mesmo para quem só pode ler.
+     *
+     * @return array{nome:string,slug:string,razao:string,documento:string,email:string,telefone:string,site:string,desde:string,ativa:bool}
+     */
+    public function agencia(int $companyId): array
+    {
+        $linha = $this->db->one(
+            'SELECT name, slug, legal_name, document, contact_email, contact_phone, website, installed_at, is_active
+             FROM companies WHERE id = ?',
+            [$companyId]
+        );
+
+        return [
+            'nome' => (string) ($linha['name'] ?? ''),
+            'slug' => (string) ($linha['slug'] ?? ''),
+            'razao' => (string) ($linha['legal_name'] ?? ''),
+            'documento' => (string) ($linha['document'] ?? ''),
+            'email' => (string) ($linha['contact_email'] ?? ''),
+            'telefone' => (string) ($linha['contact_phone'] ?? ''),
+            'site' => (string) ($linha['website'] ?? ''),
+            'desde' => (string) ($linha['installed_at'] ?? ''),
+            'ativa' => (int) ($linha['is_active'] ?? 1) === 1,
+        ];
+    }
+
+    /** Grava os dados da agência. A rota já garante que é admin da própria agência. */
+    public function gravarAgencia(int $companyId, array $dados): void
+    {
+        $this->db->run(
+            'UPDATE companies
+             SET name = ?, legal_name = ?, document = ?, contact_email = ?, contact_phone = ?, website = ?
+             WHERE id = ?',
+            [
+                $dados['nome'], $dados['razao'], $dados['documento'],
+                $dados['email'], $dados['telefone'], $dados['site'],
+                $companyId,
+            ]
+        );
+    }
+
+    /**
+     * Preferências em vigor, já com o padrão do produto quando ninguém mexeu.
+     *
+     * @return array{rede:string,tom:string,tags:string,assinatura:string,padrao:bool}
+     */
+    public function preferencias(int $companyId, array $redes, array $tons): array
+    {
+        $rede = $this->get($this->chaveDaEmpresa(self::PREF_REDE, $companyId), 'instagram');
+        $tom = $this->get($this->chaveDaEmpresa(self::PREF_TOM, $companyId), 'marca');
+        $tags = $this->get($this->chaveDaEmpresa(self::PREF_TAGS, $companyId), '');
+        $assinatura = $this->get($this->chaveDaEmpresa(self::PREF_ASSINATURA, $companyId), '');
+        $nenhuma = $this->get($this->chaveDaEmpresa(self::PREF_REDE, $companyId)) === '';
+
+        return [
+            'rede' => isset($redes[$rede]) ? $rede : 'instagram',
+            'tom' => isset($tons[$tom]) ? $tom : 'marca',
+            'tags' => $tags,
+            'assinatura' => $assinatura,
+            'padrao' => $nenhuma,
+        ];
+    }
+
+    /** @param array{rede:string,tom:string,tags:string,assinatura:string} $prefs */
+    public function gravarPreferencias(int $companyId, array $prefs, ?int $autor = null): void
+    {
+        $this->set($this->chaveDaEmpresa(self::PREF_REDE, $companyId), $prefs['rede'], $autor);
+        $this->set($this->chaveDaEmpresa(self::PREF_TOM, $companyId), $prefs['tom'], $autor);
+        $this->set($this->chaveDaEmpresa(self::PREF_TAGS, $companyId), $prefs['tags'], $autor);
+        $this->set($this->chaveDaEmpresa(self::PREF_ASSINATURA, $companyId), $prefs['assinatura'], $autor);
+    }
+
+    public function limparPreferencias(int $companyId): void
+    {
+        foreach ([self::PREF_REDE, self::PREF_TOM, self::PREF_TAGS, self::PREF_ASSINATURA] as $chave) {
+            $this->forget($this->chaveDaEmpresa($chave, $companyId));
+        }
+    }
+
+    /**
+     * Chave de `app_settings` com o dono embutido.
+     *
+     * A tabela é uma só para o banco inteiro (várias agências convivem nela),
+     * então a empresa faz parte da chave — não existe "preferência global".
+     */
+    private function chaveDaEmpresa(string $chave, int $companyId): string
+    {
+        return 'company:' . $companyId . ':' . $chave;
     }
 
     public function get(string $chave, string $padrao = ''): string

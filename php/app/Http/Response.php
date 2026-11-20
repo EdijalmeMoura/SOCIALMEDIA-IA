@@ -59,6 +59,19 @@ final class Response
         ]);
     }
 
+    /**
+     * Bytes em memória (backup do banco). Diferente de `file()`, não define
+     * cache nem lê do disco: quem chama já tem o conteúdo e ele é único.
+     */
+    public static function bytes(string $conteudo, string $mime, int $status = 200): self
+    {
+        return new self($conteudo, $status, [
+            'Content-Type' => $mime,
+            'Content-Length' => (string) strlen($conteudo),
+            'Cache-Control' => 'no-store, private',
+        ]);
+    }
+
     public function withHeader(string $nome, string $valor): self
     {
         $this->headers[$nome] = $valor;

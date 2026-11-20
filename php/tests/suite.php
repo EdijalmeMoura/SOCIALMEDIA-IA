@@ -1964,8 +1964,9 @@ $redeInvalida = $criarComContexto(['network' => 'orkut', 'tone' => 'ironico']);
 assertSame('rede e tom desconhecidos não derrubam a criação', 302, $redeInvalida->status);
 $idRede = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $redeInvalida->header('Location'), PHP_URL_PATH));
 $artRede = $app->db->one('SELECT network, tone FROM creative_posts WHERE id = ?', [$idRede]);
-assertSame('rede desconhecida vira o padrão', 'generico', (string) $artRede['network']);
-assertSame('tom desconhecido vira o padrão', 'marca', (string) $artRede['tone']);
+// Sem preferência salva, o padrão do produto é Instagram + tom da marca.
+assertSame('rede desconhecida vira o padrão da agência', 'instagram', (string) $artRede['network']);
+assertSame('tom desconhecido vira o padrão da agência', 'marca', (string) $artRede['tone']);
 
 echo "\n[41c] Estúdio v1.16: imagem na criação, duplicar e filtros\n";
 $logar($app, $idUsuario);
@@ -3562,6 +3563,257 @@ try {
     check('erro de modelo cita o status HTTP', str_contains($mensagemModelo, '404'), $mensagemModelo);
     check('erro de modelo manda ajustar a variável', str_contains($mensagemModelo, 'OPENAI_IMAGE_MODEL'), $mensagemModelo);
     check('erro de modelo repete a explicação do provedor', str_contains($mensagemModelo, 'does not exist'), $mensagemModelo);
+}
+
+
+echo "\n[73] Configurações: cinco abas e o que cada uma mostra\n";
+// Instância própria e instalação de apoio pelo próprio instalador: o alvo
+// destas seções é a tela de Configurações, não o formulário de instalação.
+[$appCfg, $configCfg, $raizCfg] = appNova([]);
+$appCfg->installer->install([
+    'agency_name' => 'Agência Config', 'admin_name' => 'Edu Config', 'admin_email' => 'edu@cfg.example',
+    'password_hash' => password_hash('ConfigForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appCfg->handle(requisicao('GET', '/login'));
+$appCfg->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appCfg->session->csrfToken(), 'email' => 'edu@cfg.example', 'password' => 'ConfigForte2026',
+]));
+$csrfCfg = $appCfg->session->csrfToken();
+$idDonoCfg = (int) $appCfg->db->scalar('SELECT id FROM users WHERE email = ?', ['edu@cfg.example']);
+$empresaCfg = (int) $appCfg->db->scalar('SELECT company_id FROM users WHERE id = ?', [$idDonoCfg]);
+$appCfg->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (?, 'Leitora', 'leitora@cfg.example', ?, 'viewer', 0, 1)",
+    [$empresaCfg, password_hash('LeitorForte2026', PASSWORD_DEFAULT)]
+);
+$idLeitoraCfg = (int) $appCfg->db->scalar('SELECT id FROM users WHERE email = ?', ['leitora@cfg.example']);
+$appCfg->db->run("INSERT INTO clients (id, company_id, company_name, trade_name, segment, status) VALUES (1, ?, 'Cliente Pref', 'Pref', 'Varejo', 'active')", [$empresaCfg]);
+
+$telaCfg = $appCfg->handle(requisicao('GET', '/settings'));
+assertSame('configurações responde 200', 200, $telaCfg->status);
+check('as cinco abas aparecem', substr_count($telaCfg->body, 'class="settings-tab ') === 5);
+check('aba de IA é a inicial', str_contains($telaCfg->body, 'Chave da OpenAI'));
+check('aba de IA tem o campo da chave', str_contains($telaCfg->body, 'name="openai_api_key"'));
+check('a chave nunca volta preenchida', !preg_match('/name="openai_api_key"[^>]*value="[^"]+"/', $telaCfg->body));
+
+foreach ([
+    'agencia' => ['Dados da agência', 'name="name"'],
+    'preferencias' => ['Preferências do estúdio', 'name="default_network"'],
+    'conta' => ['Minha conta', 'name="current_password"'],
+    'sistema' => ['Versões', 'Baixar backup agora'],
+] as $aba => [$texto, $campo]) {
+    $telaAba = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => $aba]));
+    assertSame('aba ' . $aba . ' responde 200', 200, $telaAba->status);
+    check('aba ' . $aba . ' tem o conteúdo esperado', str_contains($telaAba->body, $texto) && str_contains($telaAba->body, $campo));
+}
+$abaInvalida = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => 'inventada']));
+check('aba desconhecida cai na de IA', str_contains($abaInvalida->body, 'Chave da OpenAI'));
+
+echo "\n[74] Configurações: dados da agência\n";
+$salvarAgenciaCfg = function (array $extra = []) use ($appCfg, $csrfCfg): \Smia\Http\Response {
+    return $appCfg->handle(requisicao('POST', '/settings/agencia', array_merge([
+        'csrf_token' => $csrfCfg,
+        'name' => 'Agência Config',
+        'legal_name' => 'Config Assessoria LTDA',
+        'document' => '12.345.678/0001-90',
+        'contact_email' => 'contato@cfg.example',
+        'contact_phone' => '(81) 99999-0000',
+        'website' => 'https://cfg.example',
+    ], $extra)));
+};
+$salvouAgencia = $salvarAgenciaCfg();
+assertSame('salvar agência redireciona', 302, $salvouAgencia->status);
+check('volta para a aba agência', str_contains((string) $salvouAgencia->header('Location'), 'aba=agencia'));
+$empresaSalva = $appCfg->db->one('SELECT * FROM companies WHERE id = ?', [$empresaCfg]);
+assertSame('razão social gravada', 'Config Assessoria LTDA', (string) $empresaSalva['legal_name']);
+assertSame('documento só com números', '12345678000190', (string) $empresaSalva['document']);
+assertSame('telefone gravado', '(81) 99999-0000', (string) $empresaSalva['contact_phone']);
+assertSame('auditoria registrada', 'settings.company_saved', (string) $appCfg->db->scalar(
+    "SELECT action FROM admin_actions WHERE action = 'settings.company_saved' ORDER BY id DESC LIMIT 1"
+));
+check('nome vazio é recusado', str_contains((string) $salvarAgenciaCfg(['name' => ''])->header('Location'), 'aba=agencia'));
+check('documento com 7 dígitos é recusado', str_contains((string) $salvarAgenciaCfg(['document' => '1234567'])->header('Location'), 'aba=agencia'));
+assertSame('recusa não altera a razão social', 'Config Assessoria LTDA', (string) $appCfg->db->scalar('SELECT legal_name FROM companies WHERE id = ?', [$empresaCfg]));
+$semCsrf = $appCfg->handle(requisicao('POST', '/settings/agencia', ['name' => 'Sem CSRF']));
+assertSame('sem CSRF volta com erro', 302, $semCsrf->status);
+assertSame('sem CSRF não altera o nome', 'Agência Config', (string) $appCfg->db->scalar('SELECT name FROM companies WHERE id = ?', [$empresaCfg]));
+
+echo "\n[75] Configurações: preferências viram o padrão do estúdio\n";
+$appCfg->db->run("INSERT INTO client_branding (client_id, primary_color) VALUES (1, '#223344')");
+$semPrefs = $appCfg->handle(requisicao('GET', '/studio'));
+check('sem preferência o estúdio abre no padrão do produto', str_contains($semPrefs->body, 'name="network" value="instagram" checked'));
+$appCfg->handle(requisicao('POST', '/settings/preferencias', [
+    'csrf_token' => $csrfCfg,
+    'default_network' => 'linkedin',
+    'default_tone' => 'profissional',
+    'default_hashtags' => 'minhaagencia, atendimento #marketing',
+    'default_signature' => 'Fale com a gente no direct.',
+]));
+$prefsSalvas = json_decode((string) json_encode($appCfg->db->all(
+    "SELECT key, value FROM app_settings WHERE key LIKE 'company:" . $empresaCfg . ":%' ORDER BY key"
+)), true);
+$mapaPrefs = [];
+foreach ($prefsSalvas as $linha) {
+    $mapaPrefs[str_replace('company:' . $empresaCfg . ':studio.', '', (string) $linha['key'])] = (string) $linha['value'];
+}
+assertSame('rede padrão gravada', 'linkedin', $mapaPrefs['default_network'] ?? '');
+assertSame('tom padrão gravado', 'profissional', $mapaPrefs['default_tone'] ?? '');
+assertSame('hashtags normalizadas com #', '#minhaagencia #atendimento #marketing', $mapaPrefs['default_hashtags'] ?? '');
+assertSame('assinatura gravada', 'Fale com a gente no direct.', $mapaPrefs['default_signature'] ?? '');
+$comPrefs = $appCfg->handle(requisicao('GET', '/studio'));
+check('estúdio abre com a rede preferida', str_contains($comPrefs->body, 'name="network" value="linkedin" checked'));
+check('estúdio abre com o tom preferido', (bool) preg_match('/<option value="profissional" selected>/', $comPrefs->body));
+$prefInvalida = $appCfg->handle(requisicao('POST', '/settings/preferencias', [
+    'csrf_token' => $csrfCfg, 'default_network' => 'orkut', 'default_tone' => 'ironico',
+]));
+check('rede/tom fora da lista são recusados', str_contains((string) $prefInvalida->header('Location'), 'aba=preferencias'));
+assertSame('recusa mantém a preferência anterior', 'linkedin', (string) $appCfg->db->scalar(
+    "SELECT value FROM app_settings WHERE key = 'company:" . $empresaCfg . ":studio.default_network'"
+));
+// Criação sem escolher nada usa a preferência, não o padrão do produto.
+$criouComPref = $appCfg->handle(requisicao('POST', '/studio/generate', [
+    'csrf_token' => $csrfCfg, 'client_id' => '1', 'subject' => 'Post com preferência', 'format_key' => 'square',
+]));
+assertSame('criação usa preferência e responde 302', 302, $criouComPref->status);
+$idPref = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $criouComPref->header('Location'), PHP_URL_PATH));
+assertSame('arte nasceu com a rede preferida', 'linkedin', (string) $appCfg->db->scalar('SELECT network FROM creative_posts WHERE id = ?', [$idPref]));
+assertSame('arte nasceu com o tom preferido', 'profissional', (string) $appCfg->db->scalar('SELECT tone FROM creative_posts WHERE id = ?', [$idPref]));
+$appCfg->handle(requisicao('POST', '/settings/preferencias/restaurar', ['csrf_token' => $csrfCfg]));
+assertSame('restaurar apaga as preferências', 0, (int) $appCfg->db->scalar(
+    "SELECT COUNT(*) FROM app_settings WHERE key LIKE 'company:" . $empresaCfg . ":%'"
+));
+check('restaurar não apaga as artes', (int) $appCfg->db->scalar('SELECT COUNT(*) FROM creative_posts') === 1);
+
+echo "\n[76] Configurações: minha conta\n";
+$salvarContaCfg = function (array $extra = []) use ($appCfg, $csrfCfg): \Smia\Http\Response {
+    return $appCfg->handle(requisicao('POST', '/settings/conta', array_merge([
+        'csrf_token' => $csrfCfg,
+        'name' => 'Edu Config',
+        'email' => 'edu@cfg.example',
+    ], $extra)));
+};
+$semSenha = $salvarContaCfg(['name' => 'Edu Actualizado']);
+assertSame('salvar sem senha redireciona', 302, $semSenha->status);
+assertSame('nome novo gravado', 'Edu Actualizado', (string) $appCfg->db->scalar('SELECT name FROM users WHERE id = ?', [$idDonoCfg]));
+check('senha antiga continua valendo', password_verify('ConfigForte2026', (string) $appCfg->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$idDonoCfg])));
+// Preencher só a senha atual não é pedido de troca: nada de erro confuso.
+$soAtual = $salvarContaCfg(['current_password' => 'ConfigForte2026', 'new_password' => '', 'new_password_confirm' => '']);
+assertSame('só a senha atual não bloqueia o salvamento', 302, $soAtual->status);
+check('nada de senha trocada quando a nova está vazia', password_verify('ConfigForte2026', (string) $appCfg->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$idDonoCfg])));
+$senhaErrada = $salvarContaCfg([
+    'current_password' => 'errada', 'new_password' => 'NovaForte2026', 'new_password_confirm' => 'NovaForte2026',
+]);
+check('senha atual errada é recusada', str_contains((string) $senhaErrada->header('Location'), 'aba=conta'));
+check('senha não foi trocada', password_verify('ConfigForte2026', (string) $appCfg->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$idDonoCfg])));
+$curta = $salvarContaCfg(['current_password' => 'ConfigForte2026', 'new_password' => 'curta', 'new_password_confirm' => 'curta']);
+check('senha curta é recusada', str_contains((string) $curta->header('Location'), 'aba=conta'));
+$diferente = $salvarContaCfg(['current_password' => 'ConfigForte2026', 'new_password' => 'NovaForte2026', 'new_password_confirm' => 'OutraForte2026']);
+check('confirmação diferente é recusada', str_contains((string) $diferente->header('Location'), 'aba=conta'));
+$senhaBoa = $salvarContaCfg(['current_password' => 'ConfigForte2026', 'new_password' => 'NovaForte2026', 'new_password_confirm' => 'NovaForte2026']);
+assertSame('troca de senha redireciona', 302, $senhaBoa->status);
+check('senha nova vale', password_verify('NovaForte2026', (string) $appCfg->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$idDonoCfg])));
+$emailDeOutro = $salvarContaCfg(['email' => 'leitora@cfg.example']);
+check('e-mail de outra pessoa é recusado', str_contains((string) $emailDeOutro->header('Location'), 'aba=conta'));
+assertSame('e-mail do dono não mudou', 'edu@cfg.example', (string) $appCfg->db->scalar('SELECT email FROM users WHERE id = ?', [$idDonoCfg]));
+assertSame('troca de senha fica auditada', 'settings.account_password_changed', (string) $appCfg->db->scalar(
+    "SELECT action FROM admin_actions WHERE action = 'settings.account_password_changed' ORDER BY id DESC LIMIT 1"
+));
+
+echo "\n[77] Configurações: sistema e backup\n";
+$telaSistema = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => 'sistema']));
+assertSame('aba sistema responde 200', 200, $telaSistema->status);
+check('mostra a versão da aplicação', str_contains($telaSistema->body, 'v' . \Smia\Support\Config::VERSAO));
+check('mostra a versão do esquema', str_contains($telaSistema->body, 'Banco (esquema)'));
+check('mostra a checagem de extensões', str_contains($telaSistema->body, 'Extensões'));
+check('mostra o caminho do banco', str_contains($telaSistema->body, 'socialmedia.sqlite'));
+check('explica o backup', str_contains($telaSistema->body, 'VACUUM INTO'));
+$baixou = $appCfg->handle(requisicao('POST', '/settings/sistema/backup', ['csrf_token' => $csrfCfg]));
+assertSame('backup responde 200', 200, $baixou->status);
+check('backup vem como anexo', str_contains((string) $baixou->header('Content-Disposition'), 'attachment; filename="socialmedia-ia-backup-'));
+$assinatura = substr($baixou->body, 0, 15);
+assertSame('arquivo é um SQLite de verdade', 'SQLite format 3', $assinatura);
+$tmpBackup = sys_get_temp_dir() . '/smia-backup-' . bin2hex(random_bytes(4)) . '.sqlite';
+file_put_contents($tmpBackup, $baixou->body);
+$pdoBackup = new PDO('sqlite:' . $tmpBackup);
+$pdoBackup->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+assertSame('backup abre sem corrupção', 'ok', (string) $pdoBackup->query('PRAGMA integrity_check')->fetchColumn());
+check('backup tem a agência dentro', (int) $pdoBackup->query('SELECT COUNT(*) FROM companies')->fetchColumn() === 1);
+check('backup tem o usuário dentro', (int) $pdoBackup->query('SELECT COUNT(*) FROM users')->fetchColumn() >= 2);
+$pdoBackup = null;
+@unlink($tmpBackup);
+assertSame('backup fica auditado', 'settings.backup_downloaded', (string) $appCfg->db->scalar(
+    "SELECT action FROM admin_actions WHERE action = 'settings.backup_downloaded' ORDER BY id DESC LIMIT 1"
+));
+check('nenhum arquivo de backup fica no disco', glob($raizCfg . '/backup-*.sqlite') === []);
+
+echo "\n[78] Configurações: todos veem, só admin altera\n";
+$appCfg->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfCfg]));
+$appCfg->handle(requisicao('GET', '/login'));
+$appCfg->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appCfg->session->csrfToken(), 'email' => 'leitora@cfg.example', 'password' => 'LeitorForte2026',
+]));
+$csrfLeitor = $appCfg->session->csrfToken();
+foreach (['ia', 'agencia', 'preferencias', 'conta', 'sistema'] as $aba) {
+    $telaLeitor = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => $aba]));
+    assertSame('leitor abre a aba ' . $aba, 200, $telaLeitor->status);
+}
+$telaLeitorAg = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => 'agencia']));
+check('leitor vê os campos bloqueados', substr_count($telaLeitorAg->body, 'readonly disabled') >= 5);
+check('leitor vê o aviso de permissão', str_contains($telaLeitorAg->body, 'só o proprietário ou um administrador altera'));
+assertSame('leitor não muda a agência', 403, $appCfg->handle(requisicao('POST', '/settings/agencia', [
+    'csrf_token' => $csrfLeitor, 'name' => 'Tomada',
+]))->status);
+assertSame('leitor não muda preferências', 403, $appCfg->handle(requisicao('POST', '/settings/preferencias', [
+    'csrf_token' => $csrfLeitor, 'default_network' => 'facebook', 'default_tone' => 'marca',
+]))->status);
+assertSame('leitor não baixa backup', 403, $appCfg->handle(requisicao('POST', '/settings/sistema/backup', [
+    'csrf_token' => $csrfLeitor,
+]))->status);
+assertSame('leitor não troca a chave', 403, $appCfg->handle(requisicao('POST', '/settings/ia/chave', [
+    'csrf_token' => $csrfLeitor, 'openai_api_key' => 'sk-teste-' . str_repeat('a', 60),
+]))->status);
+// A conta é de cada um: o leitor troca a própria senha.
+assertSame('leitor troca a própria senha', 302, $appCfg->handle(requisicao('POST', '/settings/conta', [
+    'csrf_token' => $csrfLeitor, 'name' => 'Leitora', 'email' => 'leitora@cfg.example',
+    'current_password' => 'LeitorForte2026', 'new_password' => 'LeitorNova2026', 'new_password_confirm' => 'LeitorNova2026',
+]))->status);
+check('senha do leitor mudou', password_verify('LeitorNova2026', (string) $appCfg->db->scalar('SELECT password_hash FROM users WHERE id = ?', [$idLeitoraCfg])));
+// `user_id` no formulário não muda o alvo: a conta é sempre a de quem entrou.
+$appCfg->handle(requisicao('POST', '/settings/conta', [
+    'csrf_token' => $csrfLeitor, 'user_id' => (string) $idDonoCfg, 'name' => 'Leitora', 'email' => 'leitora@cfg.example',
+]));
+assertSame('a conta alterada é sempre a de quem entrou', 'leitora@cfg.example', (string) $appCfg->db->scalar('SELECT email FROM users WHERE id = ?', [$idLeitoraCfg]));
+assertSame('o dono não foi tocado pelo formulário do leitor', 'edu@cfg.example', (string) $appCfg->db->scalar('SELECT email FROM users WHERE id = ?', [$idDonoCfg]));
+
+echo "\n[79] Configurações: isolamento e migração v9\n";
+[$outraCfg, $configOutra, $raizOutra] = appNova([]);
+$outraCfg->installer->install([
+    'agency_name' => 'Outra Agência', 'admin_name' => 'Rafa', 'admin_email' => 'rafa@outra.example',
+    'password_hash' => password_hash('OutraForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$outraCfg->handle(requisicao('GET', '/login'));
+$outraCfg->handle(requisicao('POST', '/login', ['csrf_token' => $outraCfg->session->csrfToken(), 'email' => 'rafa@outra.example', 'password' => 'OutraForte2026']));
+$telaOutra = $outraCfg->handle(requisicao('GET', '/settings', [], ['aba' => 'agencia']));
+assertSame('outra agência abre as próprias configurações', 200, $telaOutra->status);
+check('outra agência não vê o nome da primeira', !str_contains($telaOutra->body, 'Agência Config'));
+$prefsOutra = $outraCfg->handle(requisicao('GET', '/settings', [], ['aba' => 'preferencias']));
+check('outra agência começa sem preferência salva (badge de fábrica)',
+    str_contains($prefsOutra->body, 'padrão de fábrica'));
+$outraCfg->handle(requisicao('POST', '/settings/preferencias', [
+    'csrf_token' => $outraCfg->session->csrfToken(), 'default_network' => 'facebook', 'default_tone' => 'divertido',
+]));
+$chavesOutra = $outraCfg->db->all('SELECT key FROM app_settings ORDER BY key');
+$empresaOutra = 1;
+assertSame('as quatro preferências ficam presas à empresa', 4, count(array_filter($chavesOutra, static fn (array $l): bool => str_starts_with((string) $l['key'], 'company:1:'))));
+check('nenhuma preferência da primeira agência vaza', array_filter($chavesOutra, static fn (array $l): bool => (string) $l['value'] === 'linkedin') === []);
+// Migração: colunas novas existem e a versão é a atual.
+assertSame('esquema na v9 ou maior', true, (int) \Smia\Database\Schema::VERSAO >= 9);
+foreach (['legal_name', 'document', 'contact_email', 'contact_phone', 'website'] as $coluna) {
+    assertSame('coluna ' . $coluna . ' existe em companies', 1, (int) $outraCfg->db->scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('companies') WHERE name = ?", [$coluna]
+    ));
 }
 
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";

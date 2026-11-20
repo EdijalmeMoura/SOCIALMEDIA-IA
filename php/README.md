@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.16`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16)** — todos os módulos,
+**Última versão: [`php-v1.17`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.17)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.16** | **Estúdio 2.0**: criação em etapas (rede, objetivo, tom, imagem), prancheta com enquadramento, guias, zoom e desfazer, legenda com contador e cópia | [php-v1.16](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16) | [`SOCIALMEDIA-IA-php-v1.16.zip`](downloads/SOCIALMEDIA-IA-php-v1.16.zip) |
+| **v1.17** | **Configurações em abas**: IA, agência, preferências do estúdio, minha conta e sistema (versões, permissões e backup do banco) | [php-v1.17](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.17) | [`SOCIALMEDIA-IA-php-v1.17.zip`](downloads/SOCIALMEDIA-IA-php-v1.17.zip) |
+| v1.16 | **Estúdio 2.0**: criação em etapas (rede, objetivo, tom, imagem), prancheta com enquadramento, guias, zoom e desfazer, legenda com contador e cópia | [php-v1.16](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16) | [`SOCIALMEDIA-IA-php-v1.16.zip`](downloads/SOCIALMEDIA-IA-php-v1.16.zip) |
 | v1.15 | **Área do dono, Usuários e Configurações**: a chave de IA entra pela tela e é testada no servidor | [php-v1.15](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15) | [`SOCIALMEDIA-IA-php-v1.15.zip`](downloads/SOCIALMEDIA-IA-php-v1.15.zip) |
 | v1.14 | **Diagnóstico da chave de IA e do `.env`**: testa a chave no servidor e aponta o erro exato do arquivo | [php-v1.14](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.14) | [`SOCIALMEDIA-IA-php-v1.14.zip`](downloads/SOCIALMEDIA-IA-php-v1.14.zip) |
 | v1.13 | **Correção do 403 na confirmação**: o formulário de revisão não enviava o token | [php-v1.13](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.13) | [`SOCIALMEDIA-IA-php-v1.13.zip`](downloads/SOCIALMEDIA-IA-php-v1.13.zip) |
@@ -74,6 +75,19 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.17 — Configurações é uma área, não uma chave.** A tela `/settings`
+  virou cinco abas: **IA** (o que já existia: chave cifrada, teste no servidor
+  e modelos), **Agência** (nome, razão social, documento, e-mail, telefone e
+  site — os dados que vão na sua identidade), **Preferências** (rede, tom,
+  hashtags e assinatura padrão; toda arte nova já nasce com eles, e cada arte
+  pode mudar depois), **Minha conta** (seu nome, seu e-mail e a troca da
+  própria senha, pedindo a atual) e **Sistema** (versão do app e do banco,
+  PHP, extensões, permissões das pastas e **baixar cópia do banco** com
+  `VACUUM INTO` — arquivo consistente mesmo com a instância em uso).
+  **Todos veem; só proprietário/admin altera** — para os demais os campos
+  aparecem bloqueados com a explicação, e "Minha conta" continua sendo de cada
+  um. A troca de senha com a atual errada salva o perfil e avisa exatamente
+  isso, em vez de perder tudo. Migração aditiva para o esquema **v9**.
 - **v1.16 — O estúdio ficou de usar, não só de existir.**
   A criação virou cinco etapas com prévia: para quem, onde publica (rede com
   limite real de legenda), formato, como falar (objetivo, tom e o que não pode

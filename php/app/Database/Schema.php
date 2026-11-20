@@ -19,10 +19,11 @@ namespace Smia\Database;
  *           6 = Meta (agenda de publicação, conexões de Página, tentativas)
  *           7 = administração (status de usuário, papel do dono, configurações)
  *           8 = estúdio com contexto (rede, objetivo, tom e referência da arte)
+ *           9 = configurações da agência (identidade, contato e preferências)
  */
 final class Schema
 {
-    public const VERSAO = 8;
+    public const VERSAO = 9;
 
     public static function migrate(Database $db): void
     {
@@ -500,6 +501,16 @@ SQL);
         self::addColumn($db, 'creative_posts', 'objective', "TEXT NOT NULL DEFAULT ''");
         self::addColumn($db, 'creative_posts', 'tone', "TEXT NOT NULL DEFAULT 'marca'");
         self::addColumn($db, 'creative_posts', 'reference', "TEXT NOT NULL DEFAULT ''");
+
+        // --- v9: configurações da agência ------------------------------
+        // Dados que a agência assina embaixo (razão social, CNPJ, contato) e
+        // que antes só existiam no nome criado na instalação. Nada obrigatório:
+        // quem já instalou continua funcionando com os campos vazios.
+        self::addColumn($db, 'companies', 'legal_name', 'TEXT');
+        self::addColumn($db, 'companies', 'document', 'TEXT');
+        self::addColumn($db, 'companies', 'contact_email', 'TEXT');
+        self::addColumn($db, 'companies', 'contact_phone', 'TEXT');
+        self::addColumn($db, 'companies', 'website', 'TEXT');
 
         $versao = (int) ($db->scalar('SELECT MAX(version) FROM schema_version') ?? 0);
         if ($versao < self::VERSAO) {
