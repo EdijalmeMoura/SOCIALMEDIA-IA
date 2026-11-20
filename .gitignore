@@ -15,3 +15,7 @@ backups/
 
 # Dependências dos testes PHP (php-wasm), nunca versionadas
 php/node_modules/
+
+# Dependências do harness de teste PHP (php-wasm), instaladas por npm
+php/package-lock.json
+php/node_modules/
