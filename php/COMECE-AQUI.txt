@@ -52,6 +52,13 @@ ATUALIZANDO DE UMA VERSÃO ANTERIOR
   tela "Instância pronta" antes do login.
   v1.10 idem: corrige o token, que se perdia nos redirecionamentos (a tela de
   403 agora aceita colar o token). O rodapé do instalador mostra a versão.
+  v1.11 idem: adiciona /install/diagnostico (só leitura, abre sem token) e faz
+  a tela de falha dizer a causa com arquivo e linha.
+
+SE ALGO NÃO FECHAR
+  Abra  .../socialai/install/diagnostico
+  Ele mostra versão do pacote, PHP, sessão, pasta data gravável, banco e se a
+  instância já está instalada. Não pede token e não mostra segredo.
 
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF

@@ -67,8 +67,17 @@ final class Application
         $this->session = new Session($this->config->basePath, $this->config->cookieSecure);
         $this->installer = Installer::make($this->config, $this->db);
         $this->upload = new Upload($this->config->dataDir . '/uploads');
-        $this->router = new Router();
-        $this->routes();
+
+        try {
+            $this->router = new Router();
+            $this->routes();
+        } catch (\Throwable $erro) {
+            // Falha ao montar as rotas não pode virar tela em branco: aparece
+            // a causa, que é o que permite consertar sem adivinhar.
+            error_log('[SMIA][boot] ' . $erro::class . ': ' . $erro->getMessage() . ' em ' . $erro->getFile() . ':' . $erro->getLine());
+
+            throw $erro;
+        }
     }
 
     private function view(): View
@@ -168,6 +177,8 @@ final class Application
         $this->router->get('/install', $installer->show(...));
         // Porta de entrada do token (a tela de 403 tem o formulário).
         $this->router->any('/install/access', $installer->access(...));
+        // Somente leitura e sem token na URL: serve para descobrir a causa.
+        $this->router->get('/install/diagnostico', $installer->diagnostics(...));
         $this->router->post('/install/validate', $installer->validate(...));
         $this->router->get('/install/review', $installer->review(...));
         // GET + POST: abrir /install/run no navegador não pode virar 405.
@@ -299,11 +310,18 @@ final class Application
             $resposta = $this->router->dispatch($req);
         } catch (\Throwable $erro) {
             error_log('[SMIA] ' . $erro::class . ': ' . $erro->getMessage() . ' em ' . $erro->getFile() . ':' . $erro->getLine());
+            $detalhe = '';
+            if ($this->config->debug) {
+                $detalhe = '<pre style="background:#fee;padding:12px;overflow:auto;white-space:pre-wrap">'
+                    . e($erro::class . ': ' . $erro->getMessage()) . "\n"
+                    . e($erro->getFile() . ':' . $erro->getLine()) . '</pre>';
+            }
             $resposta = Response::html(
                 '<!doctype html><meta charset="utf-8"><title>Erro</title>'
                 . '<div style="font-family:system-ui;padding:40px">'
                 . '<h1>Algo falhou nesta página</h1>'
                 . '<p>O erro foi registrado no log do servidor. Se acabou de instalar, confira as permissões da pasta de dados.</p>'
+                . $detalhe
                 . '<p><a href="' . e($this->config->url('/dashboard')) . '">Voltar ao workspace</a></p></div>',
                 500
             );

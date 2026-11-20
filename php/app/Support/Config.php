@@ -23,7 +23,7 @@ final class Config
      * Versão deste pacote. Aparece no rodapé do instalador porque a pergunta
      * mais comum ao dar erro é "o arquivo que subiu é o novo?".
      */
-    public const VERSAO = '1.10';
+    public const VERSAO = '1.11';
 
     public const MODELO_TEXTO_PADRAO = 'gpt-6-luna';
     public const MODELO_IMAGEM_PADRAO = 'gpt-image-2';
@@ -51,6 +51,8 @@ final class Config
         public readonly string $metaTokenKey = '',
         public readonly string $metaPublicBaseUrl = '',
         public readonly string $metaGraphEndpoint = '',
+        /** Mostra a causa técnica (arquivo:linha) nas telas de erro. */
+        public readonly bool $debug = false,
     ) {
     }
 
@@ -109,6 +111,7 @@ final class Config
             metaTokenKey: self::env('META_TOKEN_ENCRYPTION_KEY') ?? '',
             metaPublicBaseUrl: self::env('META_PUBLIC_BASE_URL') ?? '',
             metaGraphEndpoint: self::env('META_GRAPH_ENDPOINT') ?: \Smia\Meta\Graph::HOST,
+            debug: self::env('SOCIALMEDIA_DEBUG') === '1',
         );
     }
 

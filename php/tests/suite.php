@@ -200,7 +200,7 @@ check('a tela do instalador mostra a versão', str_contains(
     $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']))->body,
     'v' . \Smia\Support\Config::VERSAO
 ), 'versão não aparece no rodapé');
-check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.9', '>='), \Smia\Support\Config::VERSAO);
+check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.11', '>='), \Smia\Support\Config::VERSAO);
 // Defeito real: todo redirecionamento interno voltava para /install SEM o
 // token, então o próprio guarda de acesso devolvia 403 no meio do assistente.
 $semToken = $app->handle(requisicao('GET', '/install'));
@@ -273,6 +273,124 @@ $acessoSemCsrf = $app->handle(requisicao('POST', '/install/access', [
 ]));
 assertSame('acesso sem CSRF responde 400', 400, $acessoSemCsrf->status);
 check('acesso sem CSRF não redireciona', $acessoSemCsrf->header('Location') === null);
+
+echo "\n[6c] Diagnóstico da instalação\n";
+// A página existe justamente para quando o token está errado: ela NÃO pode
+// exigir token, e não pode vazar segredo nenhum.
+$diag = $app->handle(requisicao('GET', '/install/diagnostico'));
+assertSame('diagnóstico abre sem token', 200, $diag->status);
+check('diagnóstico mostra a versão', str_contains($diag->body, 'v' . \Smia\Support\Config::VERSAO));
+check('diagnóstico não mostra o token', !str_contains($diag->body, 'token-secreto-123'));
+check('diagnóstico diz que o token é exigido', str_contains($diag->body, 'Token exigido'));
+check('diagnóstico informa a pasta de dados', str_contains($diag->body, 'Pasta de dados'));
+check('diagnóstico informa o estado da instalação', str_contains($diag->body, 'Instalação'));
+check('diagnóstico informa a versão dos arquivos', str_contains($diag->body, 'Arquivos em uso'));
+check('diagnóstico não cria conta', $app->installer->needed());
+
+echo "\n[6d] Falha na confirmação não pode esconder que a conta existe\n";
+// Simula a fase "gravar" falhando: a tela precisa dizer que NADA foi criado e
+// mostrar a causa técnica (arquivo:linha), não um genérico "algo falhou".
+$configFalha = new \Smia\Support\Config(
+    root: $raizFalha = sys_get_temp_dir() . '/smia-falha-' . bin2hex(random_bytes(4)),
+    dataDir: $raizFalha,
+    dbPath: $raizFalha . '/socialmedia.sqlite',
+    envFile: $raizFalha . '/installer.env',
+    basePath: '/edijalmemoura/socialai',
+    publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+    secretKey: '', cookieSecure: false, installToken: 'token-secreto-123',
+    timezone: 'America/Sao_Paulo',
+);
+mkdir($raizFalha, 0o700, true);
+$appFalha = new \Smia\Application($configFalha);
+$csrfFalha = $appFalha->session->csrfToken();
+// Banco somente-leitura: a gravação estoura e a tela precisa explicar.
+$rascunhoFalha = $appFalha->installer->createDraft([
+    'agency_name' => 'Agência Falha', 'admin_name' => 'Ana', 'admin_email' => 'ana@falha.example',
+    'password_hash' => password_hash('PastaForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+    'admin_password' => '', 'admin_password_confirm' => '',
+]);
+$telaFalha = null;
+try {
+    // Torna a pasta de dados não gravável para forçar o erro na fase de gravar.
+    chmod($raizFalha, 0o500);
+    $telaFalha = $appFalha->handle(requisicao('POST', '/install/run', [
+        'csrf_token' => $csrfFalha, 'access_token' => 'token-secreto-123', 'draft' => $rascunhoFalha,
+    ]));
+} finally {
+    chmod($raizFalha, 0o700);
+}
+if ($telaFalha !== null && $telaFalha->status === 500) {
+    check('falha ao gravar mostra a etapa', str_contains($telaFalha->body, 'gravação no banco'));
+    check('falha ao gravar diz que nada foi criado', str_contains($telaFalha->body, 'Nenhuma conta foi criada'));
+    check('falha ao gravar mostra o arquivo e a linha', str_contains($telaFalha->body, 'Onde:'));
+    check('falha ao gravar não diz que instalou', !str_contains($telaFalha->body, 'A conta foi criada'));
+    check('falha ao gravar mantém o instalador aberto', $appFalha->installer->needed());
+} else {
+    // Ambiente que permite escrever mesmo com 0500 (root): o teste vira
+    // verificação de que a confirmação funcionou, sem quebrar a suíte.
+    check('confirmação funcionou onde a escrita é permitida', $telaFalha !== null && !$appFalha->installer->needed());
+}
+
+// Fase "fechar" falhando: a conta existe, então a tela tem de dizer isso e
+// levar ao login — não sugerir refazer tudo.
+$configFechar = new \Smia\Support\Config(
+    root: $raizFechar = sys_get_temp_dir() . '/smia-fechar-' . bin2hex(random_bytes(4)),
+    dataDir: $raizFechar, dbPath: $raizFechar . '/socialmedia.sqlite',
+    envFile: $raizFechar . '/installer.env',
+    basePath: '', publicOrigin: 'https://exemplo.test',
+    secretKey: '', cookieSecure: false, installToken: null,
+    timezone: 'America/Sao_Paulo',
+);
+mkdir($raizFechar, 0o700, true);
+$appFechar = new \Smia\Application($configFechar);
+$appFechar->installer->install([
+    'agency_name' => 'Agência Fechar', 'admin_name' => 'Ana', 'admin_email' => 'ana@fechar.example',
+    'password_hash' => password_hash('PastaForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://exemplo.test',
+]);
+check('instalação de apoio foi gravada', !$appFechar->installer->needed());
+$registroFechar = $appFechar->installer->installedRecord();
+check('registro disponível para a tela de falha', ($registroFechar['owner_email'] ?? '') === 'ana@fechar.example');
+
+echo "\n[6e] Mensagens do instalador aparecem na tela\n";
+// O layout do instalador não renderizava flash: "sessão expirada" era gravada
+// na sessão e nunca exibida — a pessoa repetia o mesmo erro sem entender.
+[$appFlash] = appNova(['token' => 'token-secreto-123']);
+$appFlash->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$csrfFlash = $appFlash->session->csrfToken();
+// Confirmação com rascunho inexistente: grava flash e redireciona.
+$redirFlash = $appFlash->handle(requisicao('POST', '/install/run', [
+    'csrf_token' => $csrfFlash, 'access_token' => 'token-secreto-123', 'draft' => str_repeat('a', 24),
+]));
+assertSame('rascunho inexistente redireciona', 302, $redirFlash->status);
+$comFlash = $appFlash->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+check('a tela mostra a mensagem da requisição anterior', str_contains($comFlash->body, 'install-flash'), 'flash não apareceu');
+check('a mensagem diz que a revisão expirou', str_contains($comFlash->body, 'Revisão expirada'), 'sem explicação');
+
+// Erro de CSRF no formulário é explicado com a causa provável.
+[$appCsrf] = appNova(['token' => 'token-secreto-123']);
+$appCsrf->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$semCsrf = $appCsrf->handle(requisicao('POST', '/install/validate', [
+    'csrf_token' => 'errado', 'access_token' => 'token-secreto-123',
+]));
+assertSame('CSRF inválido no passo 1 responde 400', 400, $semCsrf->status);
+check('o aviso de CSRF é explicado, não só "expirada"', str_contains($semCsrf->body, 'CSRF inválido'), 'sem explicação');
+check('o aviso manda abrir o diagnóstico', str_contains($semCsrf->body, '/install/diagnostico'));
+
+// Rascunho pendente é avisado ao voltar ao passo 1.
+[$appRascunho] = appNova(['token' => 'token-secreto-123']);
+$appRascunho->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$csrfR = $appRascunho->session->csrfToken();
+$appRascunho->handle(requisicao('POST', '/install/validate', [
+    'csrf_token' => $csrfR, 'access_token' => 'token-secreto-123',
+    'agency_name' => 'Agência R', 'admin_name' => 'Ana', 'admin_email' => 'ana@r.example',
+    'admin_password' => 'PastaForte2026', 'admin_password_confirm' => 'PastaForte2026',
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]));
+$comPendente = $appRascunho->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+check('avisa que existe revisão salva', str_contains($comPendente->body, 'revisão salva'), 'sem aviso de rascunho');
+check('pendingDrafts enxerga o rascunho', count($appRascunho->installer->pendingDrafts()) === 1);
 
 echo "\n[7] Instalação completa\n";
 $valido = $app->handle(requisicao('POST', '/install/validate', $base + [

@@ -36,6 +36,19 @@ final class InstallerController
             return $this->closed();
         }
 
+        // Reabrir o passo 1 com um rascunho salvo não é erro, mas confunde:
+        // a pessoa acha que perdeu a revisão. O aviso vem de `flash`, que o
+        // layout já sabe mostrar.
+        $pendentes = count($this->installer->pendingDrafts());
+        if ($pendentes > 0) {
+            $this->session->flash(
+                'info',
+                $pendentes === 1
+                    ? 'Existe uma revisão salva aguardando confirmação. Se você recomeçar daqui, ela é descartada quando este formulário for enviado.'
+                    : 'Existem ' . $pendentes . ' revisões salvas aguardando confirmação.'
+            );
+        }
+
         return $this->render('install/form', [
             'checks' => $this->installer->environmentChecks(),
             'errors' => [],
@@ -55,9 +68,17 @@ final class InstallerController
             return $this->closed();
         }
         if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            // A causa quase sempre é o cookie de sessão não voltar (caminho
+            // errado, navegador bloqueando, troca de http/https, cache). Dizer
+            // só "sessão expirada" faz a pessoa repetir o mesmo erro.
             return $this->render('install/form', [
                 'checks' => $this->installer->environmentChecks(),
-                'errors' => ['Sessão expirada. Revise os dados e envie novamente.'],
+                'errors' => [
+                    'A sessão do navegador não acompanhou o formulário (CSRF inválido). '
+                    . 'Costuma acontecer quando o cookie é bloqueado ou quando o endereço '
+                    . 'muda entre http e https. Recarregue esta página e envie de novo; '
+                    . 'se repetir, abra /install/diagnostico e veja "Sessão iniciada".',
+                ],
                 'old' => $req->post,
                 'origin' => $this->detectedOrigin($req),
                 'token_required' => $this->installer->tokenRequired(),
@@ -134,7 +155,7 @@ final class InstallerController
             return $this->done();
         }
         if (!$this->session->csrfValid($req->input('csrf_token'))) {
-            $this->session->flash('error', 'Sessão expirada. Refaça a revisão.');
+            $this->session->flash('error', 'A sessão do navegador não acompanhou a confirmação (CSRF inválido). Abra /install/diagnostico para ver o estado da sessão.');
 
             return Response::redirect($this->url($req, '/install'));
         }
@@ -145,24 +166,47 @@ final class InstallerController
             return Response::redirect($this->url($req, '/install'));
         }
 
+        // A instalação tem duas fases: GRAVAR (banco + conta) e FECHAR (sessão,
+        // redirecionamento). Falha na segunda não pode parecer falha na
+        // primeira — antes, o erro caía no handler genérico e a pessoa ficava
+        // sem saber que a conta JÁ existia. Aqui cada fase é dita na tela.
         try {
             $this->installer->install($rascunho['data']);
         } catch (\Throwable $erro) {
-            error_log('[SMIA][install] ' . $erro->getMessage());
+            error_log('[SMIA][install][gravar] ' . $erro::class . ': ' . $erro->getMessage() . ' em ' . $erro->getFile() . ':' . $erro->getLine());
 
-            return $this->render('install/review', [
-                'draft' => $rascunho,
-                'token' => $req->input('access_token', ''),
-                'errors' => ['Não foi possível concluir: ' . $erro->getMessage()],
+            return $this->render('install/failure', [
+                'etapa' => 'gravar',
+                'mensagem' => $erro->getMessage(),
+                'arquivo' => $erro->getFile(),
+                'linha' => $erro->getLine(),
+                'criada' => !$this->installer->needed(),
+                'token' => (string) $req->input('access_token', ''),
+                'debug' => $this->config->debug,
             ], 500);
         }
 
-        // Só descarta o rascunho DEPOIS de instalar com sucesso. Se a instalação
-        // falhar, a revisão continua disponível e a pessoa pode tentar de novo
-        // sem redigitar tudo.
-        $this->installer->dropDraft($rascunho['id']);
-        $this->session->regenerate();
-        $this->session->flash('success', 'Instância criada. Entre com o e-mail e a senha que você definiu.');
+        // Daqui para baixo a conta EXISTE. Qualquer falha é de acabamento.
+        try {
+            $this->installer->dropDraft($rascunho['id']);
+            $this->session->regenerate();
+            $this->session->flash('success', 'Instância criada. Entre com o e-mail e a senha que você definiu.');
+        } catch (\Throwable $erro) {
+            error_log('[SMIA][install][fechar] ' . $erro::class . ': ' . $erro->getMessage() . ' em ' . $erro->getFile() . ':' . $erro->getLine());
+
+            // A conta existe: 200, não 500. A tela diz exatamente isso e leva
+            // ao login em vez de sugerir que a instalação falhou.
+            return $this->render('install/failure', [
+                'etapa' => 'fechar',
+                'mensagem' => $erro->getMessage(),
+                'arquivo' => $erro->getFile(),
+                'linha' => $erro->getLine(),
+                'criada' => true,
+                'token' => (string) $req->input('access_token', ''),
+                'debug' => $this->config->debug,
+                'registro' => $this->installer->installedRecord(),
+            ]);
+        }
 
         // Passo 3 do instalador: a tela "Instância pronta". É ela que mostra o
         // registro da instalação e o botão de login; ir direto ao /login pulava
@@ -172,6 +216,124 @@ final class InstallerController
         // formulário e a URL fica limpa. O GET em /install/run, agora que a
         // instância existe, entrega a tela de conclusão.
         return Response::redirect($this->url($req, '/install/run'));
+    }
+
+    /**
+     * Diagnóstico só-leitura: GET /install/diagnostico.
+     *
+     * Aberto de propósito: se o problema for justamente o token, exigir token
+     * aqui seria inútil. Por isso não mostra segredo nenhum — só se ele existe
+     * e se a sessão/CSRF estão funcionando.
+     */
+    public function diagnostics(Request $req): Response
+    {
+        $csrAtual = $this->session->csrfToken();
+        $precisaInstalar = $this->installer->needed();
+        $registro = $this->installer->installedRecord();
+
+        $dataDir = $this->config->dataDir;
+        $gravavel = is_dir($dataDir) ? is_writable($dataDir) : false;
+        $dbExiste = is_file($this->config->dbPath);
+        $rascunhos = is_dir($dataDir . '/installer-drafts')
+            ? count((array) glob($dataDir . '/installer-drafts/*.json'))
+            : 0;
+
+        $linhas = [
+            [
+                'rotulo' => 'Versão do pacote',
+                'valor' => 'v' . Config::VERSAO,
+                'ok' => version_compare(Config::VERSAO, '1.11', '>='),
+                'dica' => version_compare(Config::VERSAO, '1.11', '<')
+                    ? 'Este servidor está com um pacote antigo. Envie app/ e public/ da versão nova.'
+                    : 'Pacote atual.',
+            ],
+            [
+                'rotulo' => 'PHP',
+                'valor' => PHP_VERSION,
+                'ok' => version_compare(PHP_VERSION, '8.0', '>='),
+                'dica' => $this->config->debug ? 'SOCIALMEDIA_DEBUG ligado: erros aparecem com arquivo e linha.' : '',
+            ],
+            [
+                'rotulo' => 'Token exigido',
+                'valor' => $this->installer->tokenRequired() ? 'sim (SOCIALMEDIA_INSTALL_TOKEN definido)' : 'não (qualquer um com a URL instala)',
+                'ok' => true,
+                'dica' => '',
+            ],
+            [
+                'rotulo' => 'Sessão iniciada',
+                'valor' => session_status() === PHP_SESSION_ACTIVE ? 'sim' : 'não',
+                'ok' => session_status() === PHP_SESSION_ACTIVE,
+                'dica' => session_status() === PHP_SESSION_ACTIVE
+                    ? 'Cookie de sessão com caminho ' . ($this->config->basePath === '' ? '/' : $this->config->basePath . '/')
+                    : 'Sem sessão o CSRF nunca valida e a confirmação volta para o passo 1.',
+            ],
+            [
+                'rotulo' => 'CSRF gerado',
+                'valor' => $csrAtual !== '' ? 'sim' : 'não',
+                'ok' => $csrAtual !== '',
+                'dica' => '',
+            ],
+            [
+                'rotulo' => 'Pasta de dados',
+                'valor' => $dataDir . ($gravavel ? ' (gravável)' : ' (NÃO gravável)'),
+                'ok' => $gravavel,
+                'dica' => $gravavel ? '' : 'Sem escrita nesta pasta a instalação não conclui. Ajuste para 755 ou 775 no cPanel.',
+            ],
+            [
+                'rotulo' => 'Banco',
+                'valor' => $dbExiste ? $this->config->dbPath . ' (' . number_format((int) filesize($this->config->dbPath) / 1024, 0, ',', '.') . ' KB)' : 'ainda não existe',
+                'ok' => $precisaInstalar ? true : (bool) $registro,
+                'dica' => '',
+            ],
+            [
+                'rotulo' => 'Instalação',
+                'valor' => $precisaInstalar ? 'pendente (nenhum usuário)' : 'concluída',
+                'ok' => true,
+                'dica' => $registro ? 'Agência: ' . (string) ($registro['agency_name'] ?? '—') . ' · proprietário: ' . (string) ($registro['owner_email'] ?? '—') : '',
+            ],
+            [
+                'rotulo' => 'Rascunhos pendentes',
+                'valor' => (string) $rascunhos,
+                'ok' => true,
+                'dica' => $rascunhos > 0 ? 'Há revisão salva aguardando confirmação (validade de 30 min).' : '',
+            ],
+            [
+                'rotulo' => 'Endereço reconhecido',
+                'valor' => $this->config->basePath === '' ? '(raiz do domínio)' : $this->config->basePath,
+                'ok' => $this->config->basePath !== '',
+                'dica' => 'Caminho interno pedido nesta visita: ' . $req->path,
+            ],
+        ];
+
+        $chave = static function (string $rel): array {
+            $caminho = \SMIA_APP . '/' . $rel;
+            $mtime = is_file($caminho) ? (int) filemtime($caminho) : 0;
+
+            return [
+                'caminho' => $rel,
+                'quando' => $mtime > 0 ? gmdate('Y-m-d H:i:s', $mtime) . ' UTC' : 'AUSENTE',
+            ];
+        };
+        $arquivos = [
+            'Roteador' => $chave('Http/Router.php'),
+            'Controlador do instalador' => $chave('Controllers/InstallerController.php'),
+            'Tela de conclusão' => $chave('views/install/closed.php'),
+            'Configuração' => $chave('Support/Config.php'),
+        ];
+
+        if ($precisaInstalar) {
+            $resumo = 'Este servidor ainda não tem conta.';
+        } else {
+            $resumo = 'Esta instância já está instalada.';
+        }
+
+        return $this->render('install/diagnostico', [
+            'linhas' => $linhas,
+            'arquivos' => $arquivos,
+            'resumo' => $resumo,
+            'precisaInstalar' => $precisaInstalar,
+            'tokenDigitado' => '',
+        ]);
     }
 
     public function cancel(Request $req): Response

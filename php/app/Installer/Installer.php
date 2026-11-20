@@ -202,6 +202,41 @@ final class Installer
         return ['id' => $id, 'data' => $conteudo['data'] ?? []];
     }
 
+    /**
+     * Rascunhos ainda válidos (não expirados).
+     *
+     * Serve para avisar na tela que existe revisão pendente: sem isso, quem
+     * reabre o passo 1 acha que perdeu o que preencheu.
+     *
+     * @return array<int,array{id:string,created:int,email:string}>
+     */
+    public function pendingDrafts(): array
+    {
+        if (!is_dir($this->rascunhoDir)) {
+            return [];
+        }
+        $lista = [];
+        foreach ((array) glob($this->rascunhoDir . '/*.json') as $arquivo) {
+            $conteudo = json_decode((string) @file_get_contents((string) $arquivo), true);
+            if (!is_array($conteudo)) {
+                continue;
+            }
+            $idade = time() - (int) ($conteudo['created'] ?? 0);
+            if ($idade > self::RASCUNHO_TTL) {
+                @unlink((string) $arquivo);
+                continue;
+            }
+            $lista[] = [
+                'id' => basename((string) $arquivo, '.json'),
+                'created' => (int) ($conteudo['created'] ?? 0),
+                'email' => (string) ($conteudo['data']['admin_email'] ?? ''),
+            ];
+        }
+        usort($lista, static fn (array $a, array $b): int => $b['created'] <=> $a['created']);
+
+        return $lista;
+    }
+
     public function dropDraft(string $id): void
     {
         if (preg_match('/^[a-f0-9]{24}$/', $id)) {
@@ -312,9 +347,18 @@ final class Installer
             }
             $linhas[] = $chave . '=' . str_replace(["\n", "\r"], '', (string) $valor);
         }
+        // is_writable antes de escrever: sem isso o PHP emite um warning cru
+        // ("Failed to open stream: Permission denied") no meio da página, que
+        // assusta mais do que explica. A mensagem abaixo diz o que fazer.
+        if (!is_writable($diretorio)) {
+            throw new \RuntimeException(
+                'A pasta de dados não permite escrita: ' . $diretorio
+                . '. Ajuste a permissão para 755 ou 775 no cPanel e tente de novo.'
+            );
+        }
         $temporario = $this->config->envFile . '.tmp';
-        if (file_put_contents($temporario, implode("\n", $linhas) . "\n", LOCK_EX) === false) {
-            throw new \RuntimeException('Não foi possível gravar o arquivo de configuração.');
+        if (@file_put_contents($temporario, implode("\n", $linhas) . "\n", LOCK_EX) === false) {
+            throw new \RuntimeException('Não foi possível gravar o arquivo de configuração em ' . $diretorio . '.');
         }
         @chmod($temporario, 0o600);
         if (!rename($temporario, $this->config->envFile)) {

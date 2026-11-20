@@ -51,6 +51,23 @@ $passos = [
       <span class="install-tag">INSTALAÇÃO PELO NAVEGADOR · PHP <?= e(PHP_VERSION) ?> · v<?= e(\Smia\Support\Config::VERSAO) ?></span>
       <span class="install-top-note"><?= e($topNote ?? 'Nada foi gravado ainda') ?></span>
     </header>
+    <?php
+    // Mensagens de uma requisição anterior (flash). O instalador controla o
+    // próprio fluxo por sessão, então sem isto um aviso como "sessão expirada"
+    // simplesmente desaparecia e a pessoa repetia o mesmo erro.
+    $flashInstalador = $flashes ?? [];
+    if ($flashInstalador === [] && isset($session)) {
+        $flashInstalador = $session->takeFlashes();
+    }
+    if ($flashInstalador !== []): ?>
+      <div class="install-flashes">
+        <?php foreach ($flashInstalador as $aviso): ?>
+          <div class="install-flash install-flash-<?= e((string) ($aviso['type'] ?? 'info')) ?>" role="status">
+            <?= e((string) ($aviso['message'] ?? '')) ?>
+          </div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
     <?= $content ?>
     <footer class="install-footer">SocialMedia IA · instalador local · nada é enviado a terceiros</footer>
   </main>
