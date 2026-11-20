@@ -12,6 +12,16 @@ namespace Smia\Support;
  */
 final class Config
 {
+    /**
+     * Modelos padrão. A lista da OpenAI muda e modelo desligado derruba a
+     * geração com 404 — por isso os dois ficam aqui, num lugar só, e podem ser
+     * trocados sem editar código (OPENAI_MODEL / OPENAI_IMAGE_MODEL).
+     *
+     * gpt-image-1 foi desligado em 23/10/2026; gpt-image-2 é o substituto.
+     */
+    public const MODELO_TEXTO_PADRAO = 'gpt-6-luna';
+    public const MODELO_IMAGEM_PADRAO = 'gpt-image-2';
+
     public function __construct(
         public readonly string $root,
         public readonly string $dataDir,
@@ -24,9 +34,9 @@ final class Config
         public readonly ?string $installToken,
         public readonly string $timezone,
         public readonly string $openaiKey = '',
-        public readonly string $openaiModel = 'gpt-4o-mini',
+        public readonly string $openaiModel = self::MODELO_TEXTO_PADRAO,
         public readonly string $openaiEndpoint = '',
-        public readonly string $openaiImageModel = 'gpt-image-1',
+        public readonly string $openaiImageModel = self::MODELO_IMAGEM_PADRAO,
         public readonly string $openaiImageEndpoint = '',
         public readonly string $metaAppId = '',
         public readonly string $metaAppSecret = '',
@@ -82,9 +92,9 @@ final class Config
             installToken: self::env('SOCIALMEDIA_INSTALL_TOKEN') ?: null,
             timezone: self::env('SOCIALMEDIA_TIMEZONE') ?: 'America/Sao_Paulo',
             openaiKey: self::env('OPENAI_API_KEY') ?? '',
-            openaiModel: self::env('OPENAI_MODEL') ?: 'gpt-4o-mini',
+            openaiModel: self::env('OPENAI_MODEL') ?: self::MODELO_TEXTO_PADRAO,
             openaiEndpoint: self::env('OPENAI_ENDPOINT') ?: '',
-            openaiImageModel: self::env('OPENAI_IMAGE_MODEL') ?: 'gpt-image-1',
+            openaiImageModel: self::env('OPENAI_IMAGE_MODEL') ?: self::MODELO_IMAGEM_PADRAO,
             openaiImageEndpoint: self::env('OPENAI_IMAGE_ENDPOINT') ?: '',
             metaAppId: self::env('META_APP_ID') ?? '',
             metaAppSecret: self::env('META_APP_SECRET') ?? '',

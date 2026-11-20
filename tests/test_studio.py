@@ -113,7 +113,7 @@ class SocialMediaStageThreeTests(unittest.TestCase):
         self.assertIn("image=generated", response.location)
         image_request = image_provider.call_args.args[0]
         self.assertEqual(image_request.full_url, "https://api.openai.com/v1/images/generations")
-        self.assertEqual(json.loads(image_request.data)["model"], "gpt-image-1")
+        self.assertEqual(json.loads(image_request.data)["model"], "gpt-image-2")
         with app_module.app.app_context():
             db = app_module.get_db()
             creative = db.execute("SELECT * FROM creative_posts WHERE id=?", (creative_id,)).fetchone()

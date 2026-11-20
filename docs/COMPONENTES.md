@@ -296,9 +296,9 @@ são exibidos, logados ou versionados.
 ### Inteligência artificial (OpenAI)
 | Variável | Nível | Para que serve |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | opcional | chave server-side; sem ela planejamento e estúdio ficam desabilitados |
-| `OPENAI_MODEL` | opcional | modelo de texto (padrão gpt-4o-mini) |
-| `OPENAI_IMAGE_MODEL` | opcional | modelo de imagem (padrão gpt-image-1) |
+| `OPENAI_API_KEY` | opcional | chave server-side (service account `sk-svcacct-`, permissão Restricted); sem ela planejamento e estúdio ficam desabilitados |
+| `OPENAI_MODEL` | opcional | modelo de texto (padrão `gpt-6-luna`, `reasoning_effort: none`) |
+| `OPENAI_IMAGE_MODEL` | opcional | modelo de imagem (padrão `gpt-image-2`; `gpt-image-1` foi desligado em 23/10/2026) |
 
 ### Integração Meta
 | Variável | Nível | Para que serve |

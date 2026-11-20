@@ -70,10 +70,14 @@ O QUE ESTA VERSÃO JÁ FAZ
     na conta em vez de tentar de novo. TikTok e LinkedIn ficam só na agenda
 
 ATIVAR A IA (OPCIONAL)
-  Acrescente no .env:  OPENAI_API_KEY=sk-...
-  Texto: OPENAI_MODEL (padrão gpt-4o-mini).
-  Imagem do estúdio: OPENAI_IMAGE_MODEL (padrão gpt-image-1).
+  Acrescente no .env:  OPENAI_API_KEY=sk-svcacct-...
+    (chave de service account, permissão "Restricted", projeto só deste
+     produto. Chave de admin sk-admin- NÃO serve para chamar modelo.)
+  Texto: OPENAI_MODEL (padrão gpt-6-luna).
+  Imagem do estúdio: OPENAI_IMAGE_MODEL (padrão gpt-image-2).
   Sem a chave o módulo funciona em modo rascunho local, sem custo.
+  Se a OpenAI desligar um modelo, a tela mostra o erro citando o modelo e o
+  HTTP — troque a variável acima, não é preciso mexer no código.
 
 PORTAL DO CLIENTE
   Acesse /approvals → "Acessos do portal" e crie a conta de quem revisa.

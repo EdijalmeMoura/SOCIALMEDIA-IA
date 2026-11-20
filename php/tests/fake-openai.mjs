@@ -83,6 +83,15 @@ const servidor = createServer((req, res) => {
   let bruto = '';
   req.on('data', (parte) => { bruto += parte; });
   req.on('end', () => {
+    // Registro do que a aplicação mandou: os testes conferem nomes de campo
+    // que a OpenAI aceita hoje (max_completion_tokens, reasoning_effort).
+    if (url.pathname.endsWith('/__ultimo') || url.searchParams.get('cenario') === 'registrar') {
+      // Registro puro: nenhuma validação de payload aqui. É este cenário que
+      // permite ao teste inspecionar o corpo que a aplicação monta.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ corpo: JSON.parse(bruto || '{}') }));
+      return;
+    }
     const responder = (status, corpo) => {
       const texto = JSON.stringify(corpo);
       res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(texto) });
@@ -95,6 +104,22 @@ const servidor = createServer((req, res) => {
     }
 
     const dados = JSON.parse(bruto || '{}');
+    // Modelos atuais recusam `max_tokens` (e temperatura com raciocínio ligado).
+    // Sem essa recusa o teste passaria com um payload que a OpenAI rejeita.
+    if (Object.prototype.hasOwnProperty.call(dados, 'max_tokens')) {
+      responder(400, { error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.", type: 'invalid_request_error', param: 'max_tokens' } });
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(dados, 'reasoning_effort') && String(dados.reasoning_effort) !== 'none' && dados.temperature !== undefined) {
+      responder(400, { error: { message: 'Unsupported value: temperature is not supported with reasoning enabled.', type: 'invalid_request_error', param: 'temperature' } });
+      return;
+    }
+    // Modelo fora da lista: 404 com a mensagem que a OpenAI manda.
+    const MODELOS = new Set(['gpt-6-luna', 'gpt-6.1-terra', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini']);
+    if (!MODELOS.has(String(dados.model))) {
+      responder(404, { error: { message: 'The model `' + (dados.model ?? '') + '` does not exist or you do not have access to it.', type: 'invalid_request_error', code: 'model_not_found' } });
+      return;
+    }
     if (cenario !== 'invalido' && cenario !== 'imagem' && !req.headers.authorization?.startsWith('Bearer chave-')) {
       responder(401, { error: { message: 'Incorrect API key provided' } });
       return;

@@ -310,8 +310,24 @@ Regras que valem a pena saber:
 - **Sem `OPENAI_API_KEY`** o estúdio cria um *rascunho local* marcado como tal e
   deixa o botão de imagem desabilitado; enviar a própria imagem funciona.
 - Com chave: texto pelo Chat Completions e imagem pelo endpoint de imagens
-  (`OPENAI_IMAGE_MODEL`, padrão `gpt-image-1`). O consumo entra em
+  (`OPENAI_IMAGE_MODEL`, padrão `gpt-image-2`). O consumo entra em
   `ai_generations` (`studio_copy`, `studio_image`, `studio_variation`).
+- **Qual chave usar**: `OPENAI_API_KEY` aceita uma chave de *service account*
+  (`sk-svcacct-…`), que é a certa para servidor — ela pertence ao projeto e não
+  morre quando alguém sai da equipe. Chave de usuário (`sk-proj-…`) funciona,
+  mas cai junto com o acesso da pessoa; chave de organização (`sk-admin-…`)
+  **não** serve para chamar modelo. Recomendado: um projeto só para este
+  produto, permissão **Restricted** (só Chat Completions + Images, escrita) e
+  um limite de gasto no projeto.
+- **Modelo desligado**: se a OpenAI aposentar o modelo, a geração falha com
+  HTTP 404 e a tela mostra o erro citando o modelo e mandando ajustar a
+  variável — não é preciso mexer no código. Os padrões atuais são
+  `gpt-6-luna` (texto) e `gpt-image-2` (imagem); `gpt-image-1`, que era o
+  padrão antigo, foi desligado em 23/10/2026 e não funciona mais.
+- **Por que `reasoning_effort: none`**: os modelos atuais de texto são de
+  raciocínio e recusam `max_tokens` e recusam `temperature` com raciocínio
+  ligado. A chamada usa `max_completion_tokens` e o esforço `none`, que é o
+  que mantém temperatura, custo e latência previsíveis para este uso.
 - **Cada ação vira versão**: gerar, editar, trocar imagem, exportar e restaurar
   guardam uma cópia do estado — dá para voltar atrás sem perder trabalho.
 - A imagem é sempre reenquadrada para o formato (cobre e corta o excesso,

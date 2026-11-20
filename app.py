@@ -707,7 +707,7 @@ def request_ai_plan(client, spec):
     if not api_key:
         raise PlannerAIError("A integração de texto ainda não está configurada. Defina OPENAI_API_KEY no servidor para gerar planejamentos reais.")
     check_ai_rate_limit()
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    model = os.environ.get("OPENAI_MODEL", "gpt-6-luna").strip() or "gpt-6-luna"
     brand = get_db().execute("SELECT * FROM client_branding WHERE client_id=?", (client["id"],)).fetchone()
     context = {
         "empresa": client["company_name"], "nome_comercial": client["trade_name"],
@@ -751,8 +751,11 @@ def request_ai_plan(client, spec):
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
         "response_format": {"type": "json_object"},
+        # Modelos atuais (gpt-5+/gpt-6) recusam `max_tokens` e só aceitam
+        # temperatura com o raciocínio desligado.
         "temperature": 0.7,
-        "max_tokens": 10000,
+        "max_completion_tokens": 10000,
+        "reasoning_effort": "none",
     }).encode("utf-8")
     req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=body, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
     try:
@@ -809,7 +812,7 @@ def request_ai_creative(client, subject, format_key, extra_context=""):
     if not api_key:
         raise PlannerAIError("Configure OPENAI_API_KEY no servidor para usar a geração real de conteúdo.")
     check_ai_rate_limit()
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    model = os.environ.get("OPENAI_MODEL", "gpt-6-luna").strip() or "gpt-6-luna"
     client_id = client["client_id"] if "client_id" in client.keys() else client["id"]
     branding = get_db().execute("SELECT * FROM client_branding WHERE client_id=?", (client_id,)).fetchone()
     context = {
@@ -831,7 +834,7 @@ def request_ai_creative(client, subject, format_key, extra_context=""):
         "\"hashtags\":[\"#...\"],\"cta\":\"...\",\"visual_brief\":\"...\",\"image_suggestion\":\"...\","
         "\"composition\":\"...\"}. Título e subtítulo curtos para arte, legenda útil e CTA claro. O briefing descreve uma composição simples com área segura."
     )
-    body = json.dumps({"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(spec, ensure_ascii=False)}], "response_format": {"type": "json_object"}, "temperature": 0.75, "max_tokens": 1800}).encode("utf-8")
+    body = json.dumps({"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(spec, ensure_ascii=False)}], "response_format": {"type": "json_object"}, "temperature": 0.75, "max_completion_tokens": 1800, "reasoning_effort": "none"}).encode("utf-8")
     req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=body, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=90) as response:
@@ -863,7 +866,7 @@ def generate_image_bytes(prompt, format_key):
     if not api_key:
         raise PlannerAIError("Configure OPENAI_API_KEY no servidor para gerar imagens reais.")
     check_ai_rate_limit()
-    model = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1").strip() or "gpt-image-1"
+    model = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2").strip() or "gpt-image-2"
     request_body = json.dumps({"model": model, "prompt": prompt, "size": CREATIVE_FORMATS[format_key]["image_size"], "quality": "medium", "output_format": "png", "n": 1}).encode("utf-8")
     req = urllib.request.Request("https://api.openai.com/v1/images/generations", data=request_body, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
     try:

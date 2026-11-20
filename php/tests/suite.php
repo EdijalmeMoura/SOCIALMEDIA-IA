@@ -95,11 +95,11 @@ assertSame('URL com prefixo', '/edijalmemoura/socialai/install', (new Config('',
 assertSame('URL absoluta com subpasta', 'https://x.com/p/install', (new Config('', '', '', '', '/p', 'https://x.com/p', '', false, null, 'UTC'))->absoluteUrl('/install'));
 
 echo "\n[2] .env (fallback, ambiente vence)\n";
-$valores = EnvFile::parse("SECRET_KEY=abc\n# comentário\nexport COOKIE_SECURE=1\nMETA_APP_SECRET=\"segredo aqui\"\nMODELO=gpt-4o-mini # barato\n");
+$valores = EnvFile::parse("SECRET_KEY=abc\n# comentário\nexport COOKIE_SECURE=1\nMETA_APP_SECRET=\"segredo aqui\"\nMODELO=modelo-de-exemplo # barato\n");
 assertSame('.env simples', 'abc', $valores['SECRET_KEY']);
 assertSame('.env com export', '1', $valores['COOKIE_SECURE']);
 assertSame('.env com aspas', 'segredo aqui', $valores['META_APP_SECRET']);
-assertSame('.env com comentário no fim', 'gpt-4o-mini', $valores['MODELO']);
+assertSame('.env com comentário no fim', 'modelo-de-exemplo', $valores['MODELO']);
 
 echo "\n[3] Resolução de caminho (subpasta / rewrite / SCRIPT_NAME)\n";
 $casos = [
@@ -620,7 +620,7 @@ assertSame('plano removido', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM con
 assertSame('posts removidos em cascata', 0, (int) $app->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoId]));
 
 echo "\n[24] Planejamento: validação rigorosa da resposta da IA\n";
-$gerador = new \Smia\Planner\PlanGenerator('chave-de-teste', 'gpt-4o-mini');
+$gerador = new \Smia\Planner\PlanGenerator('chave-de-teste', 'gpt-6-luna');
 check('IA é considerada configurada com chave', $gerador->iaConfigurada());
 $spec = ['period_days' => 7, 'target_posts' => 2, 'start_date' => '2026-03-02', 'networks' => ['Instagram', 'Facebook'], 'objective' => 'Objetivo', 'campaign_context' => ''];
 $postValido = static fn (string $data, string $rede) => [
@@ -666,12 +666,12 @@ if ($endpointProvedor === '') {
 } else {
     check('provedor simulado disponível', true);
 
-    $geradorIa = new \Smia\Planner\PlanGenerator('chave-teste', 'gpt-4o-mini', 20, $endpointProvedor);
+    $geradorIa = new \Smia\Planner\PlanGenerator('chave-teste', 'gpt-6-luna', 20, $endpointProvedor);
     $specIa = ['period_days' => 7, 'target_posts' => 3, 'start_date' => '2026-03-02', 'networks' => ['Instagram', 'Facebook'], 'objective' => 'Trazer alunos', 'campaign_context' => ''];
     $clienteIa = ['company_name' => 'Bravo Fitness', 'trade_name' => 'Bravo', 'segment' => 'Academia', 'primary_color' => '#112244', 'communication_tone' => 'direto'];
 
     // 1) Chave recusada (401)
-    $curto = new \Smia\Planner\PlanGenerator('chave-errada', 'gpt-4o-mini', 20, $endpointProvedor . '?cenario=401');
+    $curto = new \Smia\Planner\PlanGenerator('chave-errada', 'gpt-6-luna', 20, $endpointProvedor . '?cenario=401');
     try {
         $curto->gerar($clienteIa, $specIa);
         check('401 vira mensagem de chave recusada', false, 'não lançou erro');
@@ -680,7 +680,7 @@ if ($endpointProvedor === '') {
     }
 
     // 2) Limite do provedor (429)
-    $limitado = new \Smia\Planner\PlanGenerator('chave', 'gpt-4o-mini', 20, $endpointProvedor . '?cenario=429');
+    $limitado = new \Smia\Planner\PlanGenerator('chave', 'gpt-6-luna', 20, $endpointProvedor . '?cenario=429');
     try {
         $limitado->gerar($clienteIa, $specIa);
         check('429 vira mensagem de limite', false, 'não lançou erro');
@@ -689,7 +689,7 @@ if ($endpointProvedor === '') {
     }
 
     // 3) Resposta fora do formato
-    $quebrado = new \Smia\Planner\PlanGenerator('chave', 'gpt-4o-mini', 20, $endpointProvedor . '?cenario=invalido');
+    $quebrado = new \Smia\Planner\PlanGenerator('chave', 'gpt-6-luna', 20, $endpointProvedor . '?cenario=invalido');
     try {
         $quebrado->gerar($clienteIa, $specIa);
         check('resposta inválida vira erro tratado', false, 'não lançou erro');
@@ -701,7 +701,7 @@ if ($endpointProvedor === '') {
     $resultadoIa = $geradorIa->gerar($clienteIa, $specIa);
     check('IA devolve o modo "ia"', ($resultadoIa['modo'] ?? '') === 'ia');
     assertSame('IA gera a quantidade pedida', 3, count($resultadoIa['posts']));
-    assertSame('modelo registrado', 'gpt-4o-mini', $resultadoIa['model']);
+    assertSame('modelo registrado', 'gpt-6-luna', $resultadoIa['model']);
     assertSame('tokens de entrada lidos', 1234, $resultadoIa['input_tokens']);
     assertSame('tokens de saída lidos', 567, $resultadoIa['output_tokens']);
     check('posts da IA respeitam as redes escolhidas', array_reduce($resultadoIa['posts'], static fn (bool $ok, array $p): bool => $ok && in_array($p['network'], $specIa['networks'], true), true));
@@ -712,7 +712,7 @@ if ($endpointProvedor === '') {
         basePath: '/edijalmemoura/socialai',
         publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
         secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
-        openaiKey: 'chave-teste', openaiModel: 'gpt-4o-mini', openaiEndpoint: $endpointProvedor,
+        openaiKey: 'chave-teste', openaiModel: 'gpt-6-luna', openaiEndpoint: $endpointProvedor,
     );
     $appIa = new Application($configIa);
     $appIa->session->start();
@@ -736,7 +736,7 @@ if ($endpointProvedor === '') {
     assertSame('geração com IA cria o plano', 302, $criadoIa->status);
     $planoIaId = (int) (explode('/', parse_url((string) $criadoIa->header('Location'), PHP_URL_PATH))[4] ?? 0);
     $planoIa = $appIa->db->one('SELECT * FROM content_calendar WHERE id = ?', [$planoIaId]);
-    assertSame('modelo real gravado no plano', 'gpt-4o-mini', $planoIa['ai_model'] ?? null);
+    assertSame('modelo real gravado no plano', 'gpt-6-luna', $planoIa['ai_model'] ?? null);
     assertSame('posts gravados pela IA', 3, (int) $appIa->db->scalar('SELECT COUNT(*) FROM posts WHERE calendar_id = ?', [$planoIaId]));
     $usoIa = $appIa->db->one("SELECT * FROM ai_generations WHERE feature = 'weekly_planning' ORDER BY id DESC LIMIT 1");
     assertSame('tokens de entrada gravados', 1234, (int) $usoIa['input_tokens']);
@@ -747,7 +747,7 @@ if ($endpointProvedor === '') {
 echo "\n[26] Planejamento: mensagens de erro do provedor\n";
 $portaMorta = 18000 + random_int(2001, 4000);
 $logOriginal = ini_set('error_log', sys_get_temp_dir() . '/smia-erro-' . bin2hex(random_bytes(4)) . '.log');
-$semProvedor = new \Smia\Planner\PlanGenerator('chave', 'gpt-4o-mini', 2, 'http://127.0.0.1:' . $portaMorta . '/v1/chat/completions');
+$semProvedor = new \Smia\Planner\PlanGenerator('chave', 'gpt-6-luna', 2, 'http://127.0.0.1:' . $portaMorta . '/v1/chat/completions');
 try {
     $semProvedor->gerar(['company_name' => 'X'], ['period_days' => 7, 'target_posts' => 1, 'start_date' => '2026-03-02', 'networks' => ['Instagram'], 'objective' => 'O', 'campaign_context' => '']);
     check('provedor fora do ar vira erro tratado', false, 'não lançou erro');
@@ -1153,9 +1153,9 @@ if ($endpointProvedor === '') {
         basePath: '/edijalmemoura/socialai',
         publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
         secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
-        openaiKey: 'chave-teste', openaiModel: 'gpt-4o-mini',
+        openaiKey: 'chave-teste', openaiModel: 'gpt-6-luna',
         openaiEndpoint: $endpointProvedor,
-        openaiImageModel: 'gpt-image-1',
+        openaiImageModel: 'gpt-image-2',
         openaiImageEndpoint: str_replace('/chat/completions', '/images/generations', $endpointProvedor),
     );
     $appStudioIa = new Application($configIaStudio);
@@ -1190,7 +1190,7 @@ if ($endpointProvedor === '') {
     assertSame('canvas do formato retrato', 1350, (int) $arteIa['canvas_height']);
     $usoCopy = $appStudioIa->db->one("SELECT * FROM ai_generations WHERE feature = 'studio_copy' ORDER BY id DESC LIMIT 1");
     assertSame('tokens da IA de texto gravados', 1234, (int) $usoCopy['input_tokens']);
-    assertSame('modelo real gravado', 'gpt-4o-mini', $usoCopy['model']);
+    assertSame('modelo real gravado', 'gpt-6-luna', $usoCopy['model']);
 
     $appStudioIa->session->start();
     $appStudioIa->session->put('user_id', 1);
@@ -2613,7 +2613,86 @@ if ($grafoFalso === '' || !str_starts_with($grafoFalso, 'http://127.0.0.1:')) {
         || str_contains($semConexaoTela->body, 'Publicação manual disponível'));
 }
 
-echo "\n[71] Sintaxe de todos os arquivos PHP\n";
+echo "\n[71] IA: contrato aceito pelos modelos atuais da OpenAI\n";
+// Contexto: `gpt-image-1` foi desligado em 23/10/2026, e os modelos de texto
+// atuais (gpt-5+/gpt-6) recusam `max_tokens` e recusam `temperature` com o
+// raciocínio ligado. O provedor falso passou a devolver 400 para `max_tokens`,
+// 400 para temperatura com raciocínio ligado e 404 para modelo inexistente —
+// então um payload inválido quebra o teste em vez de passar despercebido.
+assertSame('modelo de texto padrão é atual', 'gpt-6-luna', \Smia\Support\Config::MODELO_TEXTO_PADRAO);
+assertSame('modelo de imagem padrão é atual', 'gpt-image-2', \Smia\Support\Config::MODELO_IMAGEM_PADRAO);
+check('o padrão não é o modelo desligado', \Smia\Support\Config::MODELO_IMAGEM_PADRAO !== 'gpt-image-1');
+
+// A montagem do corpo é pura (sem rede), então dá para conferir campo por campo.
+$corpoPlano = \Smia\Planner\PlanGenerator::corpoDoPedido('gpt-6-luna', [
+    ['role' => 'system', 'content' => 'regras'],
+    ['role' => 'user', 'content' => '{"planejamento":{}}'],
+]);
+check('plano usa max_completion_tokens', array_key_exists('max_completion_tokens', $corpoPlano));
+check('plano NÃO usa max_tokens (recusado hoje)', !array_key_exists('max_tokens', $corpoPlano), implode(',', array_keys($corpoPlano)));
+check('plano desliga o raciocínio para aceitar temperatura', ($corpoPlano['reasoning_effort'] ?? '') === 'none');
+check('plano pede JSON', ($corpoPlano['response_format']['type'] ?? '') === 'json_object');
+check('plano manda o modelo pedido', ($corpoPlano['model'] ?? '') === 'gpt-6-luna');
+
+$corpoTexto = \Smia\Studio\StudioGenerator::corpoDoTexto('gpt-6-luna', [['role' => 'user', 'content' => '{}']]);
+check('estúdio usa max_completion_tokens', array_key_exists('max_completion_tokens', $corpoTexto));
+check('estúdio NÃO usa max_tokens', !array_key_exists('max_tokens', $corpoTexto));
+check('estúdio desliga o raciocínio', ($corpoTexto['reasoning_effort'] ?? '') === 'none');
+
+$corpoImagem = \Smia\Studio\StudioGenerator::corpoDaImagem('gpt-image-2', 'Fundo com área de respiro', '1024x1024');
+check('imagem manda o modelo configurado', ($corpoImagem['model'] ?? '') === 'gpt-image-2');
+check('imagem manda o tamanho do formato', ($corpoImagem['size'] ?? '') === '1024x1024');
+check('imagem manda output_format png', ($corpoImagem['output_format'] ?? '') === 'png');
+check('imagem usa qualidade na faixa aceita', in_array($corpoImagem['quality'] ?? '', ['low', 'medium', 'high', 'auto'], true));
+check('imagem não manda response_format', !array_key_exists('response_format', $corpoImagem));
+
+// Caminho HTTP completo continua exercitado contra o provedor falso.
+$geradorContrato = new \Smia\Planner\PlanGenerator('chave-teste', 'gpt-6-luna', 20, (string) $endpointProvedor);
+$planoContrato = $geradorContrato->gerar(
+    ['company_name' => 'Bravo Fitness', 'segment' => 'Academia', 'tone_of_voice' => 'Direto'],
+    ['period_days' => 7, 'target_posts' => 2, 'start_date' => '2026-12-01', 'networks' => ['Instagram'], 'objective' => 'Vender plano', 'campaign_context' => '']
+);
+check('planejamento é aceito pelo provedor atual', isset($planoContrato['posts']) && $planoContrato['modo'] === 'ia');
+
+$estudioContrato = new \Smia\Studio\StudioGenerator(
+    'chave-teste',
+    'gpt-6-luna',
+    'gpt-image-2',
+    90,
+    180,
+    (string) $endpointProvedor,
+    str_replace('/chat/completions', '/images/generations', (string) $endpointProvedor),
+);
+$arteContrato = $estudioContrato->gerarConteudo(
+    ['company_name' => 'Bravo Fitness', 'segment' => 'Academia', 'tone_of_voice' => 'Direto', 'brand_colors' => ['#183478', '#f2b705']],
+    ['assunto' => 'Aula aberta', 'formato' => 'square', 'contexto' => '']
+);
+check('arte de texto é aceita pelo provedor atual', ($arteContrato['modo'] ?? '') === 'ia');
+$imagemContrato = $estudioContrato->gerarImagem('Fundo com área de respiro', 'square');
+check('imagem é aceita pelo provedor atual', str_starts_with($imagemContrato['bytes'], "\x89PNG"));
+
+// Modelo desligado (o caso real do gpt-image-1): a mensagem precisa dizer o
+// modelo, o status e o que ajustar — antes vinha "tente mais tarde".
+try {
+    (new \Smia\Studio\StudioGenerator(
+        'chave-teste',
+        'gpt-6-luna',
+        'gpt-image-1',
+        90,
+        180,
+        (string) $endpointProvedor,
+        str_replace('/chat/completions', '/images/generations', (string) $endpointProvedor),
+    ))->gerarImagem('Fundo', 'square');
+    check('modelo desligado gera erro tratado', false, 'não lançou erro');
+} catch (\Smia\Studio\StudioError $erro) {
+    $mensagemModelo = $erro->getMessage();
+    check('erro de modelo cita o modelo usado', str_contains($mensagemModelo, 'gpt-image-1'), $mensagemModelo);
+    check('erro de modelo cita o status HTTP', str_contains($mensagemModelo, '404'), $mensagemModelo);
+    check('erro de modelo manda ajustar a variável', str_contains($mensagemModelo, 'OPENAI_IMAGE_MODEL'), $mensagemModelo);
+    check('erro de modelo repete a explicação do provedor', str_contains($mensagemModelo, 'does not exist'), $mensagemModelo);
+}
+
+echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];
 $iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));
 foreach ($iterador as $arquivo) {

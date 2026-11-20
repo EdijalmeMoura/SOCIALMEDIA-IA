@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Smia\Studio;
 
+use Smia\Support\Config;
+
 /**
  * Texto e imagem da arte via OpenAI (Chat Completions e Images).
  *
@@ -21,8 +23,8 @@ final class StudioGenerator
 
     public function __construct(
         private readonly ?string $apiKey,
-        private readonly string $modelo = 'gpt-4o-mini',
-        private readonly string $modeloImagem = 'gpt-image-1',
+        private readonly string $modelo = Config::MODELO_TEXTO_PADRAO,
+        private readonly string $modeloImagem = Config::MODELO_IMAGEM_PADRAO,
         private readonly int $timeoutSegundos = 90,
         private readonly int $timeoutImagem = 180,
         string $textoEndpoint = '',
@@ -48,6 +50,47 @@ final class StudioGenerator
     }
 
     /**
+     * Corpo da chamada de TEXTO — puro, para conferência sem rede.
+     *
+     * Mesma regra do planejamento: `max_completion_tokens` no lugar de
+     * `max_tokens`, e `reasoning_effort: none` para a temperatura valer.
+     *
+     * @param array<int,array{role:string,content:string}> $mensagens
+     * @return array<string,mixed>
+     */
+    public static function corpoDoTexto(string $modelo, array $mensagens): array
+    {
+        return [
+            'model' => $modelo,
+            'messages' => $mensagens,
+            'response_format' => ['type' => 'json_object'],
+            'temperature' => 0.75,
+            'max_completion_tokens' => 1800,
+            'reasoning_effort' => 'none',
+        ];
+    }
+
+    /**
+     * Corpo da chamada de IMAGEM — puro, para conferência sem rede.
+     *
+     * Só os campos que a API de imagens aceita: `output_format` (não
+     * `response_format`) e `quality` na faixa low/medium/high/auto.
+     *
+     * @return array<string,mixed>
+     */
+    public static function corpoDaImagem(string $modelo, string $prompt, string $medida): array
+    {
+        return [
+            'model' => $modelo,
+            'prompt' => $prompt,
+            'size' => $medida,
+            'quality' => 'medium',
+            'output_format' => 'png',
+            'n' => 1,
+        ];
+    }
+
+    /**
      * Conteúdo da arte: IA quando há chave, rascunho local quando não há.
      *
      * @param array<string,mixed> $cliente cliente + identidade visual
@@ -67,16 +110,10 @@ final class StudioGenerator
             ];
         }
 
-        $corpo = json_encode([
-            'model' => $this->modelo,
-            'messages' => [
-                ['role' => 'system', 'content' => self::instrucoes()],
-                ['role' => 'user', 'content' => json_encode($this->prompt($cliente, $pedido), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
-            ],
-            'response_format' => ['type' => 'json_object'],
-            'temperature' => 0.75,
-            'max_tokens' => 1800,
-        ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $corpo = json_encode(self::corpoDoTexto($this->modelo, [
+            ['role' => 'system', 'content' => self::instrucoes()],
+            ['role' => 'user', 'content' => json_encode($this->prompt($cliente, $pedido), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
+        ]), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
         $resposta = $this->postJson($this->textoEndpoint, $corpo, $this->timeoutSegundos, 'texto');
         $conteudo = $resposta['choices'][0]['message']['content'] ?? null;
@@ -114,14 +151,10 @@ final class StudioGenerator
             throw new StudioError('Configure OPENAI_API_KEY para gerar imagens de verdade. Você pode enviar a sua própria imagem enquanto isso.');
         }
         $medida = Layout::FORMATOS[$formato]['image_size'] ?? '1024x1024';
-        $corpo = json_encode([
-            'model' => $this->modeloImagem,
-            'prompt' => $prompt,
-            'size' => $medida,
-            'quality' => 'medium',
-            'output_format' => 'png',
-            'n' => 1,
-        ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $corpo = json_encode(
+            self::corpoDaImagem($this->modeloImagem, $prompt, $medida),
+            JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
+        );
 
         $resposta = $this->postJson($this->imagemEndpoint, $corpo, $this->timeoutImagem, 'imagem');
         $codificado = $resposta['data'][0]['b64_json'] ?? null;
@@ -307,10 +340,20 @@ final class StudioGenerator
             throw new StudioError('O provedor de IA limitou a solicitação. Aguarde e tente novamente.');
         }
         if ($status < 200 || $status >= 300) {
-            error_log('[SMIA] estúdio IA (' . $tipo . '): HTTP ' . $status);
-            throw new StudioError($tipo === 'imagem'
-                ? 'A API de imagens não concluiu a geração. Verifique o acesso ao modelo configurado.'
-                : 'O provedor de IA não concluiu a geração de conteúdo. Tente novamente mais tarde.');
+            // A mensagem do provedor é o que diz SE o modelo existe. Sem ela,
+            // um modelo desligado virava "tente mais tarde" e ninguém descobria
+            // que o conserto era trocar OPENAI_MODEL/OPENAI_IMAGE_MODEL.
+            $detalhe = json_decode((string) $bruto, true);
+            $doProvedor = is_array($detalhe) ? trim((string) ($detalhe['error']['message'] ?? '')) : '';
+            error_log('[SMIA] estúdio IA (' . $tipo . '): HTTP ' . $status . ' ' . $doProvedor);
+
+            $modelo = $tipo === 'imagem' ? $this->modeloImagem : $this->modelo;
+            $sufixo = $doProvedor !== '' ? ' Provedor: ' . mb_substr($doProvedor, 0, 200) : '';
+            throw new StudioError(($tipo === 'imagem'
+                ? 'A API de imagens não concluiu a geração (modelo ' . $modelo . ', HTTP ' . $status . ').'
+                : 'O provedor de IA não concluiu a geração de conteúdo (modelo ' . $modelo . ', HTTP ' . $status . ').')
+                . $sufixo
+                . ($status === 404 ? ' Se o erro citar modelo inexistente, ajuste OPENAI_MODEL/OPENAI_IMAGE_MODEL no .env.' : ''));
         }
 
         $dados = json_decode((string) $bruto, true);

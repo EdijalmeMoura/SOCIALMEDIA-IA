@@ -50,8 +50,8 @@ ENV_GROUPS = (
     )),
     ("Inteligência artificial (OpenAI)", (
         ("OPENAI_API_KEY", "chave server-side; sem ela planejamento e estúdio ficam desabilitados", "opcional"),
-        ("OPENAI_MODEL", "modelo de texto (padrão gpt-4o-mini)", "opcional"),
-        ("OPENAI_IMAGE_MODEL", "modelo de imagem (padrão gpt-image-1)", "opcional"),
+        ("OPENAI_MODEL", "modelo de texto (padrão gpt-6-luna)", "opcional"),
+        ("OPENAI_IMAGE_MODEL", "modelo de imagem (padrão gpt-image-2)", "opcional"),
     )),
     ("Integração Meta", (
         ("META_APP_ID", "App ID do App Meta", "opcional"),

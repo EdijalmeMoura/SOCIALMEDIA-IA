@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Smia\Planner;
 
+use Smia\Support\Config;
+
 /**
  * Geração do calendário editorial.
  *
@@ -37,7 +39,7 @@ final class PlanGenerator
 
     public function __construct(
         private readonly ?string $apiKey,
-        private readonly string $modelo = 'gpt-4o-mini',
+        private readonly string $modelo = Config::MODELO_TEXTO_PADRAO,
         private readonly int $timeoutSegundos = 90,
         ?string $endpoint = null,
     ) {
@@ -54,6 +56,29 @@ final class PlanGenerator
     public function modelo(): string
     {
         return $this->modelo;
+    }
+
+    /**
+     * Corpo da chamada ao provedor — puro, para poder ser conferido sem rede.
+     *
+     * Modelos atuais (gpt-5+/gpt-6) **recusam** `max_tokens` e recusam
+     * `temperature` diferente de 1 com o raciocínio ligado. Daí:
+     * `max_completion_tokens` (nome novo) e `reasoning_effort: none` (que é o
+     * que libera a temperatura e evita pagar token de raciocínio à toa).
+     *
+     * @param array<int,array{role:string,content:string}> $mensagens
+     * @return array<string,mixed>
+     */
+    public static function corpoDoPedido(string $modelo, array $mensagens): array
+    {
+        return [
+            'model' => $modelo,
+            'messages' => $mensagens,
+            'response_format' => ['type' => 'json_object'],
+            'temperature' => 0.7,
+            'max_completion_tokens' => 10000,
+            'reasoning_effort' => 'none',
+        ];
     }
 
     /**
@@ -86,16 +111,10 @@ final class PlanGenerator
      */
     private function viaIa(array $cliente, array $spec): array
     {
-        $corpo = json_encode([
-            'model' => $this->modelo,
-            'messages' => [
-                ['role' => 'system', 'content' => self::instrucoes()],
-                ['role' => 'user', 'content' => json_encode($this->prompt($cliente, $spec), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
-            ],
-            'response_format' => ['type' => 'json_object'],
-            'temperature' => 0.7,
-            'max_tokens' => 10000,
-        ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $corpo = json_encode(self::corpoDoPedido($this->modelo, [
+            ['role' => 'system', 'content' => self::instrucoes()],
+            ['role' => 'user', 'content' => json_encode($this->prompt($cliente, $spec), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
+        ]), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
         $resposta = $this->postJson($this->endpoint, $corpo);
         $conteudo = $resposta['choices'][0]['message']['content'] ?? null;
@@ -288,9 +307,15 @@ final class PlanGenerator
             throw new PlannerError('O provedor de IA limitou a solicitação. Aguarde e tente novamente.');
         }
         if ($status < 200 || $status >= 300) {
-            error_log('[SMIA] IA: HTTP ' . $status);
+            // Mesma razão do estúdio: a mensagem do provedor revela modelo
+            // desligado/renomeado, que é o erro mais comum hoje.
+            $detalhe = json_decode((string) $bruto, true);
+            $doProvedor = is_array($detalhe) ? trim((string) ($detalhe['error']['message'] ?? '')) : '';
+            error_log('[SMIA] IA: HTTP ' . $status . ' ' . $doProvedor);
 
-            throw new PlannerError('O provedor de IA não concluiu a geração. Tente novamente mais tarde.');
+            throw new PlannerError('O provedor de IA não concluiu a geração (modelo ' . $this->modelo . ', HTTP ' . $status . ').'
+                . ($doProvedor !== '' ? ' Provedor: ' . mb_substr($doProvedor, 0, 200) : '')
+                . ($status === 404 ? ' Se o erro citar modelo inexistente, ajuste OPENAI_MODEL no .env.' : ''));
         }
 
         $dados = json_decode((string) $bruto, true);
