@@ -48,6 +48,8 @@ ATUALIZANDO DE UMA VERSÃO ANTERIOR
   v1.8 não cria tabela nenhuma: só atualiza os modelos de IA padrão. Se você
   já tinha OPENAI_MODEL/OPENAI_IMAGE_MODEL no .env, os seus valores continuam
   valendo — troque-os apenas se a OpenAI tiver desligado aquele modelo.
+  v1.9 também não cria tabela: corrige o fim do assistente, que agora mostra a
+  tela "Instância pronta" antes do login.
 
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
