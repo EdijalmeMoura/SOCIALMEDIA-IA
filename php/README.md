@@ -28,7 +28,7 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
 | **v1.11** | **Diagnóstico** em `/install/diagnostico` e falhas que dizem a causa (arquivo:linha) | [php-v1.11](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.11) | [`SOCIALMEDIA-IA-php-v1.11.zip`](downloads/SOCIALMEDIA-IA-php-v1.11.zip) |
-| v1.10 | **Token do instalador**: não se perde no fluxo e a tela de 403 aceita colar o token | [php-v1.10](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.10) | [`SOCIALMEDIA-IA-php-v1.10.zip`](downloads/SOCIALMEDIA-IA-php-v1.10.zip) |
+| v1.10 | **Token do instalador**: não se perde no fluxo e a tela de 403 aceita colar o token | [php-v1.10](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.10) | [`SOCIALMEDIA-IA-php-v1.11.zip`](downloads/SOCIALMEDIA-IA-php-v1.10.zip) |
 | v1.9 | **Instalador completo**: tela final "Instância pronta" e `/install/run` sem 405 | [php-v1.9](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.9) | [`SOCIALMEDIA-IA-php-v1.9.zip`](downloads/SOCIALMEDIA-IA-php-v1.9.zip) |
 | v1.8 | **IA em dia**: modelos padrão atuais (`gpt-6-luna`, `gpt-image-2`) e erro que diz qual modelo falhou | [php-v1.8](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.8) | [`SOCIALMEDIA-IA-php-v1.8.zip`](downloads/SOCIALMEDIA-IA-php-v1.8.zip) |
 | v1.7 | Meta: conexões Facebook/Instagram, agenda interna e publicação manual real | [php-v1.7](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7) | [`SOCIALMEDIA-IA-php-v1.7.zip`](downloads/SOCIALMEDIA-IA-php-v1.7.zip) |
