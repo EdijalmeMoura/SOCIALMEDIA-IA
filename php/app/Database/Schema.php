@@ -17,10 +17,11 @@ namespace Smia\Database;
  *           4 = estúdio (artes, versões e itens de feed)
  *           5 = aprovações (revisões, histórico, portal do cliente, avisos)
  *           6 = Meta (agenda de publicação, conexões de Página, tentativas)
+ *           7 = administração (status de usuário, papel do dono, configurações)
  */
 final class Schema
 {
-    public const VERSAO = 6;
+    public const VERSAO = 7;
 
     public static function migrate(Database $db): void
     {
@@ -454,9 +455,61 @@ CREATE TABLE IF NOT EXISTS meta_publication_reconciliations (
 );
 SQL);
 
+        // --- v7: administração -----------------------------------------
+        // `users.role` já existia; o dono do sistema é um papel novo. "super"
+        // enxerga todas as agências; owner/admin/editor/viewer seguem valendo
+        // dentro da própria agência.
+        $db->pdo()->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS admin_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    target_company_id INTEGER,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_actions_created ON admin_actions(created_at DESC);
+SQL);
+
+        // Colunas novas entram por ALTER: criação de tabela não altera tabela
+        // que já existe em quem instalou antes.
+        self::addColumn($db, 'users', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+        // `role` tem CHECK ('owner','admin','editor','viewer') desde a v1.
+        // Acrescentar 'super' exigiria reconstruir a tabela (e perder dados em
+        // quem já instalou); uma coluna booleana diz a mesma coisa sem risco.
+        self::addColumn($db, 'users', 'is_super', 'INTEGER NOT NULL DEFAULT 0');
+        self::addColumn($db, 'companies', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+        self::addColumn($db, 'companies', 'owner_email', 'TEXT');
+        self::addColumn($db, 'companies', 'notes', 'TEXT');
+        self::addColumn($db, 'users', 'last_seen_at', 'TEXT');
+
         $versao = (int) ($db->scalar('SELECT MAX(version) FROM schema_version') ?? 0);
         if ($versao < self::VERSAO) {
             $db->run('INSERT INTO schema_version (version) VALUES (?)', [self::VERSAO]);
+        }
+    }
+
+    /**
+     * Acrescenta uma coluna só se ela ainda não existir.
+     *
+     * SQLite não tem `ADD COLUMN IF NOT EXISTS`, e repetir o ALTER derruba a
+     * migração inteira. Por isso a checagem é feita em pragma_table_info.
+     */
+    private static function addColumn(Database $db, string $tabela, string $coluna, string $definicao): void
+    {
+        $existe = $db->scalar(
+            'SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?',
+            [$tabela, $coluna]
+        );
+        if ((int) ($existe ?? 0) === 0) {
+            $db->pdo()->exec('ALTER TABLE ' . $tabela . ' ADD COLUMN ' . $coluna . ' ' . $definicao);
         }
     }
 

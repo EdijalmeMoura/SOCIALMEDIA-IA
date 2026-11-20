@@ -23,7 +23,7 @@ final class Config
      * Versão deste pacote. Aparece no rodapé do instalador porque a pergunta
      * mais comum ao dar erro é "o arquivo que subiu é o novo?".
      */
-    public const VERSAO = '1.14';
+    public const VERSAO = '1.15';
 
     public const MODELO_TEXTO_PADRAO = 'gpt-6-luna';
     public const MODELO_IMAGEM_PADRAO = 'gpt-image-2';
@@ -123,6 +123,42 @@ final class Config
      * entregar a aplicação em /pasta: nesse caso o prefixo vem da própria
      * requisição e precisa valer para TODAS as URLs (e para o cookie de sessão).
      */
+    /**
+     * Cópia com os valores de IA trocados.
+     *
+     * Existe porque a chave pode vir do banco (gravada na tela de
+     * Configurações) e o resto do app não pode saber de onde ela veio: recebe
+     * a Config inteira e usa `openaiKey` como sempre.
+     */
+    public function withAi(string $chave, string $modelo, string $modeloImagem): self
+    {
+        return new self(
+            root: $this->root,
+            dataDir: $this->dataDir,
+            dbPath: $this->dbPath,
+            envFile: $this->envFile,
+            basePath: $this->basePath,
+            publicOrigin: $this->publicOrigin,
+            secretKey: $this->secretKey,
+            cookieSecure: $this->cookieSecure,
+            installToken: $this->installToken,
+            timezone: $this->timezone,
+            openaiKey: $chave,
+            openaiModel: $modelo,
+            openaiEndpoint: $this->openaiEndpoint,
+            openaiImageModel: $modeloImagem,
+            openaiImageEndpoint: $this->openaiImageEndpoint,
+            metaAppId: $this->metaAppId,
+            metaAppSecret: $this->metaAppSecret,
+            metaRedirectUri: $this->metaRedirectUri,
+            metaGraphVersion: $this->metaGraphVersion,
+            metaTokenKey: $this->metaTokenKey,
+            metaPublicBaseUrl: $this->metaPublicBaseUrl,
+            metaGraphEndpoint: $this->metaGraphEndpoint,
+            debug: $this->debug,
+        );
+    }
+
     public function withBasePath(string $basePath): self
     {
         return new self(

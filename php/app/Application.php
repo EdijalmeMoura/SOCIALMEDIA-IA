@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Smia;
 
+use Smia\Admin\AdminRepository;
+use Smia\Admin\SettingsRepository;
 use Smia\Approvals\ApprovalRepository;
 use Smia\Approvals\PortalRepository;
 use Smia\Auth\Authenticator;
 use Smia\Clients\ClientRepository;
+use Smia\Controllers\AdminController;
 use Smia\Controllers\ApprovalController;
 use Smia\Controllers\AuthController;
 use Smia\Controllers\ClientController;
@@ -19,6 +22,7 @@ use Smia\Controllers\PortalController;
 use Smia\Controllers\MetaController;
 use Smia\Controllers\ReportController;
 use Smia\Controllers\ScheduleController;
+use Smia\Controllers\SettingsController;
 use Smia\Controllers\StudioController;
 use Smia\Database\Database;
 use Smia\Feed\FeedRepository;
@@ -97,14 +101,21 @@ final class Application
             fn (): bool => $this->installer->needed(),
         );
         $dashboard = new DashboardController($this->config, $this->db, $auth, $this->session, $this->view());
+
+        // A chave pode ter sido gravada em Configurações (banco). A precedência
+        // é resolvida num lugar só — banco > .env > ambiente — e o resto do
+        // app continua lendo `$config->openaiKey` sem saber de onde veio.
+        $ajustes = new SettingsRepository($this->db, $this->config);
+        $configIa = $ajustes->configEfetiva($this->config);
+
         $planner = new PlannerController(
-            $this->config,
+            $configIa,
             new PlannerRepository($this->db),
             new PlanGenerator(
-                $this->config->openaiKey !== '' ? $this->config->openaiKey : null,
-                $this->config->openaiModel,
+                $configIa->openaiKey !== '' ? $configIa->openaiKey : null,
+                $configIa->openaiModel,
                 90,
-                $this->config->openaiEndpoint,
+                $configIa->openaiEndpoint,
             ),
             $auth,
             $this->session,
@@ -191,18 +202,49 @@ final class Application
 
         $this->router->get('/dashboard', $dashboard->index(...));
 
+        // --- Configurações e área do dono ------------------------------
+        $ajustesCtl = new SettingsController(
+            $this->config,
+            $ajustes,
+            new AdminRepository($this->db),
+            $auth,
+            $this->session,
+            $this->view(),
+        );
+        $this->router->get('/settings', $ajustesCtl->index(...));
+        $this->router->post('/settings/ia/chave', $ajustesCtl->saveKey(...));
+        $this->router->post('/settings/ia/chave/remover', $ajustesCtl->forgetKey(...));
+        $this->router->post('/settings/ia/testar', $ajustesCtl->testKey(...));
+        $this->router->post('/settings/ia/modelos', $ajustesCtl->saveModels(...));
+
+        $dono = new AdminController(
+            $this->config,
+            new AdminRepository($this->db),
+            $auth,
+            $this->session,
+            $this->view(),
+        );
+        $this->router->get('/admin', $dono->index(...));
+        $this->router->post('/admin/agencias', $dono->createCompany(...));
+        $this->router->post('/admin/agencias/{id}', $dono->updateCompany(...));
+        $this->router->post('/admin/agencias/{id}/ativar', $dono->toggleCompany(...));
+        $this->router->post('/admin/usuarios', $dono->createUser(...));
+        $this->router->post('/admin/usuarios/{id}', $dono->updateUser(...));
+        $this->router->post('/admin/usuarios/{id}/senha', $dono->resetPassword(...));
+        $this->router->post('/admin/usuarios/{id}/ativar', $dono->toggleUser(...));
+
         // --- Clientes -------------------------------------------------
         $studio = new StudioController(
-            $this->config,
+            $configIa,
             new StudioRepository($this->db),
             new StudioGenerator(
-                $this->config->openaiKey !== '' ? $this->config->openaiKey : null,
-                $this->config->openaiModel,
-                $this->config->openaiImageModel,
+                $configIa->openaiKey !== '' ? $configIa->openaiKey : null,
+                $configIa->openaiModel,
+                $configIa->openaiImageModel,
                 90,
                 180,
-                $this->config->openaiEndpoint,
-                $this->config->openaiImageEndpoint,
+                $configIa->openaiEndpoint,
+                $configIa->openaiImageEndpoint,
             ),
             $this->upload,
             $auth,

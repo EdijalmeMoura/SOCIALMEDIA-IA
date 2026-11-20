@@ -200,7 +200,7 @@ check('a tela do instalador mostra a versão', str_contains(
     $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']))->body,
     'v' . \Smia\Support\Config::VERSAO
 ), 'versão não aparece no rodapé');
-check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.14', '>='), \Smia\Support\Config::VERSAO);
+check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.15', '>='), \Smia\Support\Config::VERSAO);
 // Defeito real: todo redirecionamento interno voltava para /install SEM o
 // token, então o próprio guarda de acesso devolvia 403 no meio do assistente.
 $semToken = $app->handle(requisicao('GET', '/install'));
@@ -641,7 +641,211 @@ $diagSemEnv = (new \Smia\Application(new \Smia\Support\Config(
 check('sem .env o diagnóstico diz onde criar', str_contains($diagSemEnv->body, 'não encontrado'), 'não avisou');
 check('sem .env o diagnóstico mostra o caminho esperado', str_contains($diagSemEnv->body, $semEnv . '/.env'), 'sem caminho');
 
+echo "\n[6k] área do dono: agências e usuários\n";
+// A área atravessa o isolamento por agência, então o primeiro teste é quem
+// NÃO entra. Depois: criar agência, criar usuário, desativar e as travas que
+// impedem a instância de ficar sem administrador.
+[$appAdm, $configAdm] = appNova([]);
+$appAdm->db->run("INSERT INTO companies (name, slug, is_active) VALUES ('Projeto Redes Nordeste', 'projeto', 1)");
+$empresaAdm = (int) $appAdm->db->pdo()->lastInsertId();
+$appAdm->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (?, 'Edijalme', 'dono@x.test', ?, 'owner', 1, 1)",
+    [$empresaAdm, password_hash('PastaForte2026', PASSWORD_DEFAULT)]
+);
+$idDono = (int) $appAdm->db->pdo()->lastInsertId();
+$appAdm->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (?, 'Editor', 'editor@x.test', ?, 'editor', 0, 1)",
+    [$empresaAdm, password_hash('PastaForte2026', PASSWORD_DEFAULT)]
+);
+
+check('instância nova nasce com tabelas de administração',
+    (int) ($appAdm->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'app_settings'") ?? 0) === 1
+    && (int) ($appAdm->db->scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'admin_actions'") ?? 0) === 1);
+
+// Sem login: manda para o login.
+$semLoginAdm = $appAdm->handle(requisicao('GET', '/admin'));
+check('área do dono exige login', $semLoginAdm->status === 302, (string) $semLoginAdm->status);
+
+// Editor logado: 403 com explicação, nunca a lista de agências.
+$appAdm->handle(requisicao('GET', '/login'));
+$loginEditor = $appAdm->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAdm->session->csrfToken(),
+    'email' => 'editor@x.test', 'password' => 'PastaForte2026',
+]));
+check('editor consegue entrar', $loginEditor->status === 302, (string) $loginEditor->status);
+$editorNaAdm = $appAdm->handle(requisicao('GET', '/admin'));
+check('editor não entra na área do dono', $editorNaAdm->status === 403, (string) $editorNaAdm->status);
+check('a recusa explica em vez de sumir', str_contains($editorNaAdm->body, 'Acesso restrito'));
+check('a recusa não vaza o nome de outras agências', !str_contains($editorNaAdm->body, 'name="company_id"'));
+$appAdm->handle(requisicao('POST', '/logout', ['csrf_token' => $appAdm->session->csrfToken()]));
+
+// Dono logado: entra e vê a própria agência.
+$appAdm->handle(requisicao('GET', '/login'));
+$loginDono = $appAdm->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAdm->session->csrfToken(),
+    'email' => 'dono@x.test', 'password' => 'PastaForte2026',
+]));
+check('dono entra', $loginDono->status === 302, (string) $loginDono->status);
+$painelAdm = $appAdm->handle(requisicao('GET', '/admin'));
+check('área do dono abre para o dono', $painelAdm->status === 200, (string) $painelAdm->status);
+check('área do dono lista a agência', str_contains($painelAdm->body, 'Projeto Redes Nordeste'));
+$csrfAdm = $appAdm->session->csrfToken();
+
+// CSRF é obrigatório em toda escrita.
+$semCsrfAdm = $appAdm->handle(requisicao('POST', '/admin/agencias', ['name' => 'Agência Sem CSRF']));
+check('escrita sem CSRF é recusada', $semCsrfAdm->status === 302, (string) $semCsrfAdm->status);
+check('nada foi criado sem CSRF', (int) ($appAdm->db->scalar('SELECT COUNT(*) FROM companies') ?? 0) === 1);
+
+// Criar agência.
+$criouAgencia = $appAdm->handle(requisicao('POST', '/admin/agencias', [
+    'csrf_token' => $csrfAdm, 'name' => 'Agência Sol', 'owner_email' => 'sol@exemplo.com',
+]));
+check('criar agência responde', $criouAgencia->status === 302, (string) $criouAgencia->status);
+$agenciaSol = $appAdm->db->one('SELECT * FROM companies WHERE name = ?', ['Agência Sol']);
+check('agência criada no banco', $agenciaSol !== null);
+assertSame('slug sem acento', 'agencia-sol', (string) ($agenciaSol['slug'] ?? ''));
+$painelComSol = $appAdm->handle(requisicao('GET', '/admin'));
+check('agência nova aparece na tela', str_contains($painelComSol->body, 'Agência Sol'));
+check('a tela confirma o que aconteceu', str_contains($painelComSol->body, 'Agência') && str_contains($painelComSol->body, 'criada'));
+
+// Criar usuário nessa agência.
+$csrfAdm = $appAdm->session->csrfToken();
+$criouUsuario = $appAdm->handle(requisicao('POST', '/admin/usuarios', [
+    'csrf_token' => $csrfAdm, 'name' => 'Maria Sol', 'email' => 'maria@sol.com',
+    'company_id' => (string) $agenciaSol['id'], 'role' => 'owner', 'password' => 'SenhaSol2026',
+]));
+check('criar usuário responde', $criouUsuario->status === 302, (string) $criouUsuario->status);
+$maria = $appAdm->db->one('SELECT * FROM users WHERE email = ?', ['maria@sol.com']);
+check('usuário criado na agência certa', $maria !== null && (int) $maria['company_id'] === (int) $agenciaSol['id']);
+check('a senha é gravada com hash', $maria !== null && !str_contains((string) $maria['password_hash'], 'SenhaSol2026'));
+
+// E-mail repetido é recusado com motivo.
+$csrfAdm = $appAdm->session->csrfToken();
+$duplicado = $appAdm->handle(requisicao('POST', '/admin/usuarios', [
+    'csrf_token' => $csrfAdm, 'name' => 'Outra Maria', 'email' => 'maria@sol.com',
+    'company_id' => (string) $agenciaSol['id'], 'role' => 'editor', 'password' => 'OutraSenha2026',
+]));
+check('e-mail repetido é recusado', $duplicado->status === 302, (string) $duplicado->status);
+check('e o motivo é dito na tela', str_contains($appAdm->handle(requisicao('GET', '/admin'))->body, 'já existe um usuário'));
+
+// Senha curta é recusada.
+$csrfAdm = $appAdm->session->csrfToken();
+$appAdm->handle(requisicao('POST', '/admin/usuarios/' . (int) $maria['id'] . '/senha', [
+    'csrf_token' => $csrfAdm, 'user_id' => (string) $maria['id'], 'password' => 'curta',
+]));
+check('senha curta não é aceita', str_contains($appAdm->handle(requisicao('GET', '/admin'))->body, 'pelo menos 8 caracteres'));
+
+// Troca de senha válida funciona de verdade.
+$csrfAdm = $appAdm->session->csrfToken();
+$appAdm->handle(requisicao('POST', '/admin/usuarios/' . (int) $maria['id'] . '/senha', [
+    'csrf_token' => $csrfAdm, 'user_id' => (string) $maria['id'], 'password' => 'SenhaNova2026',
+]));
+$hashMaria = (string) ($appAdm->db->scalar('SELECT password_hash FROM users WHERE id = ?', [(int) $maria['id']]) ?? '');
+check('senha trocada confere com a nova', password_verify('SenhaNova2026', $hashMaria));
+
+// Desativar: bloqueia login, sem dizer que a conta existe.
+// Maria é a única administradora da agência dela, então o sistema recusa
+// primeiro — é a trava que impede uma agência de ficar sem ninguém no comando.
+$csrfAdm = $appAdm->session->csrfToken();
+$appAdm->handle(requisicao('POST', '/admin/usuarios/' . (int) $maria['id'] . '/ativar', [
+    'csrf_token' => $csrfAdm, 'user_id' => (string) $maria['id'],
+]));
+check('não desativa a última administradora da agência',
+    (int) ($appAdm->db->scalar('SELECT is_active FROM users WHERE id = ?', [(int) $maria['id']]) ?? 0) === 1);
+check('e explica o que fazer antes',
+    str_contains($appAdm->handle(requisicao('GET', '/admin'))->body, 'único administrador ativo da agência'));
+
+// Com outro administrador na agência, a desativação passa.
+$appAdm->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_active) VALUES (?, 'Segundo', 'segundo@sol.com', ?, 'admin', 1)",
+    [(int) $agenciaSol['id'], password_hash('OutraSenha2026', PASSWORD_DEFAULT)]
+);
+$csrfAdm = $appAdm->session->csrfToken();
+$respTog = $appAdm->handle(requisicao('POST', '/admin/usuarios/' . (int) $maria['id'] . '/ativar', [
+    'csrf_token' => $csrfAdm, 'user_id' => (string) $maria['id'],
+]));
+check('com outro administrador, a desativação passa',
+    (int) ($appAdm->db->scalar('SELECT is_active FROM users WHERE id = ?', [(int) $maria['id']]) ?? 1) === 0);
+$appAdm->handle(requisicao('POST', '/logout', ['csrf_token' => $appAdm->session->csrfToken()]));
+$appAdm->handle(requisicao('GET', '/login'));
+$loginBloqueado = $appAdm->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAdm->session->csrfToken(), 'email' => 'maria@sol.com', 'password' => 'SenhaNova2026',
+]));
+check('usuário desativado não entra', $loginBloqueado->status === 401, (string) $loginBloqueado->status);
+check('a recusa não revela que a conta existe',
+    str_contains($loginBloqueado->body, 'E-mail ou senha inválidos') && !str_contains($loginBloqueado->body, 'desativ'));
+
+// O dono não pode desativar a própria conta.
+$appAdm->handle(requisicao('GET', '/login'));
+$appAdm->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAdm->session->csrfToken(), 'email' => 'dono@x.test', 'password' => 'PastaForte2026',
+]));
+$csrfAdm = $appAdm->session->csrfToken();
+$appAdm->handle(requisicao('POST', '/admin/usuarios/' . $idDono . '/ativar', [
+    'csrf_token' => $csrfAdm, 'user_id' => (string) $idDono,
+]));
+check('o dono não desativa a própria conta',
+    (int) ($appAdm->db->scalar('SELECT is_active FROM users WHERE id = ?', [$idDono]) ?? 0) === 1);
+check('a tela diz por quê', str_contains($appAdm->handle(requisicao('GET', '/admin'))->body, 'própria conta'));
+
+// A agência do próprio dono não é desativada por ele.
+$csrfAdm = $appAdm->session->csrfToken();
+$appAdm->handle(requisicao('POST', '/admin/agencias/' . $empresaAdm . '/ativar', [
+    'csrf_token' => $csrfAdm, 'company_id' => (string) $empresaAdm,
+]));
+check('o dono não desativa a agência em que está',
+    (int) ($appAdm->db->scalar('SELECT is_active FROM companies WHERE id = ?', [$empresaAdm]) ?? 0) === 1);
+
+// Agência com dono ativo não é desativada sem antes desativar as pessoas.
+$csrfAdm = $appAdm->session->csrfToken();
+$appAdm->handle(requisicao('POST', '/admin/agencias/' . (int) $agenciaSol['id'] . '/ativar', [
+    'csrf_token' => $csrfAdm, 'company_id' => (string) $agenciaSol['id'],
+]));
+check('agência com dono ativo fica ativa',
+    (int) ($appAdm->db->scalar('SELECT is_active FROM companies WHERE id = ?', [(int) $agenciaSol['id']]) ?? 0) === 1);
+check('a recusa explica o que fazer antes',
+    str_contains($appAdm->handle(requisicao('GET', '/admin'))->body, 'Desative esses usuários primeiro'));
+
+// Auditoria: toda mudança deixa rastro consultável.
+$acoes = $appAdm->db->all('SELECT action FROM admin_actions ORDER BY id');
+$nomes = array_map(static fn ($a) => (string) $a['action'], $acoes);
+check('ação de criar agência é registrada', in_array('admin.company_created', $nomes, true));
+check('ação de criar usuário é registrada', in_array('admin.user_created', $nomes, true));
+check('ação de trocar senha é registrada', in_array('admin.password_reset', $nomes, true));
+check('ação de desativar usuário é registrada', in_array('admin.user_disabled', $nomes, true));
+check('o registro não guarda senha', !str_contains(json_encode($acoes), 'SenhaNova2026'));
+
+// Só o dono da instalação vê o menu; o editor não vê a porta.
+$appAdm->handle(requisicao('POST', '/logout', ['csrf_token' => $appAdm->session->csrfToken()]));
+$appAdm->handle(requisicao('GET', '/login'));
+$appAdm->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAdm->session->csrfToken(), 'email' => 'editor@x.test', 'password' => 'PastaForte2026',
+]));
+$menuEditor = $appAdm->handle(requisicao('GET', '/dashboard'));
+check('dashboard do editor abre', $menuEditor->status === 200, (string) $menuEditor->status);
+// `/admin` aparece em outros lugares legítimos (URL curta do dashboard não),
+// então o que se verifica é a ausência do LINK do menu, não da palavra.
+preg_match_all('#<a[^>]+href="[^"]*/admin"[^>]*>#', $menuEditor->body, $linksAdmin);
+check('editor não vê a porta da área do dono no menu', $linksAdmin[0] === [], 'links: ' . implode(', ', $linksAdmin[0]));
+
+// O dono vê a porta: o menu não pode esconder o que ele pode usar.
+$appAdm->handle(requisicao('POST', '/logout', ['csrf_token' => $appAdm->session->csrfToken()]));
+$appAdm->handle(requisicao('GET', '/login'));
+$appAdm->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAdm->session->csrfToken(), 'email' => 'dono@x.test', 'password' => 'PastaForte2026',
+]));
+$menuDono = $appAdm->handle(requisicao('GET', '/dashboard'));
+check('dono vê a porta da área do dono no menu',
+    preg_match('#<a[^>]+href="[^"]*/admin"[^>]*>[^<]*<span[^>]*>◆</span>#s', $menuDono->body) === 1);
+$appAdm->handle(requisicao('POST', '/logout', ['csrf_token' => $appAdm->session->csrfToken()]));
+
 echo "\n[7] Instalação completa\n";
+// Instância própria: a suíte já instalou outras e o instalador é de uso único.
+[$app, $config, $raiz] = appNova(['token' => 'token-secreto-123']);
+$app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$base = ['csrf_token' => $app->session->csrfToken(), 'access_token' => 'token-secreto-123'];
 $valido = $app->handle(requisicao('POST', '/install/validate', $base + [
     'agency_name' => 'Agência Pasta', 'admin_name' => 'Ana Souza', 'admin_email' => 'ana@pasta.example',
     'admin_password' => 'PastaForte2026', 'admin_password_confirm' => 'PastaForte2026',
@@ -935,7 +1139,11 @@ assertSame('sem módulo ativo na raiz', null, \Smia\Support\Modules::activeFrom(
 assertSame('slug desconhecido não quebra', null, \Smia\Support\Modules::activeFrom('/qualquer'));
 $menu = $app->handle(requisicao('GET', '/dashboard'));
 check('menu tem link real para clientes', str_contains($menu->body, '/edijalmemoura/socialai/clients"'));
-check('módulos futuros seguem marcados', str_contains($menu->body, 'EM BREVE'));
+// A partir da v1.15 todos os módulos estão prontos: o que se garante agora é
+// que nenhum deles aparece como "em breve" e que a contagem do rodapé é real.
+check('nenhum módulo aparece como "em breve"', !str_contains($menu->body, 'EM BREVE'));
+check('a contagem de módulos do rodapé é a lista real',
+    str_contains($menu->body, 'módulo ' . count(array_filter($modulos, static fn ($m) => $m['ready'])) . ' de ' . count($modulos) . ' pronto'));
 
 echo "\n[18] Planejamento: formulário e permissões\n";
 // Sessão própria: garante usuário logado independente do que os testes
@@ -1357,7 +1565,8 @@ check('módulo não aparece como "em breve"', !preg_match('/Planejamento.{0,200}
 $modulos = \Smia\Support\Modules::all();
 $moduloPlanner = array_values(array_filter($modulos, static fn (array $m): bool => $m['slug'] === 'planner'))[0] ?? null;
 check('módulo planejamento marcado como pronto', ($moduloPlanner['ready'] ?? false) === true);
-check('os módulos ainda não portados seguem pendentes', count(array_filter($modulos, static fn (array $m): bool => $m['ready'] === false)) >= 1);
+check('todo módulo do menu tem caminho e está pronto',
+    array_filter($modulos, static fn (array $m): bool => $m['ready'] !== true || $m['path'] === null) === []);
 
 echo "\n[30] Planejamento: conteúdo da IA é tratado como não confiável\n";
 $logar($app, $idUsuario);
@@ -2106,7 +2315,8 @@ check('Aprovações aparece com link no dashboard', str_contains($painelAprov->b
 // O número de módulos prontos cresce a cada entrega: em vez de congelar "5 de 8",
 // o teste confere que o rodapé do card reflete a lista real de Modules.
 $prontosAprov = count(array_filter(\Smia\Support\Modules::all(), static fn (array $m): bool => $m['ready']));
-check('dashboard conta os módulos prontos na época das aprovações', str_contains($painelAprov->body, 'módulo ' . $prontosAprov . ' de 8 pronto'));
+check('dashboard conta os módulos prontos na época das aprovações',
+    str_contains($painelAprov->body, 'módulo ' . $prontosAprov . ' de ' . count(\Smia\Support\Modules::all()) . ' pronto'));
 $logar($app, $idUsuario);
 check('lista aponta para o portal do cliente', str_contains($app->handle(requisicao('GET', '/approvals'))->body, 'Acessos do portal'));
 assertSame('rota inexistente de aprovação responde 404', 404, $app->handle(requisicao('GET', '/approvals/abc/xyz'))->status);
@@ -2308,7 +2518,8 @@ $painelFeed = $app->handle(requisicao('GET', '/dashboard'));
 assertSame('dashboard responde 200 com feed', 200, $painelFeed->status);
 check('Feed aparece no menu', str_contains($painelFeed->body, '/feed"'));
 $prontosFeed = count(array_filter(\Smia\Support\Modules::all(), static fn (array $m): bool => $m['ready']));
-check('dashboard conta os módulos prontos depois do feed', str_contains($painelFeed->body, 'módulo ' . $prontosFeed . ' de 8 pronto'));
+check('dashboard conta os módulos prontos depois do feed',
+    str_contains($painelFeed->body, 'módulo ' . $prontosFeed . ' de ' . count(\Smia\Support\Modules::all()) . ' pronto'));
 $modulosFeed = \Smia\Support\Modules::all();
 $moduloFeed = array_values(array_filter($modulosFeed, static fn (array $m): bool => $m['slug'] === 'feed'))[0] ?? null;
 check('módulo feed marcado como pronto', ($moduloFeed['ready'] ?? false) === true);

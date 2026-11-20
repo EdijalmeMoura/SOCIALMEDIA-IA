@@ -14,7 +14,13 @@
  * @var array<int,array{type:string,message:string}> $flashes
  * @var \Smia\Support\Config $config
  */
-$prontos = count(array_filter($modules, static fn ($m) => $m['ready']));
+// A área do dono só existe para quem é dono: o card de módulos não pode
+// anunciar uma porta que a conta não abre. A trava real é no controller.
+$modulosVisiveis = array_values(array_filter(
+    $modules,
+    static fn (array $m): bool => $m['slug'] !== 'admin' || (int) ($user['is_super'] ?? 0) === 1
+));
+$prontos = count(array_filter($modulosVisiveis, static fn ($m) => $m['ready']));
 ob_start();
 ?>
 <div class="welcome-row">
@@ -44,7 +50,7 @@ ob_start();
   <article class="stat-card">
     <div class="stat-head"><span class="stat-icon coral">◆</span><span class="stat-caption">CLIENTES</span></div>
     <div class="stat-value"><a href="<?= e($config->url('/clients')) ?>" style="color:inherit;text-decoration:none"><?= (int) $client_total ?><small> marcas</small></a></div>
-    <div class="stat-bottom"><span class="stat-note"><?= (int) $client_summary['ativos'] ?> ativo(s) · módulo <?= $prontos ?> de <?= count($modules) ?> pronto</span></div>
+    <div class="stat-bottom"><span class="stat-note"><?= (int) $client_summary['ativos'] ?> ativo(s) · módulo <?= $prontos ?> de <?= count($modulosVisiveis) ?> pronto</span></div>
   </article>
 </div>
 
@@ -76,7 +82,7 @@ ob_start();
       <div><h3>Módulos do produto</h3><p>Mesma estrutura de dados do produto Python; cada um entra em uma entrega.</p></div>
     </div>
     <ul class="check-list" style="margin-top:10px">
-      <?php foreach ($modules as $modulo): ?>
+      <?php foreach ($modulosVisiveis as $modulo): ?>
         <li class="check">
           <span class="check-icon" style="<?= $modulo['ready'] ? '' : 'background:#f1f2f7;color:#9aa0b0' ?>"><?= $modulo['ready'] ? '✓' : '·' ?></span>
           <div><b><?= $modulo['ready'] ? '<a href="' . e($config->url((string) $modulo['path'])) . '" style="color:inherit">' . e($modulo['name']) . '</a>' : e($modulo['name']) ?></b><small><?= e($modulo['hint']) ?></small></div>

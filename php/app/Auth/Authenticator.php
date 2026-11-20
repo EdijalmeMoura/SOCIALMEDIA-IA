@@ -57,6 +57,15 @@ final class Authenticator
         }
 
         $usuario = $this->db->one('SELECT * FROM users WHERE email = ? COLLATE NOCASE', [mb_strtolower(trim($email))]);
+        // Conta desativada não entra — e a mensagem NÃO diz que ela existe,
+        // para não transformar a tela de login num verificador de e-mails.
+        if ($usuario !== null && (int) ($usuario['is_active'] ?? 1) === 0) {
+            $recentes[] = $agora;
+            $tentativas[$chave] = $recentes;
+            $this->session->put(self::CHAVE_TENTATIVAS, $tentativas);
+
+            return ['ok' => false, 'error' => 'E-mail ou senha inválidos.', 'user' => null];
+        }
         if ($usuario === null || !password_verify($senha, (string) $usuario['password_hash'])) {
             $recentes[] = $agora;
             $tentativas[$chave] = $recentes;

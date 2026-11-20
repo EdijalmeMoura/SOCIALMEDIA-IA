@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.14`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.14)** — todos os módulos,
+**Última versão: [`php-v1.15`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.14** | **Diagnóstico da chave de IA e do `.env`**: testa a chave no servidor e aponta o erro exato do arquivo | [php-v1.14](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.14) | [`SOCIALMEDIA-IA-php-v1.14.zip`](downloads/SOCIALMEDIA-IA-php-v1.14.zip) |
+| **v1.15** | **Área do dono, Usuários e Configurações**: a chave de IA entra pela tela e é testada no servidor | [php-v1.15](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15) | [`SOCIALMEDIA-IA-php-v1.15.zip`](downloads/SOCIALMEDIA-IA-php-v1.15.zip) |
+| v1.14 | **Diagnóstico da chave de IA e do `.env`**: testa a chave no servidor e aponta o erro exato do arquivo | [php-v1.14](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.14) | [`SOCIALMEDIA-IA-php-v1.14.zip`](downloads/SOCIALMEDIA-IA-php-v1.14.zip) |
 | v1.13 | **Correção do 403 na confirmação**: o formulário de revisão não enviava o token | [php-v1.13](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.13) | [`SOCIALMEDIA-IA-php-v1.13.zip`](downloads/SOCIALMEDIA-IA-php-v1.13.zip) |
 | v1.12 | **Trilha da confirmação**: o diagnóstico mostra em que etapa a instalação parou | [php-v1.12](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.12) | [`SOCIALMEDIA-IA-php-v1.12.zip`](downloads/SOCIALMEDIA-IA-php-v1.12.zip) |
 | v1.11 | **Diagnóstico** em `/install/diagnostico` e falhas que dizem a causa (arquivo:linha) | [php-v1.11](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.11) | [`SOCIALMEDIA-IA-php-v1.11.zip`](downloads/SOCIALMEDIA-IA-php-v1.11.zip) |
@@ -57,7 +58,7 @@ Cada `.zip` é o pacote completo (`.env` com o endereço preenchido,
 download:
 
 ```sh
-sha256sum SOCIALMEDIA-IA-php-v1.14.zip   # compare com SHA256SUMS.txt
+sha256sum SOCIALMEDIA-IA-php-v1.15.zip   # compare com SHA256SUMS.txt
 ```
 
 O pacote publicado **não contém segredos seus**: o `.env` vem com `SECRET_KEY` e
@@ -72,6 +73,17 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.15 — A chave de IA entra pela tela; o dono vê todas as agências.**
+  Três módulos que faltavam para o produto ser administrável sem editar
+  arquivo: **Configurações** (`/settings`) recebe a chave da OpenAI, testa no
+  servidor com uma chamada de 1 token e troca os modelos; **Usuários**
+  (`/settings#equipe`) mostra quem entra na agência; e a **Área do dono**
+  (`/admin`) lista todas as agências e todos os usuários, cria agência, cria
+  usuário, troca senha e desativa conta. A chave fica no banco, cifrada com
+  AES-256-GCM sob o `SECRET_KEY`, e **nunca** volta para a tela — nem pedaço.
+  Precedência explícita: banco > `.env` > ambiente. Travas: ninguém desativa a
+  própria conta, ninguém deixa uma agência sem administrador e ninguém remove o
+  último dono da instalação. Quem instala já nasce como dono do sistema.
 - **v1.14 — A chave de IA responde por si.** O diagnóstico passou a **testar
   a chave no servidor** (uma chamada de 1 token) e dizer o desfecho: aceita,
   recusada (401/403), modelo desligado (404), sem cota (429), chave de
@@ -140,7 +152,7 @@ git archive --format=zip -o socialai-php.zip HEAD:php
   artes com prancheta.
 - **v1.1 / v1.2** — primeiras entregas (base instalável, clientes e
   planejamento). Ficam publicadas para quem precisa reproduzir uma instalação
-  antiga; a v1.14 já contém tudo delas.
+  antiga; a v1.15 já contém tudo delas.
 
 Atualizando de qualquer versão anterior: envie **por cima apenas `app/` e
 `public/`**, mantenha `.env` e `data/`. O esquema migra sozinho e nada é
@@ -158,8 +170,8 @@ dependência para instalar.
 0. **Baixe o pacote** (não precisa clonar nada):
 
    ```sh
-   curl -LO https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/raw/php-v1.14/php/downloads/SOCIALMEDIA-IA-php-v1.14.zip
-   unzip SOCIALMEDIA-IA-php-v1.14.zip -d socialai-php
+   curl -LO https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/raw/php-v1.14/php/downloads/SOCIALMEDIA-IA-php-v1.15.zip
+   unzip SOCIALMEDIA-IA-php-v1.15.zip -d socialai-php
    ```
 
    Versão mais nova: <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases>.

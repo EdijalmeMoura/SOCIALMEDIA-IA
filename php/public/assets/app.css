@@ -35,3 +35,42 @@
 .components-doc::selection{background:#dfe4ff}
 @media(max-width:1100px){.components-hero{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.components-hero{grid-template-columns:1fr}.components-doc{font-size:9.5px;padding:12px}}
+
+/* --- Configurações e Área do dono (v1.15) ------------------------------- */
+.settings-ia,.settings-modelos{margin-bottom:14px}
+.settings-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}
+.settings-facts>div{background:#fbfcff;border:1px solid #eceff7;border-radius:8px;padding:10px 12px}
+.settings-facts dt{margin:0 0 4px;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:#969cad}
+.settings-facts dd{margin:0;font-size:10px;line-height:1.6;color:#3a4257;word-break:break-word}
+.settings-form{display:flex;flex-direction:column;gap:10px;margin:12px 0 0}
+.settings-form-inline{flex-direction:row;flex-wrap:wrap;align-items:flex-end;gap:10px}
+.settings-form-inline .field{min-width:150px;flex:1 1 150px}
+.settings-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.settings-actions-row{margin-top:10px}
+.settings-form .hint,.hint{font-size:8.5px;line-height:1.6;color:#8a91a4}
+.badge{display:inline-block;border-radius:20px;padding:2px 9px;font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.badge-ok{background:#eaf8f2;color:#197a5c;border:1px solid #cdeee2}
+.badge-off{background:#fdf0ee;color:#a8442f;border:1px solid #f6d9d2}
+.table-scroll{overflow-x:auto;border:1px solid #eef0f7;border-radius:9px}
+.data-table{width:100%;border-collapse:collapse;font-size:9.5px}
+.data-table th{background:#f8f9fe;text-align:left;font-size:8px;letter-spacing:.07em;text-transform:uppercase;color:#8b93a8;padding:9px 10px;border-bottom:1px solid #eef0f7;white-space:nowrap}
+.data-table td{padding:8px 10px;border-bottom:1px solid #f4f6fb;vertical-align:top;color:#3a4257}
+.data-table tr:last-child td{border-bottom:0}
+.data-table tr.row-off{background:#fffaf9;opacity:.85}
+.inline-form{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.inline-form input,.inline-form select{font-size:9px;padding:5px 7px;border:1px solid #e3e7f2;border-radius:6px;background:#fff;color:#3a4257;max-width:170px}
+.inline-form input[type=checkbox]{max-width:none}
+.check-inline{display:inline-flex;align-items:center;gap:5px;font-size:8.5px;color:#6d7590;white-space:nowrap}
+.button.small{padding:5px 10px;font-size:9px}
+.admin-row-actions{display:flex;flex-direction:column;gap:6px;min-width:210px}
+.admin-stats{margin-bottom:14px}
+.admin-new-company,.admin-new-user{margin-top:14px;border-top:1px solid #f0f2f9;padding-top:12px}
+.admin-new-user h3{margin:0 0 8px;font-size:11px}
+.admin-log{list-style:none;margin:0;padding:0}
+.admin-log li{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid #f4f6fb;font-size:9px}
+.admin-log li:last-child{border-bottom:0}
+.admin-log-when{color:#969cad;white-space:nowrap;font-variant-numeric:tabular-nums}
+.admin-log-what{color:#3a4257;line-height:1.6}
+.admin-log-what em{display:block;font-style:normal;color:#8a91a4;font-size:8.5px}
+.plain-list{margin:8px 0 12px;padding-left:18px;font-size:10px;line-height:1.8}
+@media(max-width:900px){.settings-facts{grid-template-columns:1fr}.settings-form-inline{flex-direction:column;align-items:stretch}}

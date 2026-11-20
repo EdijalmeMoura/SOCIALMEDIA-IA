@@ -66,6 +66,21 @@ ATUALIZANDO DE UMA VERSÃO ANTERIOR
   vence o arquivo), linha com ":" no lugar de "=" e " #" no meio da chave
   (corta o valor). Nada disso mostra a chave na tela.
 
+ONDE FICA A CHAVE DA OPENAI (v1.15+)
+  Entre no sistema e abra CONFIGURAÇÕES (menu lateral).
+  Cole a chave no campo, salve e clique em "Testar chave agora".
+  A tela responde se a chave foi aceita, recusada, se o modelo não existe,
+  se falta cota ou se o servidor está sem certificado/rede — e nunca mostra
+  a chave de volta. A chave vale mais que o .env: se você gravar pela tela,
+  é ela que o sistema usa.
+  A chave fica cifrada no banco quando existe SECRET_KEY na instalação.
+
+ÁREA DO DONO (v1.15+)
+  Menu lateral > "Área do dono" (só aparece para quem instalou).
+  Lá ficam todas as agências e todos os usuários: criar agência, criar
+  usuário, trocar senha, desativar conta. O menu "Usuários" mostra a equipe
+  da sua agência.
+
 SE ALGO NÃO FECHAR
   Abra  .../socialai/install/diagnostico
   A seção "Última tentativa de instalação" mostra até onde a confirmação foi.

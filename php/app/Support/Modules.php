@@ -13,6 +13,23 @@ namespace Smia\Support;
 final class Modules
 {
     /**
+     * Módulos que a conta pode ver.
+     *
+     * `admin` é do dono da instalação: o menu não deve oferecer uma porta que
+     * a pessoa não pode abrir. O bloqueio de verdade continua no controller.
+     *
+     * @param bool $super
+     * @return array<int,array{slug:string,name:string,hint:string,path:?string,icon:string,ready:bool}>
+     */
+    public static function paraUsuario(bool $super): array
+    {
+        return array_values(array_filter(
+            self::all(),
+            static fn (array $modulo): bool => $modulo['slug'] !== 'admin' || $super
+        ));
+    }
+
+    /**
      * @return array<int,array{slug:string,name:string,hint:string,path:?string,icon:string,ready:bool}>
      */
     public static function all(): array
@@ -25,7 +42,10 @@ final class Modules
             ['slug' => 'feed', 'name' => 'Feed', 'hint' => 'Prévia do perfil e grade', 'path' => '/feed', 'icon' => '▦', 'ready' => true],
             ['slug' => 'reports', 'name' => 'Relatórios', 'hint' => 'Entregas registradas e exportação', 'path' => '/reports', 'icon' => '◑', 'ready' => true],
             ['slug' => 'meta', 'name' => 'Conexões Meta', 'hint' => 'Agenda, Páginas e publicação', 'path' => '/meta', 'icon' => '◎', 'ready' => true],
-            ['slug' => 'settings', 'name' => 'Configurações', 'hint' => 'Equipe, segurança e integrações', 'path' => '/settings', 'icon' => '⚙', 'ready' => false],
+            ['slug' => 'users', 'name' => 'Usuários', 'hint' => 'Equipe da agência e permissões', 'path' => '/settings#equipe', 'icon' => '☺', 'ready' => true],
+            ['slug' => 'settings', 'name' => 'Configurações', 'hint' => 'Chave de IA, modelos e testes', 'path' => '/settings', 'icon' => '⚙', 'ready' => true],
+            // Só aparece para quem é dono da instalação; o layout filtra.
+            ['slug' => 'admin', 'name' => 'Área do dono', 'hint' => 'Todas as agências e todos os usuários', 'path' => '/admin', 'icon' => '◆', 'ready' => true],
         ];
     }
 

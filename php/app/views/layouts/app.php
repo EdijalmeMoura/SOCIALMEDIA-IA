@@ -56,7 +56,15 @@ $iniciais = mb_strtoupper(mb_substr((string) $user['name'], 0, 1) . mb_substr((s
     <p class="nav-label">OPERAÇÃO</p>
     <nav class="nav-links">
       <a class="nav-link <?= ($active ?? null) === null ? 'active' : '' ?>" href="<?= e($config->url('/dashboard')) ?>"><span class="nav-icon">◧</span> Visão geral</a>
-      <?php foreach (($modules ?? []) as $modulo): ?>
+      <?php
+        // O menu do dono só aparece para o dono. A trava real é no controller;
+        // aqui é para não oferecer uma porta que a conta não pode abrir.
+        $souDonoInstalacao = (int) ($user['is_super'] ?? 0) === 1;
+        foreach (($modules ?? []) as $modulo):
+            if ($modulo['slug'] === 'admin' && !$souDonoInstalacao) {
+                continue;
+            }
+      ?>
         <?php if ($modulo['ready'] && $modulo['path'] !== null): ?>
           <a class="nav-link <?= ($active ?? null) === $modulo['slug'] ? 'active' : '' ?>" href="<?= e($config->url($modulo['path'])) ?>">
             <span class="nav-icon"><?= e($modulo['icon']) ?></span> <?= e($modulo['name']) ?>

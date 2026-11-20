@@ -347,8 +347,12 @@ final class Installer
             }
             $db->run('INSERT INTO companies (name, slug) VALUES (?, ?)', [$dados['agency_name'], $slug]);
             $companyId = (int) $db->pdo()->lastInsertId();
+            // Quem instala é o dono da instalação: sem isso ninguém conseguiria
+            // abrir a área que gerencia as outras agências, e a instância
+            // nasceria sem administrador do sistema.
             $db->run(
-                'INSERT INTO users (company_id, name, email, password_hash, role) VALUES (?, ?, ?, ?, ?)',
+                'INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+                 VALUES (?, ?, ?, ?, ?, 1, 1)',
                 [$companyId, $dados['admin_name'], $dados['admin_email'], $dados['password_hash'], 'owner']
             );
             $userId = (int) $db->pdo()->lastInsertId();
