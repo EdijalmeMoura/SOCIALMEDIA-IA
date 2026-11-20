@@ -34,18 +34,42 @@ final class StudioRepository
         );
     }
 
-    /** @return array<int,array<string,mixed>> */
-    public function artes(int $companyId, int $limite = 40): array
+    /**
+     * Artes do workspace, da mais nova para a mais antiga.
+     *
+     * Os filtros são opcionais e vêm da própria galeria: sem eles, quem tem
+     * trinta artes rola a lista inteira para achar a de um cliente.
+     *
+     * @param array{client_id?:int,format_key?:string,status?:string} $filtros
+     * @return array<int,array<string,mixed>>
+     */
+    public function artes(int $companyId, int $limite = 40, array $filtros = []): array
     {
+        $condicoes = ['cp.company_id = ?'];
+        $valores = [$companyId];
+        if ((int) ($filtros['client_id'] ?? 0) > 0) {
+            $condicoes[] = 'cp.client_id = ?';
+            $valores[] = (int) $filtros['client_id'];
+        }
+        if ((string) ($filtros['format_key'] ?? '') !== '') {
+            $condicoes[] = 'cp.format_key = ?';
+            $valores[] = (string) $filtros['format_key'];
+        }
+        if (in_array((string) ($filtros['status'] ?? ''), ['draft', 'exported'], true)) {
+            $condicoes[] = 'cp.status = ?';
+            $valores[] = (string) $filtros['status'];
+        }
+        $valores[] = $limite;
+
         return $this->db->all(
-            "SELECT cp.*, c.company_name, c.trade_name,
+            'SELECT cp.*, c.company_name, c.trade_name,
                     (SELECT COUNT(*) FROM post_versions pv WHERE pv.creative_id = cp.id) AS version_count
              FROM creative_posts cp
              JOIN clients c ON c.id = cp.client_id AND c.company_id = cp.company_id
-             WHERE cp.company_id = ?
+             WHERE ' . implode(' AND ', $condicoes) . '
              ORDER BY cp.created_at DESC, cp.id DESC
-             LIMIT ?",
-            [$companyId, $limite]
+             LIMIT ?',
+            $valores
         );
     }
 
@@ -69,6 +93,7 @@ final class StudioRepository
      *
      * @param array<string,string> $conteudo
      * @param array{elements:list<array<string,mixed>>} $layout
+     * @param array{network?:string,objective?:string,tone?:string,reference?:string} $pedido
      */
     public function criar(
         int $companyId,
@@ -86,21 +111,27 @@ final class StudioRepository
         int $tokensEntrada,
         int $tokensSaida,
         string $rotuloVersao = 'Texto e layout gerados',
+        array $pedido = [],
     ): int {
         return (int) $this->db->transaction(function () use (
             $companyId, $clientId, $userId, $assunto, $formato, $largura, $altura,
-            $conteudo, $layout, $corFundo, $promptImagem, $modelo, $tokensEntrada, $tokensSaida, $rotuloVersao
+            $conteudo, $layout, $corFundo, $promptImagem, $modelo, $tokensEntrada, $tokensSaida, $rotuloVersao, $pedido
         ): int {
             $this->db->run(
                 'INSERT INTO creative_posts
                     (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height,
-                     content_json, layout_json, background_color, image_prompt)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                     content_json, layout_json, background_color, image_prompt,
+                     network, objective, tone, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
                     $companyId, $clientId, $userId, $assunto, $formato, $largura, $altura,
                     json_encode($conteudo, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                     json_encode($layout, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                     $corFundo, $promptImagem,
+                    (string) ($pedido['network'] ?? 'generico'),
+                    (string) ($pedido['objective'] ?? ''),
+                    (string) ($pedido['tone'] ?? 'marca'),
+                    (string) ($pedido['reference'] ?? ''),
                 ]
             );
             $id = (int) $this->db->pdo()->lastInsertId();
@@ -118,7 +149,10 @@ final class StudioRepository
      */
     public function atualizar(int $id, int $companyId, int $userId, array $campos, string $rotuloVersao): void
     {
-        $permitidos = ['content_json', 'layout_json', 'background_color', 'image_prompt', 'image_path', 'export_path', 'status'];
+        $permitidos = [
+            'content_json', 'layout_json', 'background_color', 'image_prompt', 'image_path', 'export_path', 'status',
+            'network', 'objective', 'tone', 'reference',
+        ];
         $sets = [];
         $valores = [];
         foreach ($permitidos as $coluna) {
@@ -209,6 +243,44 @@ final class StudioRepository
         }
 
         return $arquivos;
+    }
+
+    /**
+     * Duplica a arte como uma criação nova e independente.
+     *
+     * Vale para "quero a mesma composição com outro texto": copiar layout,
+     * cores, imagem e legenda e deixar o histórico começar do zero é mais
+     * seguro do que editar por cima e depois tentar voltar atrás.
+     */
+    public function duplicar(int $creativeId, int $companyId, int $userId): ?int
+    {
+        $arte = $this->arte($creativeId, $companyId);
+        if ($arte === null) {
+            return null;
+        }
+
+        return (int) $this->db->transaction(function () use ($arte, $companyId, $userId): int {
+            $this->db->run(
+                'INSERT INTO creative_posts
+                    (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height,
+                     content_json, layout_json, background_color, image_prompt, image_path,
+                     network, objective, tone, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [
+                    $companyId, (int) $arte['client_id'], $userId,
+                    mb_substr('Cópia de ' . (string) $arte['subject'], 0, 300),
+                    (string) $arte['format_key'], (int) $arte['canvas_width'], (int) $arte['canvas_height'],
+                    (string) $arte['content_json'], (string) $arte['layout_json'],
+                    (string) $arte['background_color'], (string) $arte['image_prompt'], $arte['image_path'],
+                    (string) ($arte['network'] ?? 'generico'), (string) ($arte['objective'] ?? ''),
+                    (string) ($arte['tone'] ?? 'marca'), (string) ($arte['reference'] ?? ''),
+                ]
+            );
+            $novo = (int) $this->db->pdo()->lastInsertId();
+            $this->gravarVersao($novo, $companyId, $userId, 'Cópia da arte #' . (int) $arte['id']);
+
+            return $novo;
+        });
     }
 
     public function remover(int $creativeId, int $companyId): void

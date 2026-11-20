@@ -25,11 +25,45 @@ final class Layout
         'ad' => ['label' => 'Anúncio', 'width' => 1080, 'height' => 1350, 'image_size' => '1024x1536'],
     ];
 
-    /** Campos de texto que a IA devolve e o editor mantém. */
-    public const CAMPOS = ['title', 'subtitle', 'caption', 'hashtags', 'cta', 'visual_brief', 'image_suggestion', 'composition'];
+    /**
+     * Campos de texto que a IA devolve e o editor mantém.
+     *
+     * O estúdio só age sobre campos que estão nesta lista: se um dia a IA
+     * devolver outra coisa, ela é descartada em vez de virar conteúdo solto.
+     */
+    public const CAMPOS = ['title', 'subtitle', 'caption', 'hashtags', 'cta', 'visual_brief', 'image_suggestion', 'composition', 'alt_text'];
+
+    /** Campos que aparecem na prancheta (os demais são legenda/briefing). */
+    public const CAMPOS_ARTE = ['title', 'subtitle', 'cta'];
+
+    /**
+     * Faixa aceitável de cada campo de texto livre, em caracteres.
+     *
+     * Serve para os contadores da tela: o usuário vê "182/2200" e sabe se
+     * ainda cabe, em vez de descobrir isso no momento de publicar.
+     *
+     * @var array<string,int>
+     */
+    public const LIMITES = [
+        'title' => 70, 'subtitle' => 90, 'cta' => 40, 'caption' => 2200,
+        'hashtags' => 600, 'visual_brief' => 1200, 'image_suggestion' => 600,
+        'composition' => 600, 'alt_text' => 300,
+    ];
 
     /** Campos que existem na arte (os demais são legenda/briefing). */
     public const ELEMENTOS = ['title', 'subtitle', 'cta', 'logo'];
+
+    /**
+     * Elementos que a prancheta sabe desenhar, incluindo a moldura da imagem.
+     *
+     * `image` não guarda texto: guarda onde a foto fica. Sem ele, a única
+     * escolha era a imagem ocupando a arte inteira por baixo do texto — e
+     * qualquer ajuste de composição virava briga com o fundo.
+     */
+    public const ELEMENTOS_DESENHO = ['title', 'subtitle', 'cta', 'logo', 'image'];
+
+    /** Modos de enquadramento da imagem de fundo. */
+    public const ENQUADRAMENTOS = ['cobrir', 'encaixar', 'moldura'];
 
     public static function formato(string $chave): ?array
     {
@@ -76,6 +110,13 @@ final class Layout
                 'x' => (int) round($largura * 0.70), 'y' => (int) round($altura * 0.89), 'w' => (int) round($largura * 0.24), 'h' => (int) round($altura * 0.055),
                 'fontSize' => (int) round($largura * 0.022), 'color' => '#ffffff', 'fill' => '', 'align' => 'center', 'bold' => true,
             ],
+            // A moldura da imagem fica atrás de tudo (é ordenada no desenho).
+            [
+                'id' => 'image', 'label' => 'Imagem', 'text' => '',
+                'x' => 0, 'y' => 0, 'w' => $largura, 'h' => $altura,
+                'fontSize' => 12, 'color' => '#ffffff', 'fill' => '', 'align' => 'left', 'bold' => false,
+                'rotate' => 0, 'fit' => 'cobrir', 'shade' => true, 'loose' => false,
+            ],
         ]];
     }
 
@@ -95,7 +136,12 @@ final class Layout
             throw new StudioError('O layout do editor está inválido. Atualize a página e tente novamente.');
         }
         $elementos = $dados['elements'];
-        if (count($elementos) !== count(self::ELEMENTOS)) {
+        // Artes criadas antes da moldura existir têm 4 elementos. Exigir os 5
+        // quebraria todo o histórico salvo, então o `image` é opcional e é
+        // recriado do zero quando falta — o resto continua obrigatório.
+        $aceitos = count($elementos) === count(self::ELEMENTOS)
+            || count($elementos) === count(self::ELEMENTOS_DESENHO);
+        if (!$aceitos) {
             throw new StudioError('O layout do editor está inválido. Atualize a página e tente novamente.');
         }
 
@@ -106,7 +152,10 @@ final class Layout
                 throw new StudioError('O layout do editor está inválido. Atualize a página e tente novamente.');
             }
             $id = (string) ($elemento['id'] ?? '');
-            if (!in_array($id, self::ELEMENTOS, true) || isset($vistos[$id])) {
+            if (!in_array($id, self::ELEMENTOS_DESENHO, true) || isset($vistos[$id])) {
+                throw new StudioError('O layout do editor está inválido. Atualize a página e tente novamente.');
+            }
+            if ($id !== 'image' && !in_array($id, self::ELEMENTOS, true)) {
                 throw new StudioError('O layout do editor está inválido. Atualize a página e tente novamente.');
             }
             $vistos[$id] = true;
@@ -131,8 +180,35 @@ final class Layout
                 'fill' => self::corValida((string) ($elemento['fill'] ?? '')) ? strtolower((string) $elemento['fill']) : '',
                 'align' => in_array($alinhamento, ['left', 'center', 'right'], true) ? $alinhamento : 'left',
                 'bold' => (bool) ($elemento['bold'] ?? false),
+                'rotate' => max(-180, min(180, self::inteiro($elemento['rotate'] ?? 0))),
+            ];
+            // Só a moldura da imagem tem enquadramento: nos textos esses
+            // campos não significam nada e seriam lixo no histórico.
+            if ($id === 'image') {
+                $encaixe = (string) ($elemento['fit'] ?? 'cobrir');
+                $limpos[array_key_last($limpos)]['fit'] = in_array($encaixe, self::ENQUADRAMENTOS, true) ? $encaixe : 'cobrir';
+                $limpos[array_key_last($limpos)]['shade'] = (bool) ($elemento['shade'] ?? true);
+                $limpos[array_key_last($limpos)]['loose'] = (bool) ($elemento['loose'] ?? false);
+            }
+        }
+
+        foreach (self::ELEMENTOS as $obrigatorio) {
+            if (!isset($vistos[$obrigatorio])) {
+                throw new StudioError('O layout do editor está inválido. Atualize a página e tente novamente.');
+            }
+        }
+        if (!isset($vistos['image'])) {
+            $limpos[] = [
+                'id' => 'image', 'label' => 'Imagem', 'text' => '',
+                'x' => 0, 'y' => 0, 'w' => $largura, 'h' => $altura,
+                'fontSize' => 12, 'color' => '#ffffff', 'fill' => '', 'align' => 'left', 'bold' => false,
+                'rotate' => 0, 'fit' => 'cobrir', 'shade' => true, 'loose' => false,
             ];
         }
+
+        // A ordem no JSON é a ordem de empilhamento visual (title primeiro).
+        // Quem desenha pinta a imagem primeiro; aqui a ordem fica estável para
+        // o histórico e para os testes não dependerem de sorte.
 
         return ['elements' => $limpos];
     }

@@ -1554,6 +1554,8 @@ assertSame('tabela de uso de IA criada', 1, (int) $appAntiga->db->scalar("SELECT
 assertSame('dados de clientes preservados', 'Cliente Herdado', $appAntiga->db->scalar('SELECT company_name FROM clients WHERE id = 1'));
 \Smia\Database\Schema::migrate($appAntiga->db);
 assertSame('migração é idempotente', 'Cliente Herdado', $appAntiga->db->scalar('SELECT company_name FROM clients WHERE id = 1'));
+assertSame('coluna de rede criada pela migração', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM pragma_table_info('creative_posts') WHERE name = 'network'"));
+assertSame('coluna de tom criada pela migração', 1, (int) $appAntiga->db->scalar("SELECT COUNT(*) FROM pragma_table_info('creative_posts') WHERE name = 'tone'"));
 assertSame('nenhuma versão duplicada', 1, (int) $appAntiga->db->scalar('SELECT COUNT(*) FROM schema_version WHERE version = ?', [\Smia\Database\Schema::VERSAO]));
 
 echo "\n[29] Dashboard e navegação liberam o planejamento\n";
@@ -1647,8 +1649,10 @@ assertSame('primeira versão registrada', 'Texto e layout gerados', $app->db->sc
 assertSame('consumo registrado como local', 'local-draft', $app->db->scalar("SELECT model FROM ai_generations WHERE feature = 'studio_copy' AND client_id = ?", [$clientePlano]));
 assertSame('auditoria do estúdio', 'studio.created', $app->db->scalar("SELECT action FROM audit_log WHERE action = 'studio.created'"));
 $layoutArte = json_decode((string) $arte['layout_json'], true);
-assertSame('layout tem os quatro elementos', 4, count($layoutArte['elements']));
+assertSame('layout tem os quatro textos mais a moldura da imagem', 5, count($layoutArte['elements']));
 check('título do layout tem o texto da arte', $layoutArte['elements'][0]['text'] === $conteudoArte['title']);
+assertSame('moldura da imagem fecha o layout', 'image', $layoutArte['elements'][4]['id']);
+assertSame('moldura começa ocupando a arte inteira', 0, $layoutArte['elements'][4]['x']);
 
 echo "\n[34] Estúdio: editor e salvamento com versão\n";
 $logar($app, $idUsuario);
@@ -1657,7 +1661,7 @@ assertSame('editor responde 200', 200, $telaEditor->status);
 check('editor mostra a prancheta', str_contains($telaEditor->body, 'id="studioCanvas"'));
 check('editor carrega o JS do estúdio', str_contains($telaEditor->body, 'studio.js'));
 check('editor explica a imagem de fundo', str_contains($telaEditor->body, 'Imagem de fundo'));
-check('botão de imagem presente', str_contains($telaEditor->body, 'Gerar imagem com IA'));
+check('botão de imagem presente', str_contains($telaEditor->body, 'Gerar imagem com IA') || str_contains($telaEditor->body, 'Falta a chave de IA'));
 assertSame('arte de outra empresa responde 404', 404, $app->handle(requisicao('GET', '/studio/posts/99999'))->status);
 
 $layoutNovo = ['elements' => $layoutArte['elements']];
@@ -1881,6 +1885,33 @@ if ($endpointProvedor === '') {
     assertSame('tokens da IA de texto gravados', 1234, (int) $usoCopy['input_tokens']);
     assertSame('modelo real gravado', 'gpt-6-luna', $usoCopy['model']);
 
+    // Criação pedindo a imagem na hora: a arte já nasce com capa e entra no consumo.
+    $appStudioIa->session->start();
+    $appStudioIa->session->put('user_id', 1);
+    $criadaComCapa = $appStudioIa->handle(requisicao('POST', '/studio/generate', [
+        'csrf_token' => $csrfStudioIa,
+        'client_id' => '1',
+        'subject' => 'Aula de sábado',
+        'format_key' => 'square',
+        'network' => 'instagram',
+        'objective' => 'encher a turma de sábado',
+        'tone' => 'divertido',
+        'with_image' => 'agora',
+    ]));
+    assertSame('criação com imagem responde 302', 302, $criadaComCapa->status);
+    check('redirect avisa que a imagem saiu', str_contains((string) $criadaComCapa->header('Location'), 'imagem=ok'));
+    $idComCapa = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $criadaComCapa->header('Location'), PHP_URL_PATH));
+    $arteComCapa = $appStudioIa->db->one('SELECT * FROM creative_posts WHERE id = ?', [$idComCapa]);
+    check('arte criada já tem imagem', (bool) preg_match('/^studio-\d+-[a-f0-9]{24}\.png$/', (string) $arteComCapa['image_path']));
+    assertSame('consumo da imagem da criação registrado', 1, (int) $appStudioIa->db->scalar("SELECT COUNT(*) FROM ai_generations WHERE feature = 'studio_image' AND model = 'gpt-image-2'"));
+    check('versão registra a imagem da criação', (bool) $appStudioIa->db->scalar("SELECT COUNT(*) FROM post_versions WHERE creative_id = ? AND version_label = 'Imagem gerada na criação'", [$idComCapa]));
+    $appStudioIa->session->start();
+    $appStudioIa->session->put('user_id', 1);
+    check('editor conta que a capa saiu', str_contains(
+        $appStudioIa->handle(requisicao('GET', '/studio/posts/' . $idComCapa, [], ['imagem' => 'ok']))->body,
+        'imagem de capa gerada por IA'
+    ));
+
     $appStudioIa->session->start();
     $appStudioIa->session->put('user_id', 1);
     $gerouImagem = $appStudioIa->handle(requisicao('POST', '/studio/posts/' . $arteIaId . '/image', [
@@ -1896,6 +1927,156 @@ if ($endpointProvedor === '') {
     $usoImagem = $appStudioIa->db->one("SELECT * FROM ai_generations WHERE feature = 'studio_image' ORDER BY id DESC LIMIT 1");
     assertSame('tokens da imagem gravados', 12, (int) $usoImagem['input_tokens']);
     check('bytes da imagem começam com assinatura PNG', str_starts_with((string) file_get_contents($raizIa . '/uploads/' . (string) $arteComIa['image_path'], false, null, 0, 8), "\x89PNG"));
+}
+
+
+echo "\n[41b] Estúdio v1.16: criação com rede, objetivo e tom\n";
+$logar($app, $idUsuario);
+$criarComContexto = function (array $extra = []) use ($app, $logar, $idUsuario, $csrf, $clientePlano): \Smia\Http\Response {
+    $logar($app, $idUsuario);
+
+    return $app->handle(requisicao('POST', '/studio/generate', array_merge([
+        'csrf_token' => $csrf,
+        'client_id' => (string) $clientePlano,
+        'subject' => 'Turma de spinning abriu',
+        'format_key' => 'portrait',
+        'network' => 'linkedin',
+        'objective' => 'preencher as vagas de quinta',
+        'tone' => 'profissional',
+        'reference' => 'aula gratuita dia 12',
+        'with_image' => 'depois',
+    ], $extra)));
+};
+$criadaCtx = $criarComContexto();
+assertSame('criação com contexto responde 302', 302, $criadaCtx->status);
+$idCtx = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $criadaCtx->header('Location'), PHP_URL_PATH));
+$artCtx = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$idCtx]);
+assertSame('rede gravada na arte', 'linkedin', (string) $artCtx['network']);
+assertSame('objetivo gravado na arte', 'preencher as vagas de quinta', (string) $artCtx['objective']);
+assertSame('tom gravado na arte', 'profissional', (string) $artCtx['tone']);
+assertSame('referência gravada na arte', 'aula gratuita dia 12', (string) $artCtx['reference']);
+$conteudoCtx = json_decode((string) $artCtx['content_json'], true);
+check('rascunho local cita a rede escolhida', str_contains((string) $conteudoCtx['caption'], 'LinkedIn'));
+check('rascunho local cita o tom pedido', str_contains((string) $conteudoCtx['caption'], 'profissional'));
+check('rascunho local cita o que não pode faltar', str_contains((string) $conteudoCtx['caption'], 'aula gratuita dia 12'));
+
+$redeInvalida = $criarComContexto(['network' => 'orkut', 'tone' => 'ironico']);
+assertSame('rede e tom desconhecidos não derrubam a criação', 302, $redeInvalida->status);
+$idRede = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $redeInvalida->header('Location'), PHP_URL_PATH));
+$artRede = $app->db->one('SELECT network, tone FROM creative_posts WHERE id = ?', [$idRede]);
+assertSame('rede desconhecida vira o padrão', 'generico', (string) $artRede['network']);
+assertSame('tom desconhecido vira o padrão', 'marca', (string) $artRede['tone']);
+
+echo "\n[41c] Estúdio v1.16: imagem na criação, duplicar e filtros\n";
+$logar($app, $idUsuario);
+$galeria = $app->handle(requisicao('GET', '/studio'));
+assertSame('galeria responde 200', 200, $galeria->status);
+check('formulário tem etapas numeradas', substr_count($galeria->body, 'create-step-number') === 5);
+check('pré-visualização da arte', str_contains($galeria->body, 'create-preview'));
+check('escolha de gerar imagem agora', str_contains($galeria->body, 'name="with_image" value="agora"'));
+check('carrega o JS da criação', str_contains($galeria->body, 'studio-create.js'));
+check('galeria tem filtro por status', str_contains($galeria->body, 'name="status"'));
+
+$logar($app, $idUsuario);
+$filtrada = $app->handle(requisicao('GET', '/studio', [], ['formato' => 'story']));
+assertSame('filtro por formato responde 200', 200, $filtrada->status);
+check('filtro esconde o formato não escolhido', !str_contains($filtrada->body, 'Turma de spinning abriu'));
+$semResultado = $app->handle(requisicao('GET', '/studio', [], ['cliente' => '999']));
+check('filtro sem resultado explica o vazio', str_contains($semResultado->body, 'Nenhuma arte neste filtro'));
+
+$logar($app, $idUsuario);
+$duplicada = $app->handle(requisicao('POST', '/studio/posts/' . $idCtx . '/duplicate', ['csrf_token' => $csrf]));
+assertSame('duplicar responde 302', 302, $duplicada->status);
+$idCopia = (int) preg_replace('#^.*/studio/posts/(\d+).*$#', '$1', (string) parse_url((string) $duplicada->header('Location'), PHP_URL_PATH));
+$copia = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$idCopia]);
+check('cópia é outra arte', $idCopia !== $idCtx);
+check('cópia avisa no título', str_starts_with((string) $copia['subject'], 'Cópia de '));
+assertSame('cópia mantém a rede', 'linkedin', (string) $copia['network']);
+assertSame('cópia mantém o layout', (string) $artCtx['layout_json'], (string) $copia['layout_json']);
+assertSame('cópia começa com uma versão', 1, (int) $app->db->scalar('SELECT COUNT(*) FROM post_versions WHERE creative_id = ?', [$idCopia]));
+$app->db->run('UPDATE creative_posts SET subject = ? WHERE id = ?', ['Original preservado', $idCtx]);
+assertSame('editar a cópia não mexe na original', 'Cópia de ' . (string) $artCtx['subject'], (string) $app->db->scalar('SELECT subject FROM creative_posts WHERE id = ?', [$idCopia]));
+assertSame('duplicar arte alheia responde 404', 404, $app->handle(requisicao('POST', '/studio/posts/99999/duplicate', ['csrf_token' => $csrf]))->status);
+$logar($app, $idUsuario);
+assertSame('duplicar exige CSRF', 403, $app->handle(requisicao('POST', '/studio/posts/' . $idCtx . '/duplicate', ['csrf_token' => 'errado']))->status);
+$app->db->run("UPDATE users SET role = 'viewer' WHERE id = ?", [$idUsuario]);
+$logar($app, $idUsuario);
+assertSame('viewer não duplica', 403, $app->handle(requisicao('POST', '/studio/posts/' . $idCtx . '/duplicate', ['csrf_token' => $csrf]))->status);
+$app->db->run("UPDATE users SET role = 'owner' WHERE id = ?", [$idUsuario]);
+
+$logar($app, $idUsuario);
+$telaCtx = $app->handle(requisicao('GET', '/studio/posts/' . $idCtx));
+check('editor mostra abas de arte, legenda e imagem', str_contains($telaCtx->body, 'data-tab="legenda"') && str_contains($telaCtx->body, 'data-tab="imagem"'));
+check('editor tem contador de legenda', str_contains($telaCtx->body, 'data-counter="caption"'));
+check('editor mostra o limite da rede', str_contains($telaCtx->body, '1300'));
+check('editor tem botão de copiar legenda', str_contains($telaCtx->body, 'data-copy-caption'));
+check('editor tem enquadramento da imagem', str_contains($telaCtx->body, 'data-fit="encaixar"'));
+check('editor tem desfazer', str_contains($telaCtx->body, 'data-undo'));
+check('editor tem controle de zoom', str_contains($telaCtx->body, 'data-zoom-value'));
+check('editor tem campo de acessibilidade', str_contains($telaCtx->body, 'name="alt_text"'));
+check('editor mostra o objetivo do pedido', str_contains($telaCtx->body, 'preencher as vagas de quinta'));
+
+// Layout com enquadramento, subtom, imagem solta e giro: tudo tem de voltar.
+$layoutEncaixe = json_decode((string) $artCtx['layout_json'], true);
+foreach ($layoutEncaixe['elements'] as $indice => $elemento) {
+    if ($elemento['id'] === 'image') {
+        $layoutEncaixe['elements'][$indice]['fit'] = 'encaixar';
+        $layoutEncaixe['elements'][$indice]['shade'] = false;
+        $layoutEncaixe['elements'][$indice]['loose'] = true;
+        $layoutEncaixe['elements'][$indice]['y'] = 900;
+        $layoutEncaixe['elements'][$indice]['h'] = 450;
+    }
+    if ($elemento['id'] === 'title') {
+        $layoutEncaixe['elements'][$indice]['rotate'] = -6;
+        $layoutEncaixe['elements'][$indice]['align'] = 'center';
+    }
+}
+$logar($app, $idUsuario);
+$salvouEncaixe = $app->handle(requisicao('POST', '/studio/posts/' . $idCtx . '/save', [
+    'csrf_token' => $csrf,
+    'layout_json' => json_encode($layoutEncaixe),
+    'background_color' => '#101828',
+    'title' => 'Título', 'subtitle' => 'Sub', 'cta' => 'CTA',
+    'caption' => 'Legenda nova', 'hashtags' => '#spinning',
+    'visual_brief' => 'B', 'image_suggestion' => 'I', 'composition' => 'C',
+    'alt_text' => 'Sala com bicicletas',
+    'image_prompt' => 'P',
+    'network' => 'instagram', 'tone' => 'divertido',
+    'objective' => 'novo objetivo', 'reference' => '',
+]));
+assertSame('salvar com enquadramento responde 302', 302, $salvouEncaixe->status);
+$arteEncaixe = $app->db->one('SELECT * FROM creative_posts WHERE id = ?', [$idCtx]);
+$laySalvo = json_decode((string) $arteEncaixe['layout_json'], true);
+$imgSalva = array_values(array_filter($laySalvo['elements'], static fn (array $e): bool => $e['id'] === 'image'))[0] ?? [];
+$titSalvo = array_values(array_filter($laySalvo['elements'], static fn (array $e): bool => $e['id'] === 'title'))[0] ?? [];
+assertSame('enquadramento salvo', 'encaixar', (string) ($imgSalva['fit'] ?? ''));
+assertSame('subtom desligado salvo', false, (bool) ($imgSalva['shade'] ?? true));
+assertSame('imagem solta salva', true, (bool) ($imgSalva['loose'] ?? false));
+assertSame('posição da imagem solta salva', 900, (int) ($imgSalva['y'] ?? 0));
+assertSame('giro do texto salvo', -6, (int) ($titSalvo['rotate'] ?? 0));
+assertSame('alinhamento salvo', 'center', (string) ($titSalvo['align'] ?? ''));
+assertSame('rede trocada no editor', 'instagram', (string) $arteEncaixe['network']);
+assertSame('tom trocado no editor', 'divertido', (string) $arteEncaixe['tone']);
+check('alt_text guardado no conteúdo', str_contains((string) $arteEncaixe['content_json'], 'Sala com bicicletas'));
+
+// Enquadramento fora da lista não vira lixo no banco.
+$layoutFitErrado = $laySalvo;
+foreach ($layoutFitErrado['elements'] as $indice => $elemento) {
+    if ($elemento['id'] === 'image') {
+        $layoutFitErrado['elements'][$indice]['fit'] = 'esticar';
+        $layoutFitErrado['elements'][$indice]['rotate'] = 900;
+    }
+}
+$logar($app, $idUsuario);
+$app->handle(requisicao('POST', '/studio/posts/' . $idCtx . '/save', [
+    'csrf_token' => $csrf, 'layout_json' => json_encode($layoutFitErrado),
+    'title' => 'T', 'subtitle' => 'S', 'cta' => 'C', 'caption' => 'L', 'hashtags' => '',
+    'visual_brief' => 'B', 'image_suggestion' => 'I', 'composition' => 'C', 'image_prompt' => 'P',
+]));
+$layCorrigido = json_decode((string) $app->db->scalar('SELECT layout_json FROM creative_posts WHERE id = ?', [$idCtx]), true);
+$imgCorrigida = array_values(array_filter($layCorrigido['elements'], static fn (array $e): bool => $e['id'] === 'image'))[0] ?? [];
+assertSame('enquadramento inválido volta ao padrão', 'cobrir', (string) ($imgCorrigida['fit'] ?? ''));
+assertSame('giro fora da faixa é limitado', 180, (int) ($imgCorrigida['rotate'] ?? 0));
 
 echo "\n[42] Estúdio: mensagens de erro aparecem na tela\n";
     $logar($app, $idUsuario);
@@ -1905,7 +2086,6 @@ echo "\n[42] Estúdio: mensagens de erro aparecem na tela\n";
     $logar($app, $idUsuario);
     check('aviso de salvamento na tela', str_contains($app->handle(requisicao('GET', '/studio/posts/' . $arteId, [], ['ok' => 'saved']))->body, 'Edição salva como uma nova versão'));
     check('aviso de restauro na tela', str_contains($app->handle(requisicao('GET', '/studio/posts/' . $arteId, [], ['ok' => 'restored']))->body, 'Versão restaurada'));
-}
 
 echo "\n[43] Estúdio: dashboard e navegação\n";
 $logar($app, $idUsuario);
@@ -2585,8 +2765,9 @@ $postsEsperados = (int) $app->db->scalar(
     'SELECT COUNT(*) FROM posts WHERE company_id = ? AND date(created_at) BETWEEN ? AND ?',
     [$empresaTeste, $inicioPadrao, $fimPadrao]
 );
+// O card mostra exportadas / criadas; o número comparado é o de exportadas.
 $artesEsperadas = (int) $app->db->scalar(
-    'SELECT COUNT(*) FROM creative_posts WHERE company_id = ? AND date(created_at) BETWEEN ? AND ?',
+    "SELECT COUNT(*) FROM creative_posts WHERE company_id = ? AND status = 'exported' AND date(created_at) BETWEEN ? AND ?",
     [$empresaTeste, $inicioPadrao, $fimPadrao]
 );
 $aprovEsperadas = (int) $app->db->scalar(

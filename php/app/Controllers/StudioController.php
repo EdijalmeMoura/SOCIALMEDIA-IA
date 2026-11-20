@@ -37,7 +37,21 @@ final class StudioController
         'visual_brief' => 'Briefing visual',
         'image_suggestion' => 'Sugestão de imagem',
         'composition' => 'Composição',
+        'alt_text' => 'Descrição da imagem',
     ];
+
+    /**
+     * Limite de legenda por rede, para o contador da tela.
+     *
+     * Vem do StudioGenerator para a tela e o prompt usarem o mesmo número —
+     * dois limites diferentes seriam pior do que nenhum.
+     *
+     * @return array<string,array{label:string,limite:int,tags:int}>
+     */
+    public static function redes(): array
+    {
+        return StudioGenerator::REDES;
+    }
 
     public function __construct(
         private readonly Config $config,
@@ -57,17 +71,45 @@ final class StudioController
             return $usuario;
         }
         $empresa = (int) $usuario['company_id'];
+        $filtros = [
+            'client_id' => (int) ($req->input('cliente') ?? 0),
+            'format_key' => (string) ($req->input('formato') ?? ''),
+            'status' => (string) ($req->input('status') ?? ''),
+        ];
 
-        return $this->render('studio/index', $req, [
-            'clientes' => $this->repo->clientesAtivos($empresa),
-            'artes' => $this->repo->artes($empresa),
+        return $this->render('studio/index', $req, $this->dadosCriacao($usuario, $filtros) + [
+            'artes' => $this->repo->artes($empresa, 40, $filtros),
+            'form' => [],
+            'erro' => $req->input('erro'),
+            'aviso' => $this->avisoDaQuery($req),
+        ]);
+    }
+
+    /**
+     * Tudo o que o formulário de criação precisa para se redesenhar.
+     *
+     * Usado também na tela de erro: quando a validação falha, o formulário
+     * volta preenchido em vez de virar uma página só com a mensagem.
+     *
+     * @param array<string,mixed> $usuario
+     * @param array{client_id?:int,format_key?:string,status?:string} $filtros
+     * @return array<string,mixed>
+     */
+    private function dadosCriacao(array $usuario, array $filtros = []): array
+    {
+        return [
+            'clientes' => $this->repo->clientesAtivos((int) $usuario['company_id']),
             'formatos' => Layout::FORMATOS,
+            'redes' => StudioGenerator::REDES,
+            'tons' => StudioGenerator::TONS,
             'ia_configurada' => $this->gerador->iaConfigurada(),
             'modelo_imagem' => $this->gerador->modeloImagem(),
             'pode_editar' => $this->podeEditar($usuario),
-            'form' => [],
-            'erro' => $req->input('erro'),
-        ]);
+            'filtros' => $filtros + ['client_id' => 0, 'format_key' => '', 'status' => ''],
+            'filtros_ativos' => (int) ($filtros['client_id'] ?? 0) > 0
+                || (string) ($filtros['format_key'] ?? '') !== ''
+                || (string) ($filtros['status'] ?? '') !== '',
+        ];
     }
 
     public function generate(Request $req): Response
@@ -87,6 +129,7 @@ final class StudioController
         $assunto = Layout::textoCurto($req->input('subject') ?? '', 300);
         $formato = (string) ($req->input('format_key') ?? '');
         $clientId = (int) ($req->input('client_id') ?? 0);
+        $pedido = $this->pedidoDaCriacao($req);
 
         $erros = [];
         if ($clientId <= 0) {
@@ -114,7 +157,14 @@ final class StudioController
         }
 
         try {
-            $resultado = $this->gerador->gerarConteudo($cliente, ['assunto' => $assunto, 'formato' => $formato]);
+            $resultado = $this->gerador->gerarConteudo($cliente, [
+                'assunto' => $assunto,
+                'formato' => $formato,
+                'rede' => $pedido['network'],
+                'objetivo' => $pedido['objective'],
+                'tom' => $pedido['tone'],
+                'referencia' => $pedido['reference'],
+            ]);
         } catch (StudioError $erro) {
             return $this->telaErro($req, $erro->getMessage(), $req->post, $this->gerador->iaConfigurada() ? 502 : 503);
         }
@@ -142,6 +192,8 @@ final class StudioController
                 $resultado['model'],
                 $resultado['input_tokens'],
                 $resultado['output_tokens'],
+                'Texto e layout gerados',
+                $pedido,
             );
         } catch (\PDOException $erro) {
             error_log('[SMIA] estúdio: ' . $erro->getMessage());
@@ -151,7 +203,81 @@ final class StudioController
 
         $this->repo->auditoria($empresa, (int) $usuario['id'], 'studio.created', $marca . ' · ' . $assunto . ' (' . $resultado['modo'] . ')');
 
-        return Response::redirect($this->config->url('/studio/posts/' . $id . '?created=1'));
+        // "Já com imagem": o usuário pediu o pacote completo na criação. A
+        // imagem é gerada depois de a arte existir; se falhar (sem chave,
+        // provedor fora do ar), a arte continua salva e o editor explica —
+        // perder o texto por causa do fundo seria pior.
+        if ($pedido['com_imagem'] && $this->gerador->iaConfigurada()) {
+            $comImagem = $this->gerarImagemInicial($id, $empresa, $clientId, (int) $usuario['id'], $formato, $medida, $resultado['content']);
+            if ($comImagem === null) {
+                return Response::redirect($this->config->url('/studio/posts/' . $id . '?created=1&imagem=erro'));
+            }
+
+            return Response::redirect($this->config->url('/studio/posts/' . $id . '?created=1&imagem=ok'));
+        }
+
+        return Response::redirect($this->config->url('/studio/posts/' . $id . '?created=1&imagem=pedida'));
+    }
+
+    /**
+     * Lê as escolhas da criação e devolve tudo já dentro do contrato.
+     *
+     * Campo desconhecido não derruba a criação: vira o padrão. O que importa
+     * é nunca gravar texto solto vindo do formulário.
+     *
+     * @return array{network:string,objective:string,tone:string,reference:string,com_imagem:bool}
+     */
+    private function pedidoDaCriacao(Request $req): array
+    {
+        $rede = (string) ($req->input('network') ?? 'generico');
+        if (!isset(StudioGenerator::REDES[$rede])) {
+            $rede = 'generico';
+        }
+        $tom = (string) ($req->input('tone') ?? 'marca');
+        if (!isset(StudioGenerator::TONS[$tom])) {
+            $tom = 'marca';
+        }
+
+        return [
+            'network' => $rede,
+            'objective' => Layout::textoCurto($req->input('objective') ?? '', 300),
+            'tone' => $tom,
+            'reference' => Layout::textoCurto($req->input('reference') ?? '', 600),
+            'com_imagem' => (string) ($req->input('with_image') ?? 'depois') === 'agora',
+        ];
+    }
+
+    /**
+     * Gera a imagem de capa na própria criação.
+     *
+     * Devolve o nome do arquivo, ou null quando a imagem não saiu (a arte
+     * continua válida; o editor mostra o motivo ao abrir).
+     *
+     * @param array<string,string> $conteudo
+     * @param array{label:string,width:int,height:int,image_size:string} $medida
+     */
+    private function gerarImagemInicial(int $id, int $empresa, int $clientId, int $usuarioId, string $formato, array $medida, array $conteudo): ?string
+    {
+        $prompt = $this->promptImagem($conteudo);
+        try {
+            $imagem = $this->gerador->gerarImagem(
+                $prompt . ' Sem texto, letras, logotipos ou marca d\'água. Composição organizada com áreas seguras.',
+                $formato
+            );
+            $nome = $this->salvarBytesImagem($imagem['bytes'], $id, $medida['width'], $medida['height']);
+            $this->repo->registrarConsumo($empresa, $clientId, $usuarioId, 'studio_image', $imagem['model'], $imagem['input_tokens'], $imagem['output_tokens']);
+        } catch (StudioError | \Throwable $erro) {
+            error_log('[SMIA] estúdio: imagem inicial não saiu: ' . $erro->getMessage());
+
+            return null;
+        }
+
+        $this->repo->atualizar($id, $empresa, $usuarioId, [
+            'image_path' => $nome,
+            'image_prompt' => $prompt,
+        ], 'Imagem gerada na criação');
+
+        return $nome;
     }
 
     public function editor(Request $req, array $params): Response
@@ -165,8 +291,16 @@ final class StudioController
             return $arte;
         }
 
+        $imagem = (string) ($req->input('imagem') ?? '');
+        $aviso = match ($imagem) {
+            'ok' => 'Arte criada com a imagem de capa gerada por IA.',
+            'erro' => 'A arte foi criada, mas a imagem de capa não saiu. Você pode gerar de novo ou enviar a sua no painel da direita.',
+            'pedida' => 'Arte criada. Falta a imagem: gere com IA ou envie a sua no painel da direita.',
+            default => $this->avisoDaQuery($req),
+        };
+
         return $this->render('studio/editor', $req, $this->dadosEditor($arte, $usuario) + [
-            'aviso' => $this->avisoDaQuery($req),
+            'aviso' => $aviso,
             'erro' => $req->input('erro'),
         ]);
     }
@@ -221,7 +355,12 @@ final class StudioController
         }
 
         $prompt = Layout::textoCurto($req->input('image_prompt') ?? '', 4000);
+        $pedido = $this->pedidoDaCriacao($req);
         $this->repo->atualizar((int) $arte['id'], (int) $arte['company_id'], (int) $usuario['id'], [
+            'network' => $pedido['network'],
+            'objective' => $pedido['objective'],
+            'tone' => $pedido['tone'],
+            'reference' => $pedido['reference'],
             'content_json' => json_encode($conteudo, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
             'layout_json' => json_encode($layout, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
             'background_color' => $corFundo,
@@ -504,6 +643,34 @@ final class StudioController
         return Response::redirect($this->config->url('/studio/posts/' . $arte['id'] . '?ok=restored'));
     }
 
+    /** Cria uma cópia independente da arte (mesma composição, novo histórico). */
+    public function duplicate(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario)) {
+            return $this->semPermissao($req);
+        }
+        $arte = $this->repo->arte((int) ($params['id'] ?? 0), (int) $usuario['company_id']);
+        if ($arte === null) {
+            return $this->naoEncontrado($req);
+        }
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return Response::html('', 403);
+        }
+
+        $novo = $this->repo->duplicar((int) $arte['id'], (int) $arte['company_id'], (int) $usuario['id']);
+        if ($novo === null) {
+            return $this->naoEncontrado($req);
+        }
+        $this->repo->auditoria((int) $arte['company_id'], (int) $usuario['id'], 'studio.duplicated', (string) $arte['subject']);
+
+        // O editor abre na cópia; voltar à galeria fica a um clique.
+        return Response::redirect($this->config->url('/studio/posts/' . $novo . '?ok=duplicated'));
+    }
+
     public function delete(Request $req, array $params): Response
     {
         $usuario = $this->precisaLogin();
@@ -547,6 +714,9 @@ final class StudioController
             'formatos' => Layout::FORMATOS,
             'rotulos' => self::ROTULOS,
             'versoes' => $this->repo->versoes((int) $arte['id'], $empresa),
+            'redes' => StudioGenerator::REDES,
+            'tons' => StudioGenerator::TONS,
+            'limites' => Layout::LIMITES,
             'ia_configurada' => $this->gerador->iaConfigurada(),
             'modelo_imagem' => $this->gerador->modeloImagem(),
             'pode_editar' => $this->podeEditar($usuario),
@@ -634,6 +804,8 @@ final class StudioController
             'upload' => 'Imagem enviada e ajustada ao formato.',
             'restored' => 'Versão restaurada.',
             'created' => 'Conteúdo gerado. Edite os elementos, escolha a imagem e exporte a arte.',
+            'duplicated' => 'Cópia criada. Ela é independente da arte original.',
+            'imagem' => 'Imagem de capa gerada na criação.',
             'deleted' => 'Criação excluída.',
             default => null,
         };
@@ -676,15 +848,11 @@ final class StudioController
         $usuario = $this->auth->user();
         $empresa = (int) ($usuario['company_id'] ?? 0);
 
-        return $this->render('studio/index', $req, [
-            'clientes' => $this->repo->clientesAtivos($empresa),
+        return $this->render('studio/index', $req, $this->dadosCriacao($usuario ?? [], []) + [
             'artes' => $this->repo->artes($empresa),
-            'formatos' => Layout::FORMATOS,
-            'ia_configurada' => $this->gerador->iaConfigurada(),
-            'modelo_imagem' => $this->gerador->modeloImagem(),
-            'pode_editar' => $usuario !== null && $this->podeEditar($usuario),
             'form' => $form,
             'erro' => $mensagem,
+            'aviso' => null,
         ], $status);
     }
 

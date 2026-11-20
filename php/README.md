@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.15`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15)** — todos os módulos,
+**Última versão: [`php-v1.16`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.15** | **Área do dono, Usuários e Configurações**: a chave de IA entra pela tela e é testada no servidor | [php-v1.15](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15) | [`SOCIALMEDIA-IA-php-v1.15.zip`](downloads/SOCIALMEDIA-IA-php-v1.15.zip) |
+| **v1.16** | **Estúdio 2.0**: criação em etapas (rede, objetivo, tom, imagem), prancheta com enquadramento, guias, zoom e desfazer, legenda com contador e cópia | [php-v1.16](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16) | [`SOCIALMEDIA-IA-php-v1.16.zip`](downloads/SOCIALMEDIA-IA-php-v1.16.zip) |
+| v1.15 | **Área do dono, Usuários e Configurações**: a chave de IA entra pela tela e é testada no servidor | [php-v1.15](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15) | [`SOCIALMEDIA-IA-php-v1.15.zip`](downloads/SOCIALMEDIA-IA-php-v1.15.zip) |
 | v1.14 | **Diagnóstico da chave de IA e do `.env`**: testa a chave no servidor e aponta o erro exato do arquivo | [php-v1.14](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.14) | [`SOCIALMEDIA-IA-php-v1.14.zip`](downloads/SOCIALMEDIA-IA-php-v1.14.zip) |
 | v1.13 | **Correção do 403 na confirmação**: o formulário de revisão não enviava o token | [php-v1.13](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.13) | [`SOCIALMEDIA-IA-php-v1.13.zip`](downloads/SOCIALMEDIA-IA-php-v1.13.zip) |
 | v1.12 | **Trilha da confirmação**: o diagnóstico mostra em que etapa a instalação parou | [php-v1.12](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.12) | [`SOCIALMEDIA-IA-php-v1.12.zip`](downloads/SOCIALMEDIA-IA-php-v1.12.zip) |
@@ -73,6 +74,19 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.16 — O estúdio ficou de usar, não só de existir.**
+  A criação virou cinco etapas com prévia: para quem, onde publica (rede com
+  limite real de legenda), formato, como falar (objetivo, tom e o que não pode
+  faltar) e imagem — que pode ser gerada na hora. A galeria ganhou filtro por
+  cliente/formato/status, **duplicar** e baixar direto no card. No editor, a
+  prancheta aprendeu o que faltava: enquadramento da foto (preencher, conter,
+  moldura), imagem como elemento solto, subtom ligável, **giro**, guias de
+  encaixe, zoom, **desfazer** (Ctrl+Z), setas para 1 px de ajuste e duplo
+  clique para editar o texto na própria arte. Os textos viraram abas (Arte,
+  Legenda, Imagem) com contador por rede, botão **copiar legenda + hashtags**
+  e campo de descrição da imagem para leitor de tela.
+  Migração aditiva para o esquema **v8** (rede, objetivo, tom e referência na
+  arte); nada do que estava salvo deixa de abrir.
 - **v1.15 — A chave de IA entra pela tela; o dono vê todas as agências.**
   Três módulos que faltavam para o produto ser administrável sem editar
   arquivo: **Configurações** (`/settings`) recebe a chave da OpenAI, testa no

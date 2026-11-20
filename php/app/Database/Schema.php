@@ -18,10 +18,11 @@ namespace Smia\Database;
  *           5 = aprovações (revisões, histórico, portal do cliente, avisos)
  *           6 = Meta (agenda de publicação, conexões de Página, tentativas)
  *           7 = administração (status de usuário, papel do dono, configurações)
+ *           8 = estúdio com contexto (rede, objetivo, tom e referência da arte)
  */
 final class Schema
 {
-    public const VERSAO = 7;
+    public const VERSAO = 8;
 
     public static function migrate(Database $db): void
     {
@@ -489,6 +490,16 @@ SQL);
         self::addColumn($db, 'companies', 'owner_email', 'TEXT');
         self::addColumn($db, 'companies', 'notes', 'TEXT');
         self::addColumn($db, 'users', 'last_seen_at', 'TEXT');
+
+        // --- v8: o pedido da arte fica guardado -------------------------
+        // A criação agora pergunta para qual rede, com qual objetivo e em que
+        // tom. Sem guardar, a próxima edição perderia essas escolhas e o
+        // contador de caracteres não teria com o que comparar.
+        // Linhas antigas ficam com o padrão previsto no ALTER (nada a migrar).
+        self::addColumn($db, 'creative_posts', 'network', "TEXT NOT NULL DEFAULT 'generico'");
+        self::addColumn($db, 'creative_posts', 'objective', "TEXT NOT NULL DEFAULT ''");
+        self::addColumn($db, 'creative_posts', 'tone', "TEXT NOT NULL DEFAULT 'marca'");
+        self::addColumn($db, 'creative_posts', 'reference', "TEXT NOT NULL DEFAULT ''");
 
         $versao = (int) ($db->scalar('SELECT MAX(version) FROM schema_version') ?? 0);
         if ($versao < self::VERSAO) {

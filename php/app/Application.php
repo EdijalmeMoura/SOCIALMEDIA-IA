@@ -288,6 +288,7 @@ final class Application
         $this->router->get('/studio/posts/{id}/download', $studio->download(...));
         $this->router->post('/studio/posts/{id}/variation', $studio->variation(...));
         $this->router->post('/studio/posts/{id}/versions/{version}/restore', $studio->restore(...));
+        $this->router->post('/studio/posts/{id}/duplicate', $studio->duplicate(...));
         $this->router->post('/studio/posts/{id}/delete', $studio->delete(...));
 
         // --- Feed ------------------------------------------------------
