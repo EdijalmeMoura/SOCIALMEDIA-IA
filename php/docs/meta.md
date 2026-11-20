@@ -1,7 +1,7 @@
 # Módulo Meta — conexões e publicação real
 
-> Pacote: **v1.9** · <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.9>
-> (este módulo entrou na v1.7; o pacote atual é o `SOCIALMEDIA-IA-php-v1.9.zip`
+> Pacote: **v1.10** · <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.10>
+> (este módulo entrou na v1.7; o pacote atual é o `SOCIALMEDIA-IA-php-v1.10.zip`
 > em `php/downloads/` · confira o SHA256 em
 > `php/downloads/SHA256SUMS.txt`)
 

@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.9`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.9)** — todos os módulos,
+**Última versão: [`php-v1.10`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.10)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.9** | **Instalador completo**: tela final "Instância pronta" e `/install/run` sem 405 | [php-v1.9](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.9) | [`SOCIALMEDIA-IA-php-v1.9.zip`](downloads/SOCIALMEDIA-IA-php-v1.9.zip) |
+| **v1.10** | **Token do instalador**: não se perde no fluxo e a tela de 403 aceita colar o token | [php-v1.10](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.10) | [`SOCIALMEDIA-IA-php-v1.10.zip`](downloads/SOCIALMEDIA-IA-php-v1.10.zip) |
+| v1.9 | **Instalador completo**: tela final "Instância pronta" e `/install/run` sem 405 | [php-v1.9](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.9) | [`SOCIALMEDIA-IA-php-v1.9.zip`](downloads/SOCIALMEDIA-IA-php-v1.9.zip) |
 | v1.8 | **IA em dia**: modelos padrão atuais (`gpt-6-luna`, `gpt-image-2`) e erro que diz qual modelo falhou | [php-v1.8](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.8) | [`SOCIALMEDIA-IA-php-v1.8.zip`](downloads/SOCIALMEDIA-IA-php-v1.8.zip) |
 | v1.7 | Meta: conexões Facebook/Instagram, agenda interna e publicação manual real | [php-v1.7](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7) | [`SOCIALMEDIA-IA-php-v1.7.zip`](downloads/SOCIALMEDIA-IA-php-v1.7.zip) |
 | v1.6 | Relatórios com recorte de período e CSV | [php-v1.6](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.6) | [`SOCIALMEDIA-IA-php-v1.6.zip`](downloads/SOCIALMEDIA-IA-php-v1.6.zip) |
@@ -52,7 +53,7 @@ Cada `.zip` é o pacote completo (`.env` com o endereço preenchido,
 download:
 
 ```sh
-sha256sum SOCIALMEDIA-IA-php-v1.9.zip    # compare com SHA256SUMS.txt
+sha256sum SOCIALMEDIA-IA-php-v1.10.zip   # compare com SHA256SUMS.txt
 ```
 
 O pacote publicado **não contém segredos seus**: o `.env` vem com `SECRET_KEY` e
@@ -67,6 +68,12 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.10 — Token do instalador.** Todo redirecionamento interno carrega o
+  `?access_token=` adiante: antes um "voltar" caía em `/install` sem o token e a
+  própria proteção devolvia **403** no meio do assistente. A tela de 403 ganhou
+  um campo para colar o token (`POST /install/access`) e guarda de onde a pessoa
+  veio. O rodapé do instalador passou a mostrar a versão (`v1.10`), para saber
+  se o arquivo enviado é o novo.
 - **v1.9 — Instalador completo.** O assistente agora termina na tela
   **“Instância pronta”**, com o registro da instalação e o botão de entrar —
   antes a confirmação pulava direto para o login. Abrir `/install/run` no
@@ -98,7 +105,7 @@ git archive --format=zip -o socialai-php.zip HEAD:php
   artes com prancheta.
 - **v1.1 / v1.2** — primeiras entregas (base instalável, clientes e
   planejamento). Ficam publicadas para quem precisa reproduzir uma instalação
-  antiga; a v1.9 já contém tudo delas.
+  antiga; a v1.10 já contém tudo delas.
 
 Atualizando de qualquer versão anterior: envie **por cima apenas `app/` e
 `public/`**, mantenha `.env` e `data/`. O esquema migra sozinho e nada é
@@ -116,8 +123,8 @@ dependência para instalar.
 0. **Baixe o pacote** (não precisa clonar nada):
 
    ```sh
-   curl -LO https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/raw/php-v1.9/php/downloads/SOCIALMEDIA-IA-php-v1.9.zip
-   unzip SOCIALMEDIA-IA-php-v1.9.zip -d socialai-php
+   curl -LO https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/raw/php-v1.10/php/downloads/SOCIALMEDIA-IA-php-v1.10.zip
+   unzip SOCIALMEDIA-IA-php-v1.10.zip -d socialai-php
    ```
 
    Versão mais nova: <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases>.
