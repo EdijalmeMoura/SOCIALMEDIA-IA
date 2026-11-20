@@ -18,6 +18,13 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 **Última versão: [`php-v1.7`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7)** — todos os módulos,
 incluindo Meta (conexões e publicação real).
 
+> **O pacote não está anexado como asset das releases** (o upload de binário
+> falha no ambiente que as publica). Os links da coluna *Pacote* apontam para o
+> arquivo dentro da branch — funcionam igual para baixar, e o `SHA256SUMS.txt`
+> confere a integridade.
+>
+> Se um dia o asset subir, os dois caminhos levam ao mesmo arquivo.
+
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
 | **v1.7** | **Meta**: conexões Facebook/Instagram, agenda interna e publicação manual real | [php-v1.7](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7) | [`SOCIALMEDIA-IA-php-v1.7.zip`](downloads/SOCIALMEDIA-IA-php-v1.7.zip) |
