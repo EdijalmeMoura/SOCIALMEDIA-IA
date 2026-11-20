@@ -99,6 +99,17 @@ dependência para instalar.
 
 ## Instalação no cPanel (3 minutos)
 
+0. **Baixe o pacote** (não precisa clonar nada):
+
+   ```sh
+   curl -LO https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/raw/php-v1.7/php/downloads/SOCIALMEDIA-IA-php-v1.7.zip
+   unzip SOCIALMEDIA-IA-php-v1.7.zip -d socialai-php
+   ```
+
+   Versão mais nova: <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases>.
+   Se o link acima mudar de nome, os mesmos arquivos estão em
+   [`php/downloads/`](downloads/) com os hashes em `SHA256SUMS.txt`.
+
 1. Envie o conteúdo desta pasta (`php/`) para `~/socialai-php` — **fora** de
    `public_html` — e aponte o domínio/subpasta para `~/socialai-php/public`.
 
