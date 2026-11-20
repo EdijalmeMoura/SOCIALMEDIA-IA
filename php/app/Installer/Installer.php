@@ -29,11 +29,63 @@ final class Installer
         'instagram', 'abcd1234', '12341234', '11111111',
     ];
 
+    /** @var array<int,string> etapas concluídas da última tentativa de instalação */
+    private array $rastreio = [];
+
     public function __construct(
         private readonly Config $config,
         private readonly Database $db,
         private readonly string $rascunhoDir,
     ) {
+    }
+
+    /** Última tentativa: etapas concluídas, na ordem. */
+    public function trail(): array
+    {
+        return $this->rastreio;
+    }
+
+    /**
+     * Guarda a etapa em arquivo, não só em memória: se o PHP morrer no meio
+     * (fatal error, timeout), o diagnóstico seguinte ainda consegue ler onde
+     * parou. Fica em data/, sem segredo nenhum.
+     */
+    private function registrar(string $etapa): void
+    {
+        $this->rastreio[] = $etapa;
+        $arquivo = $this->config->dataDir . '/installer-last-run.json';
+        $anterior = is_file($arquivo) ? (array) json_decode((string) @file_get_contents($arquivo), true) : [];
+        $eventos = is_array($anterior['etapas'] ?? null) ? $anterior['etapas'] : [];
+        $eventos[] = ['em' => gmdate('Y-m-d H:i:s'), 'etapa' => $etapa];
+        @file_put_contents($arquivo, json_encode([
+            'atualizado' => gmdate('Y-m-d H:i:s'),
+            'versao' => Config::VERSAO,
+            'etapas' => array_slice($eventos, -30),
+        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+        @chmod($arquivo, 0o600);
+    }
+
+    /**
+     * Registra um evento da tentativa de confirmação (inclusive recusas).
+     *
+     * Sem isso, "não instalou" é indistinguível de "recusou o CSRF" ou de
+     * "o rascunho tinha expirado" vistos de fora.
+     */
+    public function logRun(string $evento): void
+    {
+        $this->registrar($evento);
+    }
+
+    /** Trilha gravada em disco (sobrevive a erro fatal). */
+    public function lastRunTrail(): array
+    {
+        $arquivo = $this->config->dataDir . '/installer-last-run.json';
+        if (!is_file($arquivo)) {
+            return [];
+        }
+        $dados = json_decode((string) @file_get_contents($arquivo), true);
+
+        return is_array($dados['etapas'] ?? null) ? $dados['etapas'] : [];
     }
 
     public static function make(Config $config, Database $db): self
@@ -263,11 +315,19 @@ final class Installer
      */
     public function install(array $dados): array
     {
+        // Trilha de cada etapa da confirmação. Se a instalação parar no meio,
+        // o diagnóstico mostra em que passo parou — sem isso, "não instala" e
+        // "instalou pela metade" são indistinguíveis à distância.
+        $this->rastreio = [];
+        $this->registrar('inicio');
+
         if (!$this->needed()) {
+            $this->registrar('ja_instalado');
             throw new \RuntimeException('Já existe uma conta nesta instância. O instalador foi encerrado.');
         }
 
         Schema::migrate($this->db);
+        $this->registrar('migracao_ok');
 
         $segredos = $this->mergeSecrets([
             'COOKIE_SECURE' => $this->config->cookieSecure ? '1' : '0',
@@ -275,11 +335,13 @@ final class Installer
         ]);
 
         $this->writeEnvFile($segredos);
+        $this->registrar('arquivo_config_ok');
 
         $slug = preg_replace('/[^a-z0-9]+/', '-', mb_strtolower($dados['agency_name'])) ?: 'agencia';
         $slug = trim(mb_substr($slug, 0, 60), '-') . '-' . bin2hex(random_bytes(3));
 
         $resultado = $this->db->transaction(function (Database $db) use ($dados, $slug): array {
+            $this->registrar('transacao_inicio');
             if ((int) ($db->scalar('SELECT COUNT(*) FROM users') ?? 0) > 0) {
                 throw new \RuntimeException('Já existe uma conta nesta instância. O instalador foi encerrado.');
             }
@@ -300,8 +362,11 @@ final class Installer
                 [$companyId, $userId, 'installation.completed', 'Instalação pelo navegador (' . PHP_VERSION . ')']
             );
 
+            $this->registrar('transacao_ok');
+
             return ['company_id' => $companyId, 'user_id' => $userId];
         });
+        $this->registrar('fim');
 
         return [
             'agency_name' => $dados['agency_name'],

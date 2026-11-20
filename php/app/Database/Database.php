@@ -77,7 +77,14 @@ final class Database
 
     public function transaction(callable $acao): mixed
     {
-        $this->pdo->beginTransaction();
+        // beginTransaction pode estourar (ex.: "database is locked" no SQLite).
+        // Antes, isso saía como PDOException genérica e a operação parecia não
+        // ter começado; com a mensagem clara, o diagnóstico aponta o motivo.
+        try {
+            $this->pdo->beginTransaction();
+        } catch (\PDOException $erro) {
+            throw new \RuntimeException('O banco não aceitou iniciar a transação: ' . $erro->getMessage(), 0, $erro);
+        }
         try {
             $resultado = $acao($this);
             $this->pdo->commit();

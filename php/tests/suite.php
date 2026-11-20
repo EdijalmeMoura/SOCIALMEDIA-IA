@@ -200,7 +200,7 @@ check('a tela do instalador mostra a versão', str_contains(
     $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']))->body,
     'v' . \Smia\Support\Config::VERSAO
 ), 'versão não aparece no rodapé');
-check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.11', '>='), \Smia\Support\Config::VERSAO);
+check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.12', '>='), \Smia\Support\Config::VERSAO);
 // Defeito real: todo redirecionamento interno voltava para /install SEM o
 // token, então o próprio guarda de acesso devolvia 403 no meio do assistente.
 $semToken = $app->handle(requisicao('GET', '/install'));
@@ -391,6 +391,54 @@ $appRascunho->handle(requisicao('POST', '/install/validate', [
 $comPendente = $appRascunho->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
 check('avisa que existe revisão salva', str_contains($comPendente->body, 'revisão salva'), 'sem aviso de rascunho');
 check('pendingDrafts enxerga o rascunho', count($appRascunho->installer->pendingDrafts()) === 1);
+
+echo "\n[6f] Trilha da confirmação (para descobrir onde para)\n";
+// A trilha é o que permite diagnosticar de longe: cada etapa vence em ordem,
+// e uma recusa (CSRF, token, rascunho) também fica registrada.
+[$appTrilha] = appNova(['token' => 'token-secreto-123']);
+$appTrilha->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$csrfT = $appTrilha->session->csrfToken();
+
+// Recusa por rascunho inexistente deixa marca.
+$appTrilha->handle(requisicao('POST', '/install/run', [
+    'csrf_token' => $csrfT, 'access_token' => 'token-secreto-123', 'draft' => str_repeat('b', 24),
+]));
+$etapas = array_map(static fn ($e) => (string) ($e['etapa'] ?? ''), $appTrilha->installer->lastRunTrail());
+check('trilha registra a recusa', in_array('recusa:rascunho_expirado_ou_inexistente', $etapas, true), implode(' → ', $etapas));
+
+// Recusa por CSRF deixa marca.
+$appTrilha->handle(requisicao('POST', '/install/run', [
+    'csrf_token' => 'errado', 'access_token' => 'token-secreto-123', 'draft' => str_repeat('b', 24),
+]));
+$etapas = array_map(static fn ($e) => (string) ($e['etapa'] ?? ''), $appTrilha->installer->lastRunTrail());
+check('trilha registra CSRF inválido', in_array('recusa:csrf_invalido', $etapas, true), implode(' → ', $etapas));
+
+// Caminho feliz: todas as etapas, terminando em "fim".
+[$appOk] = appNova(['token' => 'token-secreto-123']);
+$appOk->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+$csrfOk = $appOk->session->csrfToken();
+$valOk = $appOk->handle(requisicao('POST', '/install/validate', [
+    'csrf_token' => $csrfOk, 'access_token' => 'token-secreto-123',
+    'agency_name' => 'Agência Trilha', 'admin_name' => 'Ana', 'admin_email' => 'ana@trilha.example',
+    'admin_password' => 'PastaForte2026', 'admin_password_confirm' => 'PastaForte2026',
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]));
+preg_match('/draft=([a-f0-9]+)/', (string) $valOk->header('Location'), $mDraft);
+$appOk->handle(requisicao('POST', '/install/run', [
+    'csrf_token' => $csrfOk, 'access_token' => 'token-secreto-123', 'draft' => $mDraft[1] ?? '',
+]));
+$etapasOk = array_map(static fn ($e) => (string) ($e['etapa'] ?? ''), $appOk->installer->lastRunTrail());
+check('trilha do sucesso chega ao fim', in_array('fim', $etapasOk, true), implode(' → ', $etapasOk));
+check('trilha do sucesso termina no redirecionamento', end($etapasOk) === 'redirecionando_para_passo3', implode(' → ', $etapasOk));
+check('trilha do sucesso passa pela migração', in_array('migracao_ok', $etapasOk, true));
+check('trilha do sucesso passa pela transação', in_array('transacao_ok', $etapasOk, true));
+check('trilha do sucesso grava a config', in_array('arquivo_config_ok', $etapasOk, true));
+
+// O diagnóstico mostra a trilha (e não vaza segredo).
+$diagTrilha = $appOk->handle(requisicao('GET', '/install/diagnostico'));
+check('diagnóstico mostra a última tentativa', str_contains($diagTrilha->body, 'Última tentativa de instalação'));
+check('diagnóstico mostra a etapa fim', str_contains($diagTrilha->body, '<code>fim</code>'));
+check('diagnóstico não vaza o token', !str_contains($diagTrilha->body, 'token-secreto-123'));
 
 echo "\n[7] Instalação completa\n";
 $valido = $app->handle(requisicao('POST', '/install/validate', $base + [

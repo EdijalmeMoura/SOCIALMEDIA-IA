@@ -137,6 +137,9 @@ final class InstallerController
         // Sem os campos do formulário não há o que executar. Isto cobre o GET,
         // o reenvio vazio e qualquer POST sem corpo.
         if ($req->input('draft') === '' || $req->input('csrf_token') === '') {
+            $this->installer->logRun('recusa:formulario_incompleto(' . $req->method
+                . ' draft=' . ($req->input('draft') === '' ? 'nao' : 'sim')
+                . ' csrf=' . ($req->input('csrf_token') === '' ? 'nao' : 'sim') . ')');
             if (!$this->guardAccess($req)) {
                 return $this->denied($req);
             }
@@ -149,22 +152,29 @@ final class InstallerController
         }
 
         if (!$this->guardAccess($req)) {
+            $this->installer->logRun('recusa:token_invalido');
+
             return $this->denied($req);
         }
         if (!$this->installer->needed()) {
+            $this->installer->logRun('recusa:ja_instalado');
+
             return $this->done();
         }
         if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            $this->installer->logRun('recusa:csrf_invalido');
             $this->session->flash('error', 'A sessão do navegador não acompanhou a confirmação (CSRF inválido). Abra /install/diagnostico para ver o estado da sessão.');
 
             return Response::redirect($this->url($req, '/install'));
         }
         $rascunho = $this->installer->loadDraft((string) $req->input('draft', ''));
         if ($rascunho === null) {
+            $this->installer->logRun('recusa:rascunho_expirado_ou_inexistente');
             $this->session->flash('error', 'Revisão expirada. Preencha os dados novamente.');
 
             return Response::redirect($this->url($req, '/install'));
         }
+        $this->installer->logRun('confirmacao_aceita');
 
         // A instalação tem duas fases: GRAVAR (banco + conta) e FECHAR (sessão,
         // redirecionamento). Falha na segunda não pode parecer falha na
@@ -215,6 +225,8 @@ final class InstallerController
         // Redireciona (302) em vez de renderizar aqui: assim o F5 não reenvia o
         // formulário e a URL fica limpa. O GET em /install/run, agora que a
         // instância existe, entrega a tela de conclusão.
+        $this->installer->logRun('redirecionando_para_passo3');
+
         return Response::redirect($this->url($req, '/install/run'));
     }
 
@@ -234,16 +246,15 @@ final class InstallerController
         $dataDir = $this->config->dataDir;
         $gravavel = is_dir($dataDir) ? is_writable($dataDir) : false;
         $dbExiste = is_file($this->config->dbPath);
-        $rascunhos = is_dir($dataDir . '/installer-drafts')
-            ? count((array) glob($dataDir . '/installer-drafts/*.json'))
-            : 0;
+        $pendentes = $this->installer->pendingDrafts();
+        $rascunhos = count($pendentes);
 
         $linhas = [
             [
                 'rotulo' => 'Versão do pacote',
                 'valor' => 'v' . Config::VERSAO,
-                'ok' => version_compare(Config::VERSAO, '1.11', '>='),
-                'dica' => version_compare(Config::VERSAO, '1.11', '<')
+                'ok' => version_compare(Config::VERSAO, '1.12', '>='),
+                'dica' => version_compare(Config::VERSAO, '1.12', '<')
                     ? 'Este servidor está com um pacote antigo. Envie app/ e public/ da versão nova.'
                     : 'Pacote atual.',
             ],
@@ -295,7 +306,10 @@ final class InstallerController
                 'rotulo' => 'Rascunhos pendentes',
                 'valor' => (string) $rascunhos,
                 'ok' => true,
-                'dica' => $rascunhos > 0 ? 'Há revisão salva aguardando confirmação (validade de 30 min).' : '',
+                'dica' => $pendentes === []
+                    ? ''
+                    : 'Mais recente: ' . (string) ($pendentes[0]['email'] ?? '—')
+                      . ', salvo em ' . gmdate('Y-m-d H:i:s', (int) ($pendentes[0]['created'] ?? 0)) . ' UTC.',
             ],
             [
                 'rotulo' => 'Endereço reconhecido',
@@ -327,12 +341,26 @@ final class InstallerController
             $resumo = 'Esta instância já está instalada.';
         }
 
+        // Trilha da última tentativa de confirmação. É o que distingue "nunca
+        // chegou a gravar" de "gravou pela metade" e de "o PHP morreu no meio".
+        $trilha = $this->installer->lastRunTrail();
+        $etapasFeitas = array_map(static fn ($e) => (string) ($e['etapa'] ?? ''), $trilha);
+        $ultimaEm = $trilha === [] ? '' : (string) ($trilha[count($trilha) - 1]['em'] ?? '');
+        if ($trilha !== [] && !in_array('fim', $etapasFeitas, true)) {
+            $this->session->flash(
+                'error',
+                'A última tentativa de confirmação parou na etapa "' . (string) end($etapasFeitas)
+                . '" (registrada em ' . $ultimaEm . ' UTC). Veja a trilha abaixo e o log do servidor.'
+            );
+        }
+
         return $this->render('install/diagnostico', [
             'linhas' => $linhas,
             'arquivos' => $arquivos,
             'resumo' => $resumo,
             'precisaInstalar' => $precisaInstalar,
             'tokenDigitado' => '',
+            'trilha' => $trilha,
         ]);
     }
 

@@ -57,6 +57,9 @@ ATUALIZANDO DE UMA VERSÃO ANTERIOR
 
 SE ALGO NÃO FECHAR
   Abra  .../socialai/install/diagnostico
+  A seção "Última tentativa de instalação" mostra até onde a confirmação foi.
+  Se a última etapa for recusa:* nada foi gravado; se for transacao_inicio
+  sem transacao_ok, o banco recusou (veja o log com [SMIA][install]).
   Ele mostra versão do pacote, PHP, sessão, pasta data gravável, banco e se a
   instância já está instalada. Não pede token e não mostra segredo.
 

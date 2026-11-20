@@ -46,6 +46,37 @@ ob_start();
 
 <section class="install-card">
   <div class="install-card-head">
+    <div><h2>Última tentativa de instalação</h2><p>Etapas concluídas, na ordem. A que falta é onde parou.</p></div>
+    <?php
+    $feitas = array_map(static fn ($e) => (string) ($e['etapa'] ?? ''), $trilha);
+    $terminou = in_array('fim', $feitas, true);
+    ?>
+    <span class="install-badge <?= $terminou ? 'badge-ok' : ($trilha === [] ? 'badge-off' : 'badge-off') ?>">
+      <?= $trilha === [] ? 'sem registro' : ($terminou ? 'concluída' : 'parou no meio') ?>
+    </span>
+  </div>
+  <?php if ($trilha === []): ?>
+    <p class="review-empty">Nenhuma tentativa de confirmação registrada nesta pasta de dados ainda.</p>
+  <?php else: ?>
+    <dl class="review-list">
+      <?php foreach ($trilha as $evento): ?>
+        <dt><?= e((string) ($evento['em'] ?? '')) ?> UTC</dt>
+        <dd><code><?= e((string) ($evento['etapa'] ?? '')) ?></code></dd>
+      <?php endforeach; ?>
+    </dl>
+    <?php if (!$terminou): ?>
+      <p class="review-empty">
+        A trilha <b>não chegou a <code>fim</code></b>. Se a última etapa é
+        <code>inicio</code> ou <code>migracao_ok</code>, a gravação nem começou.
+        Se é <code>transacao_inicio</code>, o banco recusou a transação — a causa
+        está no log com o prefixo <code>[SMIA][install]</code>.
+      </p>
+    <?php endif; ?>
+  <?php endif; ?>
+</section>
+
+<section class="install-card">
+  <div class="install-card-head">
     <div><h2>Arquivos em uso</h2><p>Confirma se o pacote novo foi realmente enviado.</p></div>
   </div>
   <dl class="review-list">
