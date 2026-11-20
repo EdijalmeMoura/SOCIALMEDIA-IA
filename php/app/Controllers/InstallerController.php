@@ -107,13 +107,36 @@ final class InstallerController
         ]);
     }
 
+    /**
+     * Conclui a instalação. Aceita GET e POST de propósito.
+     *
+     * GET só acontece quando alguém abre/atualiza este endereço direto (o botão
+     * de recarregar depois de confirmar, um favorito, a barra do navegador).
+     * Nesse caso **nada é criado**: a pessoa é levada para a tela de conclusão
+     * ou de volta ao início. Antes isso devolvia um 405 cru, e parecia que a
+     * instalação tinha travado nessa URL.
+     */
     public function run(Request $req): Response
     {
+        // Sem os campos do formulário não há o que executar. Isto cobre o GET,
+        // o reenvio vazio e qualquer POST sem corpo.
+        if ($req->input('draft') === '' || $req->input('csrf_token') === '') {
+            if (!$this->guardAccess($req)) {
+                return $this->denied();
+            }
+            if (!$this->installer->needed()) {
+                return $this->done();
+            }
+            $this->session->flash('error', 'A confirmação precisa ser feita pelo botão da revisão. Recomece por aqui.');
+
+            return Response::redirect($this->config->url('/install'));
+        }
+
         if (!$this->guardAccess($req)) {
             return $this->denied();
         }
         if (!$this->installer->needed()) {
-            return $this->closed();
+            return $this->done();
         }
         if (!$this->session->csrfValid($req->input('csrf_token'))) {
             $this->session->flash('error', 'Sessão expirada. Refaça a revisão.');
@@ -128,7 +151,7 @@ final class InstallerController
         }
 
         try {
-            $resumo = $this->installer->install($rascunho['data']);
+            $this->installer->install($rascunho['data']);
         } catch (\Throwable $erro) {
             error_log('[SMIA][install] ' . $erro->getMessage());
 
@@ -139,11 +162,26 @@ final class InstallerController
             ], 500);
         }
 
+        // Só descarta o rascunho DEPOIS de instalar com sucesso. Se a instalação
+        // falhar, a revisão continua disponível e a pessoa pode tentar de novo
+        // sem redigitar tudo.
         $this->installer->dropDraft($rascunho['id']);
         $this->session->regenerate();
         $this->session->flash('success', 'Instância criada. Entre com o e-mail e a senha que você definiu.');
 
-        return Response::redirect($this->config->url('/login?installed=1'));
+        // Passo 3 do instalador: a tela "Instância pronta". É ela que mostra o
+        // registro da instalação e o botão de login; ir direto ao /login pulava
+        // essa confirmação.
+        //
+        // Redireciona (302) em vez de renderizar aqui: assim o F5 não reenvia o
+        // formulário e a URL fica limpa. O GET em /install/run, agora que a
+        // instância existe, entrega a tela de conclusão.
+        $destino = $this->config->url('/install/run');
+        if ($this->installer->tokenRequired()) {
+            $destino .= '?access_token=' . rawurlencode((string) $this->config->installToken);
+        }
+
+        return Response::redirect($destino);
     }
 
     public function cancel(Request $req): Response
@@ -167,7 +205,22 @@ final class InstallerController
 
     private function closed(): Response
     {
-        return $this->render('install/closed', ['record' => $this->installer->installedRecord()], 410);
+        return $this->render('install/closed', [
+            'record' => $this->installer->installedRecord(),
+            'concluida' => false,
+        ], 410);
+    }
+
+    /**
+     * Passo 3 ("Instância pronta"). 200 porque é o fim feliz do assistente —
+     * o 410 fica para quem tenta reabrir /install numa instância já instalada.
+     */
+    private function done(): Response
+    {
+        return $this->render('install/closed', [
+            'record' => $this->installer->installedRecord(),
+            'concluida' => true,
+        ]);
     }
 
     private function detectedOrigin(Request $req): string

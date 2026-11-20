@@ -26,6 +26,20 @@ final class Router
         $this->add('POST', $padrao, $handler);
     }
 
+    /**
+     * Rota que responde a GET **e** POST.
+     *
+     * Serve para páginas que o usuário pode abrir pelo endereço (GET) e que um
+     * formulário também envia. O handler recebe o método para decidir o que
+     * fazer — sem isso, abrir uma ação POST no navegador devolvia um 405 cru,
+     * sem explicar nada.
+     */
+    public function any(string $padrao, callable $handler): void
+    {
+        $this->add('GET', $padrao, $handler);
+        $this->add('POST', $padrao, $handler);
+    }
+
     public function add(string $metodo, string $padrao, callable $handler): void
     {
         $parametros = [];

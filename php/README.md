@@ -156,8 +156,21 @@ do proprietário.
 | `/install` | GET | verificações do ambiente + formulário do workspace |
 | `/install/validate` | POST | valida e grava um **rascunho criptografado** em `data/installer-drafts/` |
 | `/install/review` | GET | revisão com segredos **mascarados** (a senha nunca volta) |
-| `/install/run` | POST | confirma: cria empresa, proprietário e arquivo de segredos |
-| `/install/cancel` | POST | descarta o rascunho |
+| `/install/run` | POST (e GET) | confirma: cria empresa, proprietário e arquivo de segredos |
+| `/install/cancel` | POST (e GET) | descarta o rascunho |
+
+O fim do assistente é a tela **“Instância pronta”** (`/install/run`): ela mostra o
+registro da instalação (agência, e-mail do proprietário, data e URL) e o botão
+para entrar. Depois da confirmação:
+
+- `POST` cria tudo e **redireciona** para `/install/run` — por isso o F5 não
+  reenvia o formulário nem dá erro de “sessão expirada”;
+- abrir `/install/run` no navegador (GET) nessa hora mostra a mesma tela de
+  conclusão, sem criar nada e sem 405;
+- `/install` passa a responder **410** com o resumo da instalação.
+
+> Caiu em `/install/run` sem passar pela revisão? A tela explica o que fazer e
+> devolve para `/install` — nada é criado sem o botão de confirmação.
 
 O que ele garante:
 

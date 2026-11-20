@@ -212,14 +212,48 @@ assertSame('revisão responde 200', 200, $revisao->status);
 check('revisão mostra a agência', str_contains($revisao->body, 'Agência Pasta'));
 check('revisão não vaza a senha', !str_contains($revisao->body, 'PastaForte2026'));
 
+// Abrir /install/run no navegador (GET) não pode dar 405 nem criar nada.
+$runSemFormulario = $app->handle(requisicao('GET', '/install/run', [], ['access_token' => 'token-secreto-123']));
+assertSame('GET em /install/run não devolve 405', 302, $runSemFormulario->status);
+check(
+    'GET em /install/run volta para o passo 1',
+    str_contains((string) $runSemFormulario->header('Location'), '/install'),
+    (string) $runSemFormulario->header('Location')
+);
+check('GET em /install/run não instala', $app->installer->needed());
+
 $execucao = $app->handle(requisicao('POST', '/install/run', $base + ['draft' => $draft]));
 assertSame('execução redireciona', 302, $execucao->status);
-check('vai para o login', str_starts_with((string) $execucao->header('Location'), '/edijalmemoura/socialai/login'));
 
 check('instalador fechado depois', !$app->installer->needed());
+
+// Depois de instalar, qualquer acesso a /install/run cai no passo 3
+// ("Instância pronta"), inclusive pelo GET — é isso que o usuário espera ver.
+$destino = (string) $execucao->header('Location');
+check('execução leva ao passo 3, não direto ao login', !str_contains($destino, '/login'), $destino);
+// O destino é /install/run (POST/redirect/GET). O caminho interno vem antes
+// da query; o token vai na query para o guarda de acesso deixar passar.
+$caminhoFinal = (string) parse_url($destino, PHP_URL_PATH);
+$caminhoFinal = preg_replace('#^/edijalmemoura/socialai#', '', $caminhoFinal) ?: '/';
+parse_str((string) parse_url($destino, PHP_URL_QUERY), $queryFinal);
+$passoFinal = $app->handle(requisicao('GET', $caminhoFinal, [], $queryFinal));
+assertSame('passo 3 responde 200 (fim feliz)', 200, $passoFinal->status);
+check('passo 3 mostra "Instância pronta"', str_contains($passoFinal->body, 'Instância pronta'));
+check('passo 3 diz que o acesso foi liberado', str_contains($passoFinal->body, 'Acesso liberado e instalador encerrado'));
+check('passo 3 não usa o texto de instância já protegida', !str_contains($passoFinal->body, 'Esta instância está protegida'));
+check('passo 3 mostra o registro da instalação', str_contains($passoFinal->body, 'Registro da instalação'));
+check('passo 3 tem botão para o login', str_contains($passoFinal->body, '/login'));
+check('passo 3 mostra o e-mail do proprietário', str_contains($passoFinal->body, 'ana@pasta.example'), 'não achou o e-mail no registro');
+
+// Recarregar /install/run depois de instalado não pode cair em 405 nem 410:
+// é a tela de conclusão que aparece.
+$runDepois = $app->handle(requisicao('GET', '/install/run', [], ['access_token' => 'token-secreto-123']));
+assertSame('GET em /install/run depois de instalado responde 200', 200, $runDepois->status);
+check('e mostra a conclusão', str_contains($runDepois->body, 'Registro da instalação'));
 $fechado = $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
 assertSame('instalador responde 410', 410, $fechado->status);
 check('mostra que está protegida', str_contains($fechado->body, 'protegida'));
+check('410 não se anuncia como fim feliz', !str_contains($fechado->body, 'Acesso liberado e instalador encerrado'));
 
 check('arquivo de configuração criado', is_file($config->envFile));
 $conteudoEnv = (string) file_get_contents($config->envFile);

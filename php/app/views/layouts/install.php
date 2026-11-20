@@ -10,7 +10,7 @@
 $passos = [
     1 => ['Ambiente e workspace', 'Verificações e primeiro acesso'],
     2 => ['Revisão e confirmação', 'Segredos mascarados, sem escrita'],
-    3 => ['Instância pronta', 'Acesso liberado e instalador encerrado'],
+    3 => ['Instância pronta', 'Registro da instalação e acesso liberado'],
 ];
 ?>
 <!doctype html>

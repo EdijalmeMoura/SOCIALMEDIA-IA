@@ -168,8 +168,9 @@ final class Application
         $this->router->get('/install', $installer->show(...));
         $this->router->post('/install/validate', $installer->validate(...));
         $this->router->get('/install/review', $installer->review(...));
-        $this->router->post('/install/run', $installer->run(...));
-        $this->router->post('/install/cancel', $installer->cancel(...));
+        // GET + POST: abrir /install/run no navegador não pode virar 405.
+        $this->router->any('/install/run', $installer->run(...));
+        $this->router->any('/install/cancel', $installer->cancel(...));
 
         $this->router->get('/login', $authController->loginForm(...));
         $this->router->post('/login', $authController->login(...));

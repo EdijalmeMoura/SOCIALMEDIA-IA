@@ -33,6 +33,9 @@ CAMINHO 2 — document root apontando para public/ (mais limpo)
 
 DEPOIS DE INSTALAR
   - /install passa a responder 410 (instalador encerrado).
+  - A tela final ("Instância pronta") mostra o registro da instalação e o
+    botão de entrar. Se você recarregar a página, ela continua aparecendo —
+    nada é criado de novo.
   - Entre por /login com o e-mail e a senha cadastrados.
   - Apague SOCIALMEDIA_INSTALL_TOKEN do .env.
 
