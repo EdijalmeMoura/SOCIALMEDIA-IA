@@ -15,19 +15,73 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-`downloads/SOCIALMEDIA-IA-php-v1.7.zip` nesta pasta é o pacote completo (`.env`
-com o endereço preenchido, `COMECE-AQUI.txt`, `data/` protegido). Baixe a versão
-publicada em
-[`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
-ou gere um novo a qualquer momento:
+**Última versão: [`php-v1.7`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7)** — todos os módulos,
+incluindo Meta (conexões e publicação real).
+
+| Versão | O que entrou | Release | Pacote |
+|---|---|---|---|
+| **v1.7** | **Meta**: conexões Facebook/Instagram, agenda interna e publicação manual real | [php-v1.7](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7) | [`SOCIALMEDIA-IA-php-v1.7.zip`](downloads/SOCIALMEDIA-IA-php-v1.7.zip) |
+| v1.6 | Relatórios com recorte de período e CSV | [php-v1.6](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.6) | [`SOCIALMEDIA-IA-php-v1.6.zip`](downloads/SOCIALMEDIA-IA-php-v1.6.zip) |
+| v1.5 | Feed: grade 3×3 e reordenação | [php-v1.5](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.5) | [`SOCIALMEDIA-IA-php-v1.5.zip`](downloads/SOCIALMEDIA-IA-php-v1.5.zip) |
+| v1.4 | Aprovações e portal do cliente | [php-v1.4](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.4) | [`SOCIALMEDIA-IA-php-v1.4.zip`](downloads/SOCIALMEDIA-IA-php-v1.4.zip) |
+| v1.3 | Base + clientes + planejamento + estúdio | [php-v1.3](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.3) | [`SOCIALMEDIA-IA-php-v1.3.zip`](downloads/SOCIALMEDIA-IA-php-v1.3.zip) |
+| v1.2 | Base + clientes + planejamento | [php-v1.2](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.2) | [`SOCIALMEDIA-IA-php-v1.2.zip`](downloads/SOCIALMEDIA-IA-php-v1.2.zip) |
+| v1.1 | Base + clientes | [php-v1.1](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.1) | [`SOCIALMEDIA-IA-php-v1.1.zip`](downloads/SOCIALMEDIA-IA-php-v1.1.zip) |
+
+Atalhos:
+
+- Todas as releases: <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases>
+- Todos os pacotes: [`php/downloads/`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/tree/arena/4b255bc3-socialmedia-ia/php/downloads)
+- Integridade: [`php/downloads/SHA256SUMS.txt`](downloads/SHA256SUMS.txt)
+
+> A pasta `php/downloads/` está na branch de entrega do port. Se o link acima
+> ainda não abrir na `main`, é porque a branch ainda não foi mesclada — os
+> arquivos `.zip`/`.tar.gz` também vão junto no download do repositório.
+
+Cada `.zip` é o pacote completo (`.env` com o endereço preenchido,
+`COMECE-AQUI.txt`, `data/` protegido) e tem um `.tar.gz` irmão. Para conferir o
+download:
+
+```sh
+sha256sum SOCIALMEDIA-IA-php-v1.7.zip    # compare com SHA256SUMS.txt
+```
+
+O pacote publicado **não contém segredos seus**: o `.env` vem com `SECRET_KEY` e
+`SOCIALMEDIA_INSTALL_TOKEN` gerados na hora do empacotamento — troque o token e
+apague-o depois de instalar (instruções no `COMECE-AQUI.txt`).
+
+Para gerar um pacote a partir do código desta branch:
 
 ```sh
 git archive --format=zip -o socialai-php.zip HEAD:php
 ```
 
-O pacote publicado **não contém segredos**: preencha `SECRET_KEY` e
-`SOCIALMEDIA_INSTALL_TOKEN` no `.env` antes de enviar (instruções no
-`COMECE-AQUI.txt`).
+### Descrição de cada módulo
+
+- **v1.7 — Meta.** Conectar Páginas do Facebook e contas profissionais do
+  Instagram por OAuth, com token da Página cifrado em repouso e painel de
+  evidências (configuração → OAuth → leitura Graph → TLS → mídia pública →
+  publicação comprovada pela API). Agenda interna em UTC + fuso e publicação
+  **manual**, num clique em horário vencido. Se a Meta não responde, a tentativa
+  fica **incerta** e bloqueia repetição até alguém conferir a conta. Guia:
+  [`docs/meta.md`](docs/meta.md).
+- **v1.6 — Relatórios.** O que a agência fez no período (recorte de até 366 dias,
+  filtro por cliente) e exportação CSV para planilha. Sem métrica de rede
+  inventada.
+- **v1.5 — Feed.** Grade 3×3 montada com artes e pautas, reordenação por arrastar
+  com 409 quando outra aba mudou a lista. É prévia: nada é publicado.
+- **v1.4 — Aprovações.** Envio de arte/pauta para o cliente revisar no portal,
+  com fotografia do conteúdo aprovado, ciclos, comentários e avisos.
+- **v1.3 — Base + clientes + planejamento + estúdio.** Instalador de 3 telas,
+  login, dashboard, portfólio de clientes, calendário editorial e criação de
+  artes com prancheta.
+- **v1.1 / v1.2** — primeiras entregas (base instalável, clientes e
+  planejamento). Ficam publicadas para quem precisa reproduzir uma instalação
+  antiga; a v1.7 já contém tudo delas.
+
+Atualizando de qualquer versão anterior: envie **por cima apenas `app/` e
+`public/`**, mantenha `.env` e `data/`. O esquema migra sozinho e nada é
+apagado.
 
 ## Por que existe
 

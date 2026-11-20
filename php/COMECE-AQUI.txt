@@ -1,5 +1,6 @@
 SocialMedia IA — versão PHP (cPanel)
 ====================================
+Versão deste pacote: 1.7  ·  Releases: https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases
 
 PHP puro: sobe e funciona. Sem Passenger, sem Composer, sem comandos.
 
@@ -98,3 +99,6 @@ PROBLEMAS COMUNS
   página em branco . PHP 8.0+ e extensões pdo_sqlite, mbstring ativas
 
 Documentação completa: README.md
+Guia do módulo Meta: docs/meta.md
+Outras versões (pacotes .zip/.tar.gz + SHA256):
+  https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases

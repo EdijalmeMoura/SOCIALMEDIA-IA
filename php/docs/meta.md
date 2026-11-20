@@ -1,5 +1,9 @@
 # Módulo Meta — conexões e publicação real
 
+> Pacote: **v1.7** · <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7>
+> (`php/downloads/SOCIALMEDIA-IA-php-v1.7.zip` · confira o SHA256 em
+> `php/downloads/SHA256SUMS.txt`)
+
 Este módulo liga o SocialMedia IA às Páginas do Facebook e às contas
 profissionais do Instagram de cada cliente. Ele faz duas coisas — e só duas:
 

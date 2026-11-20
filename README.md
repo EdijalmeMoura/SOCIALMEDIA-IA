@@ -2,6 +2,20 @@
 
 Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 07** estão implementadas: workspaces isolados, clientes e identidade de marca, planejamento editorial com IA, estúdio de criação, preview de feed, aprovação do cliente, agenda interna e relatórios operacionais.
 
+## Versão PHP (para cPanel, sem Python)
+
+O produto também existe como **PHP 8.0+ puro** — sobe os arquivos numa hospedagem
+compartilhada e funciona, sem Composer, Node, Passenger ou processo extra.
+
+- **Última versão: [`php-v1.7`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.7)** (módulo Meta incluso).
+- Pacote pronto: [`php/downloads/SOCIALMEDIA-IA-php-v1.7.zip`](php/downloads/SOCIALMEDIA-IA-php-v1.7.zip)
+- Documentação: [`php/README.md`](php/README.md) · guia do módulo Meta: [`php/docs/meta.md`](php/docs/meta.md)
+- Todas as versões: <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases>
+- Integridade dos pacotes: [`php/downloads/SHA256SUMS.txt`](php/downloads/SHA256SUMS.txt)
+
+O restante deste README descreve a versão **Python** (Flask), que continua na
+raiz do repositório.
+
 ## Requisitos
 
 - Python 3.11+
