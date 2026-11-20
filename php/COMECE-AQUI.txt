@@ -39,9 +39,12 @@ DEPOIS DE INSTALAR
 ATUALIZANDO DE UMA VERSÃO ANTERIOR
   Envie por cima apenas app/ e public/ (mantenha .env e data/).
   O banco é migrado sozinho na primeira abertura; nada é apagado.
-  v1.7 cria 10 tabelas novas (agenda interna e conexões Meta) por migração
+  v1.7 criou 10 tabelas novas (agenda interna e conexões Meta) por migração
   aditiva: o que já existe fica intacto. Nada é apagado ao atualizar, mas
   configure as chaves META_* no .env para o módulo Meta funcionar.
+  v1.8 não cria tabela nenhuma: só atualiza os modelos de IA padrão. Se você
+  já tinha OPENAI_MODEL/OPENAI_IMAGE_MODEL no .env, os seus valores continuam
+  valendo — troque-os apenas se a OpenAI tiver desligado aquele modelo.
 
 O QUE ESTA VERSÃO JÁ FAZ
   Instalador em 3 telas (ambiente, revisão, pronto) com token e CSRF
