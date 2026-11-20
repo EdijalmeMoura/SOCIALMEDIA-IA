@@ -200,7 +200,7 @@ check('a tela do instalador mostra a versão', str_contains(
     $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']))->body,
     'v' . \Smia\Support\Config::VERSAO
 ), 'versão não aparece no rodapé');
-check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.13', '>='), \Smia\Support\Config::VERSAO);
+check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.14', '>='), \Smia\Support\Config::VERSAO);
 // Defeito real: todo redirecionamento interno voltava para /install SEM o
 // token, então o próprio guarda de acesso devolvia 403 no meio do assistente.
 $semToken = $app->handle(requisicao('GET', '/install'));
@@ -503,6 +503,143 @@ $recusa = $appErrado->handle(requisicao(
     ['access_token' => 'tambem-errado']
 ));
 assertSame('token errado na URL e no corpo é recusado', 403, $recusa->status);
+
+echo "\n[6h] Chave de IA: o diagnóstico responde \"minha chave está certa?\"\n";
+// A pergunta que trava a instalação não pode depender de abrir o estúdio.
+$interp = static fn (int $status, string $corpo = '{}', string $erro = '') =>
+    \Smia\Controllers\InstallerController::interpretarTesteDeChave($corpo, $status, $erro, 'gpt-6-luna');
+
+[$ok200, $msg200, $est200] = $interp(200);
+check('200 = chave aceita', $ok200 && str_contains($msg200, 'Chave válida'), $msg200);
+check('200 é rotulado como aceita', $est200 === 'aceita', $est200);
+check('200 confirma o modelo', str_contains($msg200, 'gpt-6-luna'));
+
+[$ok401, $msg401, $est401] = $interp(401, '{"error":{"message":"Incorrect API key provided"}}');
+check('401 = chave recusada', !$ok401 && str_contains($msg401, '401'), $msg401);
+check('401 é rotulado como recusada', $est401 === 'recusada', $est401);
+check('401 manda conferir espaços e aspas', str_contains($msg401, 'sem espaços nem aspas'));
+check('401 não devolve o texto cru do provedor', !str_contains($msg401, 'Incorrect API key'));
+
+[$ok403, $msg403] = $interp(403);
+check('403 = sem permissão', !$ok403 && str_contains($msg403, 'permissão'), $msg403);
+[$ok404, $msg404] = $interp(404, '{"error":{"message":"The model does not exist"}}');
+check('404 aponta o OPENAI_MODEL', !$ok404 && str_contains($msg404, 'OPENAI_MODEL'), $msg404);
+check('404 repete a explicação do provedor', str_contains($msg404, 'does not exist'));
+[$ok429, $msg429] = $interp(429);
+check('429 = sem cota, chave boa', !$ok429 && str_contains($msg429, 'cota'), $msg429);
+
+// Certificado é problema do servidor, não da chave: dizer isso evita horas.
+[$okCa, $msgCa, $estCa] = \Smia\Controllers\InstallerController::interpretarTesteDeChave(
+    null, 0, 'error setting certificate verify locations: CAfile: /etc/ssl/certs', 'gpt-6-luna');
+check('falha de CA é identificada', !$okCa && str_contains($msgCa, 'certificado'), $msgCa);
+check('falha de CA não é rotulada como chave recusada', $estCa === 'sem teste', $estCa);
+check('falha de CA diz que não é a chave', str_contains($msgCa, 'não da chave'));
+check('falha de CA sugere o CA bundle', str_contains($msgCa, 'openssl.cafile'));
+
+[$okNet, $msgNet] = \Smia\Controllers\InstallerController::interpretarTesteDeChave(
+    null, 0, 'Could not resolve host: api.openai.com', 'gpt-6-luna');
+check('sem DNS aponta rede/firewall', !$okNet && str_contains($msgNet, 'firewall'), $msgNet);
+check('sem DNS não fala de certificado', !str_contains($msgNet, 'certificado'));
+
+echo "\n[6i] Chave de IA no diagnóstico da tela\n";
+$configIa = new \Smia\Support\Config(
+    root: $raizIa = sys_get_temp_dir() . '/smia-ia-' . bin2hex(random_bytes(4)),
+    dataDir: $raizIa, dbPath: $raizIa . '/socialmedia.sqlite',
+    envFile: $raizIa . '/installer.env',
+    basePath: '/edijalmemoura/socialai', publicOrigin: 'https://x.test',
+    secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+    openaiKey: 'sk-admin-abcdefghijklmnop', openaiEndpoint: (string) $endpointProvedor,
+);
+mkdir($raizIa, 0o700, true);
+$diagIa = (new \Smia\Application($configIa))->handle(requisicao('GET', '/install/diagnostico'));
+check('diagnóstico tem a linha da chave de IA', str_contains($diagIa->body, 'Chave de IA'));
+check('diagnóstico recusa chave de admin sem chamar a API', str_contains($diagIa->body, 'formato não serve'));
+check('diagnóstico diz o que usar no lugar', str_contains($diagIa->body, 'sk-svcacct-'));
+check('diagnóstico não vaza a chave de admin', !str_contains($diagIa->body, 'sk-admin-abcdefghijklmnop'));
+check('diagnóstico mostra os modelos', str_contains($diagIa->body, 'gpt-6-luna'));
+check('diagnóstico tem a linha do arquivo .env', str_contains($diagIa->body, 'Arquivo .env'));
+
+echo "\n[6j] .env: as armadilhas que fazem a chave \"não funcionar\"\n";
+$envTemp = sys_get_temp_dir() . '/smia-env-' . bin2hex(random_bytes(4));
+mkdir($envTemp, 0o700, true);
+
+// 1) ":" no lugar de "=": a linha é descartada e o PHP fica sem chave.
+file_put_contents($envTemp . '/.env', "OPENAI_API_KEY: sk-svcacct-nao-vale\nOUTRA=1\n");
+\Smia\Support\EnvFile::$trilha = [];
+\Smia\Support\EnvFile::$descartadas = [];
+\Smia\Support\EnvFile::$cortadas = [];
+\Smia\Support\Config::loadFiles($envTemp, $envTemp);
+$desc = \Smia\Support\EnvFile::$descartadas;
+check('.env com ":" é denunciado', count($desc) === 1 && $desc[0]['linha'] === 1, 'não detectou');
+check('linha denunciada não mostra o valor', !str_contains($desc[0]['texto'], 'sk-svcacct-nao-vale'), $desc[0]['texto']);
+check('linha denunciada mostra o nome', str_contains($desc[0]['texto'], 'OPENAI_API_KEY'), $desc[0]['texto']);
+check('.env válido continua sendo lido', getenv('OUTRA') === '1', (string) getenv('OUTRA'));
+check('trilha registra o arquivo lido', \Smia\Support\EnvFile::$trilha[0]['lido'] === true);
+check('trilha registra OUTRA como aplicada', in_array('OUTRA', \Smia\Support\EnvFile::$trilha[0]['chaves'], true));
+
+// 2) " #" no meio do valor corta a chave e o 401 culpa a chave errada.
+file_put_contents($envTemp . '/.env', "OPENAI_API_KEY=sk-svcacct-chave-real # colada do painel\n");
+putenv('OPENAI_API_KEY');
+unset($_ENV['OPENAI_API_KEY']);
+\Smia\Support\EnvFile::$trilha = [];
+\Smia\Support\EnvFile::$descartadas = [];
+\Smia\Support\EnvFile::$cortadas = [];
+\Smia\Support\Config::loadFiles($envTemp, $envTemp);
+$cortes = \Smia\Support\EnvFile::$cortadas;
+check('corte por " #" é registrado', count($cortes) === 1 && $cortes[0]['chave'] === 'OPENAI_API_KEY', 'não detectou');
+check('corte indica a linha', $cortes[0]['linha'] === 1, (string) $cortes[0]['linha']);
+check('corte guarda o arquivo', str_contains((string) $cortes[0]['caminho'], '.env'), (string) $cortes[0]['caminho']);
+check('corte não guarda o valor inteiro', !str_contains((string) $cortes[0]['restante'], 'sk-svcacct-chave-real'));
+check('corte deixa a chave truncada', getenv('OPENAI_API_KEY') === 'sk-svcacct-chave-real', (string) getenv('OPENAI_API_KEY'));
+
+$diagCorte = (new \Smia\Application(new \Smia\Support\Config(
+    root: $envTemp, dataDir: $envTemp, dbPath: $envTemp . '/socialmedia.sqlite',
+    envFile: $envTemp . '/installer.env', basePath: '', publicOrigin: 'https://x.test',
+    secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+    openaiKey: (string) getenv('OPENAI_API_KEY'), openaiEndpoint: (string) $endpointProvedor,
+)))->handle(requisicao('GET', '/install/diagnostico'));
+check('diagnóstico avisa que o valor foi CORTADO', str_contains($diagCorte->body, 'CORTADO'), 'não avisou');
+check('diagnóstico ensina a corrigir o corte', str_contains($diagCorte->body, 'aspas retas'));
+
+// 3) Variável no ambiente do servidor VENCE o .env (armadilha nº1 do cPanel).
+file_put_contents($envTemp . '/.env', "OPENAI_API_KEY=sk-svcacct-do-arquivo\n");
+putenv('OPENAI_API_KEY=sk-svcacct-do-painel');
+\Smia\Support\EnvFile::$trilha = [];
+\Smia\Support\EnvFile::$descartadas = [];
+\Smia\Support\EnvFile::$cortadas = [];
+\Smia\Support\Config::loadFiles($envTemp, $envTemp);
+check('ambiente vence o arquivo', getenv('OPENAI_API_KEY') === 'sk-svcacct-do-painel', (string) getenv('OPENAI_API_KEY'));
+check('trilha registra que o arquivo perdeu',
+    in_array('OPENAI_API_KEY', \Smia\Support\EnvFile::$trilha[0]['ignoradas'], true), 'não registrou');
+
+$diagCorrida = (new \Smia\Application(new \Smia\Support\Config(
+    root: $envTemp, dataDir: $envTemp, dbPath: $envTemp . '/socialmedia.sqlite',
+    envFile: $envTemp . '/installer.env', basePath: '', publicOrigin: 'https://x.test',
+    secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+    openaiKey: (string) getenv('OPENAI_API_KEY'), openaiEndpoint: (string) $endpointProvedor,
+)))->handle(requisicao('GET', '/install/diagnostico'));
+check('diagnóstico avisa que o ambiente vence o .env', str_contains($diagCorrida->body, 'VENCE o arquivo'), 'não avisou');
+check('diagnóstico manda remover do painel', str_contains($diagCorrida->body, 'painel'));
+check('diagnóstico não vaza nenhuma das duas chaves',
+    !str_contains($diagCorrida->body, 'do-painel') && !str_contains($diagCorrida->body, 'do-arquivo'));
+putenv('OPENAI_API_KEY');
+unset($_ENV['OPENAI_API_KEY']);
+
+// 4) Sem .env nenhum: dizer onde ele deveria estar.
+$semEnv = sys_get_temp_dir() . '/smia-sem-env-' . bin2hex(random_bytes(4));
+mkdir($semEnv, 0o700, true);
+\Smia\Support\EnvFile::$trilha = [];
+\Smia\Support\EnvFile::$descartadas = [];
+\Smia\Support\EnvFile::$cortadas = [];
+\Smia\Support\Config::loadFiles($semEnv, $semEnv);
+$diagSemEnv = (new \Smia\Application(new \Smia\Support\Config(
+    root: $semEnv, dataDir: $semEnv, dbPath: $semEnv . '/socialmedia.sqlite',
+    envFile: $semEnv . '/installer.env', basePath: '', publicOrigin: 'https://x.test',
+    secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+    openaiKey: '', openaiEndpoint: (string) $endpointProvedor,
+)))->handle(requisicao('GET', '/install/diagnostico'));
+check('sem .env o diagnóstico diz onde criar', str_contains($diagSemEnv->body, 'não encontrado'), 'não avisou');
+check('sem .env o diagnóstico mostra o caminho esperado', str_contains($diagSemEnv->body, $semEnv . '/.env'), 'sem caminho');
 
 echo "\n[7] Instalação completa\n";
 $valido = $app->handle(requisicao('POST', '/install/validate', $base + [

@@ -324,6 +324,116 @@ final class InstallerController
             ],
         ];
 
+        // --- Chave de IA -------------------------------------------------
+        // Testa a chave NO SERVIDOR, com uma chamada mínima, para responder
+        // "minha chave está certa?" sem precisar abrir o estúdio.
+        $chaveIa = $this->config->openaiKey;
+        $linhaIa = [
+            'rotulo' => 'Chave de IA (OPENAI_API_KEY)',
+            'valor' => 'não configurada',
+            'ok' => true,
+            'dica' => 'Opcional. Sem chave, planejamento e estúdio funcionam em modo rascunho local.',
+        ];
+        if (trim($chaveIa) !== '') {
+            $formato = 'formato desconhecido';
+            if (str_starts_with($chaveIa, 'sk-svcacct-')) {
+                $formato = 'service account (sk-svcacct-) — recomendada';
+            } elseif (str_starts_with($chaveIa, 'sk-proj-')) {
+                $formato = 'chave de usuário (sk-proj-) — funciona, mas cai se a pessoa sair do projeto';
+            } elseif (str_starts_with($chaveIa, 'sk-admin-')) {
+                $formato = 'chave de ADMINISTRAÇÃO (sk-admin-) — NÃO serve para gerar conteúdo';
+            } elseif (str_starts_with($chaveIa, 'sk-')) {
+                $formato = 'formato antigo (sk-…) — pode estar desativada';
+            }
+
+            if (str_starts_with($chaveIa, 'sk-admin-')) {
+                $linhaIa = [
+                    'rotulo' => 'Chave de IA (OPENAI_API_KEY)',
+                    'valor' => 'formato não serve · ' . $formato,
+                    'ok' => false,
+                    'dica' => 'Troque por uma chave de service account (sk-svcacct-), com permissão Restricted no projeto do produto.',
+                ];
+            } else {
+                [$ok, $detalhe, $estado] = $this->testarChaveIa($chaveIa);
+                $linhaIa = [
+                    'rotulo' => 'Chave de IA (OPENAI_API_KEY)',
+                    'valor' => ($ok ? 'aceita pelo provedor' : $estado) . ' · ' . $formato,
+                    'ok' => $ok,
+                    'dica' => $detalhe,
+                ];
+            }
+        }
+        $linhas[] = $linhaIa;
+        $linhas[] = [
+            'rotulo' => 'Modelos de IA',
+            'valor' => $this->config->openaiModel . ' · ' . $this->config->openaiImageModel,
+            'ok' => true,
+            'dica' => trim($chaveIa) === ''
+                ? ''
+                : 'Se o provedor desligar um modelo, o erro cita o nome — troque em OPENAI_MODEL / OPENAI_IMAGE_MODEL.',
+        ];
+
+        // --- Arquivo .env -------------------------------------------------
+        // Não basta dizer "chave inválida": é preciso dizer de ONDE veio o
+        // valor que o PHP está usando. Sem isso o usuário edita o .env para
+        // sempre enquanto o painel continua vencendo.
+        $arquivosEnv = \Smia\Support\EnvFile::$trilha;
+        $lidos = array_values(array_filter($arquivosEnv, static fn ($a) => $a['lido'] === true));
+        $fonteChave = 'nenhum arquivo .env';
+        foreach ($arquivosEnv as $arquivoEnv) {
+            if ($arquivoEnv['lido'] && in_array('OPENAI_API_KEY', $arquivoEnv['chaves'], true)) {
+                $fonteChave = $arquivoEnv['caminho'];
+            }
+        }
+        $corrida = [];
+        foreach ($arquivosEnv as $arquivoEnv) {
+            if (in_array('OPENAI_API_KEY', $arquivoEnv['ignoradas'], true)) {
+                $corrida[] = $arquivoEnv['caminho'];
+            }
+        }
+        $descartadas = array_values(array_filter(
+            \Smia\Support\EnvFile::$descartadas,
+            static fn ($d) => str_contains((string) $d['texto'], 'OPENAI')
+        ));
+
+        $okEnv = $lidos !== [];
+        $valorEnv = $okEnv
+            ? count($lidos) . ' arquivo(s) lido(s)'
+            : '.env não encontrado (procurei em ' . $this->config->root . '/.env)';
+        $dicaEnv = $okEnv
+            ? 'Chave em uso veio de: ' . $fonteChave . '.'
+            : 'Crie o .env na raiz do app, ao lado da pasta app/.';
+        if ($corrida !== []) {
+            $okEnv = false;
+            $dicaEnv = 'OPENAI_API_KEY já existe no ambiente do servidor (' . implode(', ', $corrida) . ') '
+                . 'e o ambiente VENCE o arquivo: editar o .env não muda nada. '
+                . 'Remova a variável do painel do cPanel (MultiPHP INI / Environment Variables) e reinicie o PHP.';
+        }
+        if ($descartadas !== []) {
+            $okEnv = false;
+            $dicaEnv .= ' Linha ignorada por erro de escrita — linha ' . implode(', ', array_map(
+                static fn ($d) => (string) $d['linha'] . ' ("' . (string) $d['texto'] . '")',
+                array_slice($descartadas, 0, 3)
+            )) . '. O formato é UMA linha: NOME=valor, sem espaço antes do nome e sem ";" no fim.';
+        }
+        // "#" fora de aspas corta o valor em silêncio: o sintoma é "chave
+        // inválida" com a chave inteira na tela. Tem que ser dito.
+        foreach (\Smia\Support\EnvFile::$cortadas as $corte) {
+            if ($corte['chave'] !== 'OPENAI_API_KEY') {
+                continue;
+            }
+            $okEnv = false;
+            $dicaEnv .= ' O valor de OPENAI_API_KEY foi CORTADO na linha ' . (string) $corte['linha']
+                . ' porque tem " #" no meio (fora de aspas isso é comentário). Apague o que vem depois da chave '
+                . 'ou coloque o valor entre aspas retas.';
+        }
+        $linhas[] = [
+            'rotulo' => 'Arquivo .env',
+            'valor' => $valorEnv,
+            'ok' => $okEnv,
+            'dica' => $dicaEnv,
+        ];
+
         $chave = static function (string $rel): array {
             $caminho = \SMIA_APP . '/' . $rel;
             $mtime = is_file($caminho) ? (int) filemtime($caminho) : 0;
@@ -367,6 +477,111 @@ final class InstallerController
             'tokenDigitado' => '',
             'trilha' => $trilha,
         ]);
+    }
+
+    /**
+     * Testa a chave de IA contra o provedor com uma chamada mínima.
+     *
+     * Devolve [ok, detalhe, estado]. Nunca inclui a chave na mensagem — nem
+     * inteira, nem pedaço. Uma chamada de 1 token custa centavos de nada e
+     * responde a pergunta que mais trava: "a chave está boa?".
+     *
+     * @return array{0:bool,1:string,2:string} ok, detalhe, estado
+     */
+    private function testarChaveIa(string $chave): array
+    {
+        if (!function_exists('curl_init')) {
+            return [false, 'A extensão cURL do PHP não está ativa: sem ela a IA não chama o provedor. '
+                . 'Ative em Select PHP Version > Extensions.', 'sem teste'];
+        }
+        $url = trim($this->config->openaiEndpoint) !== ''
+            ? trim($this->config->openaiEndpoint)
+            : 'https://api.openai.com/v1/chat/completions';
+        $corpo = json_encode([
+            'model' => $this->config->openaiModel,
+            'max_completion_tokens' => 1,
+            'messages' => [['role' => 'user', 'content' => 'ok']],
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        $ch = curl_init($url);
+        $opcoes = [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $corpo,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $chave,
+                'Content-Type: application/json',
+            ],
+        ];
+        // Endpoint local em http:// (teste/proxy interno) não tem certificado
+        // para validar. Em https:// a verificação fica SEMPRE ligada.
+        if (str_starts_with(strtolower($url), 'http://')) {
+            $opcoes[CURLOPT_SSL_VERIFYPEER] = false;
+        }
+        curl_setopt_array($ch, $opcoes);
+        $resposta = curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $erroRede = (string) curl_error($ch);
+        curl_close($ch);
+
+        return self::interpretarTesteDeChave(
+            $resposta === false ? null : (string) $resposta,
+            $status,
+            $erroRede,
+            $this->config->openaiModel
+        );
+    }
+
+    /**
+     * Traduz o resultado da chamada de teste em [ok, mensagem, estado].
+     *
+     * Puro de propósito: a decisão "chave boa / chave ruim / modelo desligado /
+     * servidor sem CA" fica testável sem rede, e o texto que o usuário lê não
+     * depende do transporte.
+     *
+     * @return array{0:bool,1:string,2:string} ok, detalhe, estado
+     */
+    public static function interpretarTesteDeChave(?string $corpo, int $status, string $erroRede, string $modelo): array
+    {
+        if ($corpo === null) {
+            $ssl = stripos($erroRede, 'certificate') !== false || stripos($erroRede, 'SSL') !== false;
+            if ($ssl) {
+                return [false, 'O servidor não conseguiu validar o certificado do provedor: ' . $erroRede
+                    . '. Isso é configuração do PHP/cPanel (CA bundle), não da chave: peça ao suporte para apontar '
+                    . 'openssl.cafile para /etc/ssl/certs/ca-certificates.crt.', 'sem teste'];
+            }
+
+            return [false, 'Não foi possível conectar ao provedor: ' . $erroRede
+                . '. Verifique se o servidor tem saída para api.openai.com (firewall/porta 443).', 'sem teste'];
+        }
+
+        $dados = json_decode($corpo, true);
+        $doProvedor = is_array($dados) ? trim((string) ($dados['error']['message'] ?? '')) : '';
+
+        if ($status === 200) {
+            return [true, 'Chave válida e modelo ' . $modelo . ' disponível para este projeto.', 'aceita'];
+        }
+        if ($status === 401) {
+            return [false, 'O provedor recusou a chave (401). Confira se copiou o valor inteiro, '
+                . 'sem espaços nem aspas, e se a chave não foi apagada no painel.', 'recusada'];
+        }
+        if ($status === 403) {
+            return [false, 'A chave existe mas não tem permissão para este modelo/projeto (403). '
+                . 'Ajuste as permissões no painel do provedor.', 'recusada'];
+        }
+        if ($status === 404) {
+            return [false, 'Modelo não encontrado (404): '
+                . ($doProvedor !== '' ? $doProvedor : 'modelo desligado ou renomeado')
+                . ' Troque OPENAI_MODEL no .env.', 'recusada'];
+        }
+        if ($status === 429) {
+            return [false, 'Chave válida, mas sem cota/limite no momento (429). '
+                . 'Confira o limite de gasto do projeto.', 'recusada'];
+        }
+
+        return [false, 'Resposta inesperada do provedor (HTTP ' . $status . '): ' . $doProvedor, 'recusada'];
     }
 
     public function cancel(Request $req): Response

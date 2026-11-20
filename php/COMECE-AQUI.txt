@@ -58,9 +58,18 @@ ATUALIZANDO DE UMA VERSÃO ANTERIOR
   v1.13 corrige a confirmação que respondia 403: o formulário da revisão não
   enviava o token exigido pelo instalador.
 
+  v1.14 responde "minha chave de IA está certa?" dentro do próprio diagnóstico:
+  ele chama o provedor com 1 token e diz se a chave foi aceita, recusada, se o
+  modelo não existe, se falta cota ou se o servidor não tem certificado/rede.
+  A linha "Arquivo .env" mostra de onde veio o valor em uso e aponta os três
+  erros que mais quebram a chave: variável igual no painel do cPanel (o painel
+  vence o arquivo), linha com ":" no lugar de "=" e " #" no meio da chave
+  (corta o valor). Nada disso mostra a chave na tela.
+
 SE ALGO NÃO FECHAR
   Abra  .../socialai/install/diagnostico
   A seção "Última tentativa de instalação" mostra até onde a confirmação foi.
+  Procure a linha "Chave de IA": ela diz o desfecho real do teste da chave.
   Se a última etapa for recusa:* nada foi gravado; se for transacao_inicio
   sem transacao_ok, o banco recusou (veja o log com [SMIA][install]).
   Ele mostra versão do pacote, PHP, sessão, pasta data gravável, banco e se a
