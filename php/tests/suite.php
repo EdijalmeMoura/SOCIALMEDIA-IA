@@ -195,6 +195,85 @@ foreach (['https://h/a/../b', 'https://h/?x=1', 'ftp://h/p', 'https://u:p@h/p', 
 }
 assertSame('http em localhost é aceito', 'http://localhost:8080/p', \Smia\Installer\Installer::normalizePublicOrigin('http://localhost:8080/p'));
 
+echo "\n[6b] Token do instalador: não se perde no meio do caminho\n";
+check('a tela do instalador mostra a versão', str_contains(
+    $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']))->body,
+    'v' . \Smia\Support\Config::VERSAO
+), 'versão não aparece no rodapé');
+check('versão é a do pacote', version_compare(\Smia\Support\Config::VERSAO, '1.9', '>='), \Smia\Support\Config::VERSAO);
+// Defeito real: todo redirecionamento interno voltava para /install SEM o
+// token, então o próprio guarda de acesso devolvia 403 no meio do assistente.
+$semToken = $app->handle(requisicao('GET', '/install'));
+assertSame('/install sem token responde 403', 403, $semToken->status);
+check('403 explica o que fazer', str_contains($semToken->body, 'Token de instalação'));
+check('403 tem campo para colar o token', str_contains($semToken->body, 'name="access_token"'));
+check('403 não repete o token esperado', !str_contains($semToken->body, 'token-secreto-123'));
+
+// Erro de CSRF em /install/validate volta para o passo 1 — levando o token.
+$voltaComToken = $app->handle(requisicao('POST', '/install/validate', [
+    'csrf_token' => 'errado', 'access_token' => 'token-secreto-123',
+]));
+assertSame('CSRF inválido responde 400', 400, $voltaComToken->status);
+preg_match('/name="csrf_token" value="([^"]+)"/', $voltaComToken->body, $mCsrf);
+check('formulário devolvido mantém o token', str_contains($voltaComToken->body, 'value="token-secreto-123"'));
+
+// Rascunho inexistente: volta ao passo 1 COM token (antes ia sem e dava 403).
+$revisaoSumida = $app->handle(requisicao('GET', '/install/review', [], [
+    'draft' => 'naoexiste', 'access_token' => 'token-secreto-123',
+]));
+assertSame('revisão inexistente redireciona', 302, $revisaoSumida->status);
+$destinoSumida = (string) $revisaoSumida->header('Location');
+check('redirecionamento mantém o token', str_contains($destinoSumida, 'access_token=token-secreto-123'), $destinoSumida);
+$voltaDoRedirect = $app->handle(requisicao('GET', '/install', [], ['access_token' => 'token-secreto-123']));
+assertSame('e o destino abre (não 403)', 200, $voltaDoRedirect->status);
+
+// O formulário da tela de 403 autentica e leva ao destino pedido.
+$csrfParaAcesso = $app->session->csrfToken();
+$acessoErrado = $app->handle(requisicao('POST', '/install/access', [
+    'csrf_token' => $csrfParaAcesso, 'access_token' => 'chute-errado', 'next' => '/install',
+]));
+assertSame('token errado responde 403', 403, $acessoErrado->status);
+check('token errado avisa sem revelar o certo', str_contains($acessoErrado->body, 'Token incorreto'));
+check('token errado não aparece na tela', !str_contains($acessoErrado->body, 'chute-errado'));
+check('token certo não aparece na tela', !str_contains($acessoErrado->body, 'token-secreto-123'));
+
+$acessoCerto = $app->handle(requisicao('POST', '/install/access', [
+    'csrf_token' => $csrfParaAcesso, 'access_token' => 'token-secreto-123', 'next' => '/install/run',
+]));
+assertSame('token certo redireciona', 302, $acessoCerto->status);
+$destinoAcesso = (string) $acessoCerto->header('Location');
+check('vai para o destino pedido', str_contains($destinoAcesso, '/install/run'), $destinoAcesso);
+check('e leva o token', str_contains($destinoAcesso, 'token-secreto-123'), $destinoAcesso);
+
+// Nada de redirecionamento aberto: "next" só aceita rotas do instalador.
+$acessoFora = $app->handle(requisicao('POST', '/install/access', [
+    'csrf_token' => $csrfParaAcesso, 'access_token' => 'token-secreto-123', 'next' => 'https://malicioso.example/x',
+]));
+$destinoFora = (string) $acessoFora->header('Location');
+check('next externo é ignorado', !str_contains($destinoFora, 'malicioso'), $destinoFora);
+check('next externo cai em /install', str_contains($destinoFora, '/edijalmemoura/socialai/install?'), $destinoFora);
+
+// Quem veio de /install/run volta para /install/run: numa instância já criada
+// /install responde 410, e mandar a pessoa para lá seria beco sem saída.
+$runSemToken = $app->handle(requisicao('GET', '/install/run'));
+assertSame('/install/run sem token responde 403', 403, $runSemToken->status);
+check('403 guarda o destino de origem', str_contains($runSemToken->body, 'name="next" value="/install/run"'), 'next não aponta para /install/run');
+$acessoDoRun = $app->handle(requisicao('POST', '/install/access', [
+    'csrf_token' => $csrfParaAcesso, 'access_token' => 'token-secreto-123', 'next' => '/install/run',
+]));
+check(
+    'volta para /install/run com token',
+    str_ends_with((string) $acessoDoRun->header('Location'), '/install/run?access_token=token-secreto-123'),
+    (string) $acessoDoRun->header('Location')
+);
+
+// CSRF inválido no formulário de acesso não autentica.
+$acessoSemCsrf = $app->handle(requisicao('POST', '/install/access', [
+    'csrf_token' => 'errado', 'access_token' => 'token-secreto-123',
+]));
+assertSame('acesso sem CSRF responde 400', 400, $acessoSemCsrf->status);
+check('acesso sem CSRF não redireciona', $acessoSemCsrf->header('Location') === null);
+
 echo "\n[7] Instalação completa\n";
 $valido = $app->handle(requisicao('POST', '/install/validate', $base + [
     'agency_name' => 'Agência Pasta', 'admin_name' => 'Ana Souza', 'admin_email' => 'ana@pasta.example',

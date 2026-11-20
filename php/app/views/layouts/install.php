@@ -48,7 +48,7 @@ $passos = [
   </aside>
   <main class="install-main">
     <header class="install-top">
-      <span class="install-tag">INSTALAÇÃO PELO NAVEGADOR · PHP <?= e(PHP_VERSION) ?></span>
+      <span class="install-tag">INSTALAÇÃO PELO NAVEGADOR · PHP <?= e(PHP_VERSION) ?> · v<?= e(\Smia\Support\Config::VERSAO) ?></span>
       <span class="install-top-note"><?= e($topNote ?? 'Nada foi gravado ainda') ?></span>
     </header>
     <?= $content ?>

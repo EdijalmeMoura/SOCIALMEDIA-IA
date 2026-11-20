@@ -19,6 +19,12 @@ final class Config
      *
      * gpt-image-1 foi desligado em 23/10/2026; gpt-image-2 é o substituto.
      */
+    /**
+     * Versão deste pacote. Aparece no rodapé do instalador porque a pergunta
+     * mais comum ao dar erro é "o arquivo que subiu é o novo?".
+     */
+    public const VERSAO = '1.10';
+
     public const MODELO_TEXTO_PADRAO = 'gpt-6-luna';
     public const MODELO_IMAGEM_PADRAO = 'gpt-image-2';
 

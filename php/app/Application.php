@@ -166,6 +166,8 @@ final class Application
         $this->router->get('/', $authController->root(...));
 
         $this->router->get('/install', $installer->show(...));
+        // Porta de entrada do token (a tela de 403 tem o formulário).
+        $this->router->any('/install/access', $installer->access(...));
         $this->router->post('/install/validate', $installer->validate(...));
         $this->router->get('/install/review', $installer->review(...));
         // GET + POST: abrir /install/run no navegador não pode virar 405.

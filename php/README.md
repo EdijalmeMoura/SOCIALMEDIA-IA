@@ -184,9 +184,16 @@ O que ele garante:
 - **Só existe enquanto não há conta.** Com qualquer usuário no banco, todas as
   rotas do instalador respondem **410** com o resumo da instalação.
 - **Token obrigatório** quando `SOCIALMEDIA_INSTALL_TOKEN` está no `.env`:
-  sem token (ou com token errado) a resposta é **403**, com a explicação de onde
-  encontrar o valor. Sem a variável, a tela avisa em âmbar que qualquer pessoa
-  com a URL pode instalar.
+  sem token (ou com token errado) a resposta é **403** — e essa tela tem um
+  **campo para colar o token** (`POST /install/access`). Antes ela só mandava
+  procurar no `.env`, sem saída: quem abria o endereço sem o parâmetro ficava
+  preso. Sem a variável, a tela avisa em âmbar que qualquer pessoa com a URL
+  pode instalar.
+- **O token nunca se perde no caminho**: todo redirecionamento interno do
+  assistente carrega o `?access_token=` adiante. Era o que fazia a instalação
+  "voltar para o início" com 403 no meio do fluxo.
+- **Versão visível**: o rodapé do instalador mostra `v1.10` — serve para saber,
+  sem adivinhar, se o arquivo enviado ao servidor é o pacote novo.
 - **Nada gravado antes da confirmação.** O que fica em disco entre as telas é um
   rascunho JSON em `data/installer-drafts/` (0600, validade de 30 min). A senha
   já vai como hash — nunca em texto.
