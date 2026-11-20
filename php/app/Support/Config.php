@@ -38,6 +38,30 @@ final class Config
     ) {
     }
 
+    /**
+     * Carrega os arquivos de configuração na ordem que o produto promete:
+     * variável de ambiente do servidor > `.env` (raiz) > `installer.env`
+     * (gravado pelo instalador).
+     *
+     * Só define o que ainda não existe — por isso a precedência funciona sem
+     * precisar de mais nenhuma regra espalhada pelo código.
+     */
+    public static function loadFiles(string $raiz, string $dataDir): void
+    {
+        $arquivos = [];
+        foreach ([$raiz . '/.env', dirname($raiz) . '/.env'] as $candidato) {
+            if (is_file($candidato)) {
+                $arquivos[] = $candidato;
+                break;
+            }
+        }
+        $arquivos[] = $dataDir . '/installer.env';
+
+        foreach ($arquivos as $arquivo) {
+            EnvFile::load($arquivo);
+        }
+    }
+
     public static function fromEnvironment(): self
     {
         $root = defined('SMIA_ROOT') ? SMIA_ROOT : dirname(__DIR__, 2);

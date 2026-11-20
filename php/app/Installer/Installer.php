@@ -284,10 +284,13 @@ final class Installer
         $existentes = is_file($this->config->envFile)
             ? \Smia\Support\EnvFile::parse((string) file_get_contents($this->config->envFile))
             : [];
-        $valores = array_filter($existentes, static fn ($v) => $v !== '');
-        $valores['SECRET_KEY'] = $existentes['SECRET_KEY'] ?? bin2hex(random_bytes(32));
+        $valores = array_filter($existentes, static fn ($v) => trim((string) $v) !== '');
+        // A chave de sessão nasce aqui e nunca é substituída por vazio: trocar
+        // SECRET_KEY invalida sessões e URLs assinadas de mídia já emitidas.
+        $atual = trim((string) ($existentes['SECRET_KEY'] ?? ''));
+        $valores['SECRET_KEY'] = $atual !== '' ? $atual : bin2hex(random_bytes(32));
 
-        return array_filter($extras + $valores, static fn ($v) => $v !== '');
+        return array_filter($extras + $valores, static fn ($v) => trim((string) $v) !== '');
     }
 
     /** @param array<string,string> $valores */
@@ -330,19 +333,34 @@ final class Installer
             'status' => PHP_VERSION_ID >= 80000 ? 'ok' : 'fail',
             'detail' => PHP_VERSION . ' (mínimo 8.0)',
         ];
-        $extensoes = array_filter(['pdo_sqlite', 'mbstring', 'json', 'openssl'], 'extension_loaded');
-        $faltando = array_diff(['pdo_sqlite', 'mbstring', 'json', 'openssl'], $extensoes);
+        $exigidas = ['pdo_sqlite', 'mbstring', 'json', 'openssl'];
+        $faltando = array_values(array_diff($exigidas, array_filter($exigidas, 'extension_loaded')));
         $checks[] = [
             'label' => 'Extensões',
             'status' => $faltando === [] ? 'ok' : 'fail',
             'detail' => $faltando === [] ? 'pdo_sqlite, mbstring, json, openssl' : 'Faltando: ' . implode(', ', $faltando),
         ];
 
-        $gravavel = is_writable($this->config->dataDir) || (!is_dir($this->config->dataDir) && is_writable(dirname($this->config->dataDir)));
+        // "Gravável" de verdade: poder criar arquivo, não só ter o bit ligado.
+        $gravavel = is_dir($this->config->dataDir)
+            ? is_writable($this->config->dataDir)
+            : is_writable(dirname($this->config->dataDir));
+        $detalhePasta = $this->config->dataDir;
+        if ($gravavel) {
+            $teste = $this->config->dataDir . '/.escrita-' . bin2hex(random_bytes(4));
+            $gravavel = @file_put_contents($teste, 'ok') !== false;
+            if ($gravavel) {
+                @unlink($teste);
+            } else {
+                $detalhePasta .= ' (sem permissão de escrita)';
+            }
+        } else {
+            $detalhePasta .= ' (sem permissão de escrita)';
+        }
         $checks[] = [
             'label' => 'Pasta de dados',
             'status' => $gravavel ? 'ok' : 'fail',
-            'detail' => $this->config->dataDir . ($gravavel ? ' (gravável)' : ' (sem permissão de escrita)'),
+            'detail' => $gravavel ? $detalhePasta . ' (gravável)' : $detalhePasta,
         ];
 
         $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ($_SERVER['SERVER_PORT'] ?? '') === '443';

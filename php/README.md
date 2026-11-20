@@ -100,24 +100,70 @@ dependência para instalar.
    (versionado) manda tudo para `public/` e bloqueia `.env`, `data/`, `app/`
    e `tests/`, então nada fica exposto nem precisa ser configurado à mão.
 
-2. Copie `.env.example` para `.env` e ajuste:
+2. Copie `.env.example` para `.env` e ajuste **só o endereço e o token**
+   (o `SECRET_KEY` pode ficar vazio: o instalador gera e grava um):
 
    ```sh
    SOCIALMEDIA_BASE_PATH=/edijalmemoura/socialai
-   SECRET_KEY=<php -r "echo bin2hex(random_bytes(32));">
+   SOCIALMEDIA_PUBLIC_ORIGIN=https://projetoredesnordeste.com.br/edijalmemoura/socialai
    SOCIALMEDIA_INSTALL_TOKEN=<invente um token>
    COOKIE_SECURE=1
+   # SECRET_KEY fica vazio: o instalador gera e grava em data/installer.env
    ```
 
-3. Permissões: `chmod 600 .env` e `chmod 755 data` (o app cria
-   `data/socialmedia.sqlite` e `data/installer.env` com 0600).
+3. Permissões: `chmod 600 .env` e `chmod 755 data`.
 
 4. Abra `https://seu-dominio/edijalmemoura/socialai/` → redireciona para
    `/install`. Com token configurado, use
    `.../socialai/install?access_token=SEU_TOKEN`.
 
-5. Conclua o assistente. O instalador **se fecha** (`410`) e você entra por
-   `/login` com o e-mail e a senha cadastrados.
+5. Conclua o assistente: **ambiente → revisão → pronto**. Nada é gravado antes
+   da confirmação. Ao final ele cria o workspace, o proprietário, o banco, o
+   `data/installer.env` (0600) e **se fecha** (`410`); você entra por `/login`.
+
+### O instalador pelo navegador
+
+Três telas, nenhum comando e nenhum segredo digitado no navegador além da senha
+do proprietário.
+
+| Rota | Método | O que faz |
+|---|---|---|
+| `/install` | GET | verificações do ambiente + formulário do workspace |
+| `/install/validate` | POST | valida e grava um **rascunho criptografado** em `data/installer-drafts/` |
+| `/install/review` | GET | revisão com segredos **mascarados** (a senha nunca volta) |
+| `/install/run` | POST | confirma: cria empresa, proprietário e arquivo de segredos |
+| `/install/cancel` | POST | descarta o rascunho |
+
+O que ele garante:
+
+- **Só existe enquanto não há conta.** Com qualquer usuário no banco, todas as
+  rotas do instalador respondem **410** com o resumo da instalação.
+- **Token obrigatório** quando `SOCIALMEDIA_INSTALL_TOKEN` está no `.env`:
+  sem token (ou com token errado) a resposta é **403**, com a explicação de onde
+  encontrar o valor. Sem a variável, a tela avisa em âmbar que qualquer pessoa
+  com a URL pode instalar.
+- **Nada gravado antes da confirmação.** O que fica em disco entre as telas é um
+  rascunho JSON em `data/installer-drafts/` (0600, validade de 30 min). A senha
+  já vai como hash — nunca em texto.
+- **Senha**: mínimo de 8 caracteres, recusa as óbvias (`12345678`, `senha123`,
+  `instagram`…) e a senha igual ao e-mail. Hash com **Argon2id** (ou
+  `PASSWORD_DEFAULT` onde não houver).
+- **URL pública**: aceita subpasta (`https://dominio/edijalmemoura/socialai`),
+  exige HTTPS (HTTP só em `localhost`), recusa credenciais, query e `..`.
+  É essa URL que define o callback da Meta.
+- **Verificações de ambiente**: PHP ≥ 8.0, extensões `pdo_sqlite`, `mbstring`,
+  `json` e `openssl`, escrita **real** na pasta de dados (cria e apaga um
+  arquivo de teste), HTTPS e se há token configurado.
+- **Segredos no servidor**: o `data/installer.env` sai com `0600` e guarda o
+  `SECRET_KEY`, a origem pública e `COOKIE_SECURE`. Como a precedência é
+  **ambiente do servidor > `.env` > `installer.env`**, o `.env` continua
+  mandando — e reiniciar o servidor não perde nada.
+- Páginas do instalador saem com `Cache-Control: private, no-store` e
+  `X-Robots-Tag: noindex, nofollow`.
+
+> **Nunca troque o `SECRET_KEY` depois de instalar:** ele assina as URLs de
+> mídia enviadas à Meta. Já `META_TOKEN_ENCRYPTION_KEY`, se mudar, torna
+> ilegíveis os tokens das Páginas guardados no banco.
 
 ### Alternativa: sem rewrite na raiz
 

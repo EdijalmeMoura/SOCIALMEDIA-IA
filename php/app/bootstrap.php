@@ -26,15 +26,9 @@ foreach (['pdo_sqlite', 'mbstring', 'json'] as $extensao) {
 require __DIR__ . '/autoload.php';
 
 use Smia\Support\Config;
-use Smia\Support\EnvFile;
 
-// .env na raiz do projeto PHP (ou acima dele, para conviver com o pacote).
-$candidatos = [SMIA_ROOT . '/.env', dirname(SMIA_ROOT) . '/.env'];
-foreach ($candidatos as $arquivo) {
-    if (is_file($arquivo)) {
-        EnvFile::load($arquivo);
-        break;
-    }
-}
+// Configuração desta instalação: .env da raiz e, como fallback, o
+// installer.env que a instalação pelo navegador gravou em data/.
+Config::loadFiles(SMIA_ROOT, Config::env('SOCIALMEDIA_DATA') ?: SMIA_ROOT . '/data');
 
 return Config::fromEnvironment();

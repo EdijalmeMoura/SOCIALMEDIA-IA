@@ -228,6 +228,32 @@ check('arquivo com permissão 0600', (fileperms($config->envFile) & 0o777) === 0
 $segredos = EnvFile::parse($conteudoEnv);
 check('SECRET_KEY tem 64 hex', (bool) preg_match('/^[a-f0-9]{64}$/', (string) ($segredos['SECRET_KEY'] ?? '')));
 
+// O installer.env precisa valer no PRÓXIMO boot: sem isso, reiniciar o
+// servidor deixava a instância "não instalada" e sem SECRET_KEY (os dados
+// existiam, mas o app pedia instalação de novo e a mídia assinada quebrava).
+$envAntesDoBoot = getenv('SOCIALMEDIA_DATA');
+putenv('SOCIALMEDIA_DATA=' . $raiz);
+$_ENV['SOCIALMEDIA_DATA'] = $raiz;
+$configNoBoot = (static function () use ($raiz): Config {
+    \Smia\Support\Config::loadFiles($raiz, $raiz);
+
+    return Config::fromEnvironment();
+})();
+check('reiniciar o servidor relê o installer.env', $configNoBoot->secretKey === (string) ($segredos['SECRET_KEY'] ?? '—'), 'lido: ' . $configNoBoot->secretKey);
+check('boot relê a origem pública instalada', $configNoBoot->publicOrigin === 'https://projetoredesnordeste.com.br/edijalmemoura/socialai', $configNoBoot->publicOrigin);
+check('boot reconhece a instância como instalada', !\Smia\Installer\Installer::make($configNoBoot, new \Smia\Database\Database($configNoBoot->dbPath))->needed());
+check('variável de ambiente do servidor vence o installer.env', (static function () use ($raiz): bool {
+    putenv('SOCIALMEDIA_PUBLIC_ORIGIN=https://servidor.example');
+    $_ENV['SOCIALMEDIA_PUBLIC_ORIGIN'] = 'https://servidor.example';
+    \Smia\Support\Config::loadFiles($raiz, $raiz);
+    $vencedor = Config::fromEnvironment()->publicOrigin;
+    putenv('SOCIALMEDIA_PUBLIC_ORIGIN');
+    unset($_ENV['SOCIALMEDIA_PUBLIC_ORIGIN'], $_SERVER['SOCIALMEDIA_PUBLIC_ORIGIN']);
+
+    return $vencedor === 'https://servidor.example';
+})());
+putenv($envAntesDoBoot === false ? 'SOCIALMEDIA_DATA' : 'SOCIALMEDIA_DATA=' . $envAntesDoBoot);
+
 $db = new PDO('sqlite:' . $config->dbPath);
 assertSame('um usuário criado', 1, (int) $db->query('SELECT COUNT(*) FROM users')->fetchColumn());
 assertSame('um workspace criado', 1, (int) $db->query('SELECT COUNT(*) FROM companies')->fetchColumn());
