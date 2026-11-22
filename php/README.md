@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.18`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.18)** — todos os módulos,
+**Última versão: [`php-v1.19`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.19)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.18** | **Atualização pelo painel do dono** (GitHub ou zip enviado, com cópia automática e restauração) e **responsivo** corrigido no celular | [php-v1.18](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.18) | [`SOCIALMEDIA-IA-php-v1.18.zip`](downloads/SOCIALMEDIA-IA-php-v1.18.zip) |
+| **v1.19** | **Menu lateral**: cartão da agência virou troca de agência de verdade (só o dono alterna), avatar abre menu com **Sair da conta** e o menu rola/fecha certo no celular | [php-v1.19](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.19) | [`SOCIALMEDIA-IA-php-v1.19.zip`](downloads/SOCIALMEDIA-IA-php-v1.19.zip) |
+| v1.18 | **Atualização pelo painel do dono** (GitHub ou zip enviado, com cópia automática e restauração) e **responsivo** corrigido no celular | [php-v1.18](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.18) | [`SOCIALMEDIA-IA-php-v1.18.zip`](downloads/SOCIALMEDIA-IA-php-v1.18.zip) |
 | v1.17 | **Configurações em abas**: IA, agência, preferências do estúdio, minha conta e sistema (versões, permissões e backup do banco) | [php-v1.17](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.17) | [`SOCIALMEDIA-IA-php-v1.17.zip`](downloads/SOCIALMEDIA-IA-php-v1.17.zip) |
 | v1.16 | **Estúdio 2.0**: criação em etapas (rede, objetivo, tom, imagem), prancheta com enquadramento, guias, zoom e desfazer, legenda com contador e cópia | [php-v1.16](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16) | [`SOCIALMEDIA-IA-php-v1.16.zip`](downloads/SOCIALMEDIA-IA-php-v1.16.zip) |
 | v1.15 | **Área do dono, Usuários e Configurações**: a chave de IA entra pela tela e é testada no servidor | [php-v1.15](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15) | [`SOCIALMEDIA-IA-php-v1.15.zip`](downloads/SOCIALMEDIA-IA-php-v1.15.zip) |
@@ -76,6 +77,22 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.19 — O menu lateral passou a fazer o que aparentava fazer.**
+  O cartão da agência tinha um `›` que não abria nada. Agora ele **abre a lista
+  de agências** e troca de verdade: a escolha vale para todas as telas, porque
+  a agência ativa da sessão é lida no mesmo lugar em que o login acontece
+  (`Authenticator::user()`), e a página em que você estava é preservada.
+  O **isolamento continua fechado**: só o dono da instalação (`is_super`)
+  alterna; qualquer outra conta recebe a própria agência na lista e o servidor
+  recusa outro id — a lista de agências é a autorização, não o formulário. Cada
+  troca fica na trilha do dono (`company.switched`).
+  O **avatar** agora abre o menu da conta (nome, e-mail, agência, minha conta,
+  configurações e **Sair da conta**), e o `⏻` continua ao lado para quem
+  prefere um clique. No **celular**, o menu lateral virou gaveta de verdade:
+  rola quando o conteúdo passa da tela (antes os últimos itens, justamente
+  ajuda e conta, ficavam inalcançáveis), tem **✕** para fechar, véu atrás,
+  fecha com `Esc` e o corpo não rola por baixo. Em telas baixas, os respiros
+  diminuem em vez de esconder itens.
 - **v1.18 — Atualizar deixou de ser trabalho de FTP, e o celular deixou de quebrar.**
   Na **Área do dono** há uma seção **Atualização do sistema**: ela consulta a
   última release do pacote PHP. Se houver versão nova, mostra o que muda e

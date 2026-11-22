@@ -4040,6 +4040,93 @@ foreach (glob(SMIA_APP_ROOT . '/app/views/*/*.php') ?: [] as $view) {
 }
 check('nenhuma tabela sem rolagem horizontal', $semRolagem === [], implode(', ', $semRolagem));
 
+echo "\n[84] Menu lateral: troca de agência e saída pelo avatar\n";
+// Instância própria: o alvo é o seletor do menu, não outra tela.
+[$appAgencia, $configAgencia, $raizAgencia] = appNova([]);
+$appAgencia->installer->install([
+    'agency_name' => 'Harpia', 'admin_name' => 'Dono Harpia', 'admin_email' => 'dono@harpia.example',
+    'password_hash' => password_hash('HarpiaForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appAgencia->handle(requisicao('GET', '/login'));
+$appAgencia->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAgencia->session->csrfToken(), 'email' => 'dono@harpia.example', 'password' => 'HarpiaForte2026',
+]));
+$csrfAgencia = $appAgencia->session->csrfToken();
+$empresaAgencia = (int) $appAgencia->db->scalar('SELECT company_id FROM users WHERE email = ?', ['dono@harpia.example']);
+// O dono da instalação alterna; a agência de apoio e um usuário comum provam
+// que a lista é a autorização (não o id mandado no POST).
+$appAgencia->db->run("INSERT INTO companies (name, slug, is_active) VALUES ('Projeto Redes Nordeste', 'projeto-redes', 1)");
+$idRedes = (int) $appAgencia->db->scalar("SELECT id FROM companies WHERE slug = 'projeto-redes'");
+$appAgencia->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (?, 'Editora Redes', 'editora@redes.example', ?, 'editor', 0, 1)",
+    [$idRedes, password_hash('EditorForte2026', PASSWORD_DEFAULT)]
+);
+
+$menuDono = (string) $appAgencia->handle(requisicao('GET', '/dashboard'))->body;
+check('cartão da agência virou seletor (details)', str_contains($menuDono, 'workspace-picker'));
+check('seletor lista a outra agência com formulário', str_contains($menuDono, '/trocar-agencia'));
+check('seletor mostra o nome da agência em uso', str_contains($menuDono, 'Harpia'));
+check('o "voltar" da troca usa o caminho em que a pessoa está', str_contains($menuDono, 'name="voltar" value="/dashboard"'));
+check('cartão mantém a legenda "Workspace" ou o aviso de troca',
+    str_contains($menuDono, '>Workspace<') || str_contains($menuDono, 'Trocar agência'));
+check('avatar virou menu da conta', str_contains($menuDono, 'account-menu'));
+check('menu da conta tem a saída', str_contains($menuDono, 'Sair da conta'));
+check('botão de sair do rodapé continua existindo', str_contains($menuDono, 'user-logout'));
+check('menu da conta aponta para as configurações', str_contains($menuDono, '?aba=conta'));
+
+// POST de verdade: o id vem do formulário e a sessão muda. Este caso cobre o
+// TypeError que o `input('company_id', 0)` causava (padrão int em parâmetro
+// ?string) — o 500 aparecia bem depois, na tela seguinte.
+$troca = $appAgencia->handle(requisicao('POST', '/trocar-agencia', [
+    'csrf_token' => $csrfAgencia, 'company_id' => (string) $idRedes, 'voltar' => '/clients',
+]));
+assertSame('troca de agência redireciona (302)', 302, $troca->status);
+check('troca volta para a tela de origem', str_contains((string) ($troca->headers['Location'] ?? ''), '/clients'));
+check('sessão guarda a agência escolhida', (int) $appAgencia->session->get('company_id') === $idRedes);
+$dashTrocado = (string) $appAgencia->handle(requisicao('GET', '/dashboard'))->body;
+check('o menu passa a mostrar a agência nova', str_contains($dashTrocado, 'Projeto Redes Nordeste'));
+check('tela confirma a troca com mensagem', str_contains($dashTrocado, 'Agora você está em Projeto Redes Nordeste'));
+
+// Isolamento: quem não é dono não alterna, mesmo sabendo o id.
+$appAgencia->db->run('DELETE FROM admin_actions');
+$appAgencia->handle(requisicao('POST', '/logout', ['csrf_token' => $appAgencia->session->csrfToken()]));
+$appAgencia->handle(requisicao('GET', '/login'));
+$appAgencia->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAgencia->session->csrfToken(), 'email' => 'editora@redes.example', 'password' => 'EditorForte2026',
+]));
+$csrfEditora = $appAgencia->session->csrfToken();
+$tentativa = $appAgencia->handle(requisicao('POST', '/trocar-agencia', [
+    'csrf_token' => $csrfEditora, 'company_id' => (string) $empresaAgencia,
+]));
+assertSame('troca de outro dono é recusada com redirecionamento', 302, $tentativa->status);
+check('agência da editora não mudou', (int) $appAgencia->session->get('company_id', $idRedes) === $idRedes);
+$dashEditora = (string) $appAgencia->handle(requisicao('GET', '/dashboard'))->body;
+check('editora vê a recusa explicada', str_contains($dashEditora, 'não tem acesso a essa agência'));
+check('editora não recebe lista de agências', !str_contains($dashEditora, '/trocar-agencia'));
+check('editora vê o aviso de agência única', str_contains($dashEditora, 'uma agência só'));
+$acoesAgencia = $appAgencia->db->all("SELECT action, detail FROM admin_actions WHERE action = 'company.switched'");
+check('troca recusada não entra na trilha do dono', $acoesAgencia === []);
+
+// Saída pelo menu do avatar usa o mesmo POST /logout.
+$saiu = $appAgencia->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfEditora]));
+assertSame('sair pelo menu redireciona', 302, $saiu->status);
+check('depois de sair, o workspace manda para o login', str_contains((string) ($saiu->headers['Location'] ?? ''), '/login'));
+
+// CSS/JS do menu: o menu fixo precisa rolar e a gaveta precisa fechar.
+$cssMenu = (string) file_get_contents(SMIA_APP_ROOT . '/public/assets/app.css');
+$jsMenu = (string) file_get_contents(SMIA_APP_ROOT . '/public/assets/app.js');
+check('menu lateral rola quando o conteúdo passa da tela', str_contains($cssMenu, 'overflow-y: auto'));
+check('gaveta do celular tem largura limitada', str_contains($cssMenu, 'width: min(84vw, 300px)'));
+check('existe botão para fechar a gaveta', str_contains($cssMenu, '.sidebar-close'));
+check('existe véu atrás da gaveta', str_contains($cssMenu, '.sidebar-scrim'));
+check('corpo não rola com o menu aberto', str_contains($cssMenu, 'body.menu-aberto'));
+check('estilos do seletor de agência existem', str_contains($cssMenu, '.workspace-option'));
+check('estilos do menu do avatar existem', str_contains($cssMenu, '.account-panel'));
+check('JS fecha o menu no botão de fechar', str_contains($jsMenu, 'sidebarClose'));
+check('JS fecha o menu com Escape', str_contains($jsMenu, "'Escape'"));
+
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];
 $iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));

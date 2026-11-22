@@ -6,14 +6,57 @@
  * próprio formulário (input type=file dentro do form principal).
  */
 document.addEventListener('DOMContentLoaded', () => {
-  // Menu lateral no celular
+  // Menu lateral no celular (gaveta): abre, fecha, escurece o fundo e
+  // mantém aria-expanded em dia, para leitor de tela saber o estado.
   const menu = document.getElementById('mobileMenu');
   const sidebar = document.getElementById('sidebar');
-  menu?.addEventListener('click', () => sidebar?.classList.toggle('open'));
+  const scrim = document.getElementById('sidebarScrim');
+  const fecharMenu = document.getElementById('sidebarClose');
+
+  const definirMenu = (aberto) => {
+    if (!sidebar) return;
+    sidebar.classList.toggle('open', aberto);
+    scrim?.classList.toggle('is-on', aberto);
+    menu?.setAttribute('aria-expanded', aberto ? 'true' : 'false');
+    document.body.classList.toggle('menu-aberto', aberto);
+  };
+
+  menu?.addEventListener('click', () => definirMenu(!sidebar?.classList.contains('open')));
+  fecharMenu?.addEventListener('click', () => definirMenu(false));
+  scrim?.addEventListener('click', () => definirMenu(false));
   document.addEventListener('click', (evento) => {
     if (sidebar?.classList.contains('open') && !sidebar.contains(evento.target) && !menu?.contains(evento.target)) {
-      sidebar.classList.remove('open');
+      definirMenu(false);
     }
+  });
+
+  // Menus nativos (<details>): abrir um fecha o outro e clicar fora fecha.
+  // Sem JS eles continuam funcionando — isto é só conforto.
+  const menus = document.querySelectorAll('details[data-menu]');
+  menus.forEach((menu) => {
+    menu.addEventListener('toggle', () => {
+      if (!menu.open) return;
+      menus.forEach((outro) => { if (outro !== menu) outro.open = false; });
+    });
+  });
+  document.addEventListener('click', (evento) => {
+    menus.forEach((menu) => {
+      if (menu.open && !menu.contains(evento.target)) menu.open = false;
+    });
+  });
+  document.addEventListener('keydown', (evento) => {
+    if (evento.key !== 'Escape') return;
+    menus.forEach((menu) => { menu.open = false; });
+    definirMenu(false);
+  });
+
+  // Fecha a gaveta ao escolher uma agência ou um link: o navegador vai
+  // recarregar, mas até lá o menu aberto parece travado no celular.
+  sidebar?.querySelectorAll('.workspace-list form').forEach((form) => {
+    form.addEventListener('submit', () => definirMenu(false));
+  });
+  sidebar?.querySelectorAll('a.nav-link, a.brand').forEach((link) => {
+    link.addEventListener('click', () => definirMenu(false));
   });
 
   // Confirmação antes de ações destrutivas

@@ -23,9 +23,10 @@ function collect(dir, base = dir) {
     const full = join(dir, entry);
     if (entry === 'node_modules' || entry === 'data' || entry.startsWith('.')) continue;
     if (statSync(full).isDirectory()) out.push(...collect(full, base));
-    // Além do PHP, o CSS entra: os testes de responsivo leem o arquivo de
-    // verdade. Testar "o CSS tem a regra" exige o CSS estar lá.
-    else if (/\.(php|css)$/.test(entry)) out.push(relative(base, full));
+    // Além do PHP, CSS e JS entram: os testes de responsivo leem os arquivos
+    // de verdade. Testar "existe a regra" exige o arquivo estar lá — sem
+    // isso o `file_get_contents` falha e o teste passa a mentir.
+    else if (/\.(php|css|js)$/.test(entry)) out.push(relative(base, full));
   }
   return out;
 }

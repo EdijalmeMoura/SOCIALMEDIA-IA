@@ -86,14 +86,37 @@ final class Application
         }
     }
 
+    private ?View $viewCompartilhada = null;
+
+    /**
+     * Uma View por aplicação.
+     *
+     * Antes cada controller montava a sua. Agora a View carrega o resolvedor
+     * do seletor de agência do menu lateral, então precisa ser a mesma
+     * instância para todos — senão só as telas cujo controller recebeu o
+     * resolvedor mostrariam o menu completo.
+     */
     private function view(): View
     {
-        return new View(SMIA_APP . '/views', $this->config);
+        if ($this->viewCompartilhada === null) {
+            $this->viewCompartilhada = new View(SMIA_APP . '/views', $this->config);
+        }
+
+        return $this->viewCompartilhada;
     }
 
     private function routes(): void
     {
         $auth = new Authenticator($this->db, $this->session);
+
+        // O menu lateral precisa saber as agências em toda tela — e a lista é
+        // a mesma que autoriza a troca. Resolver aqui, na única View da
+        // aplicação, evita repetir a consulta em cada controller.
+        $this->view()->comSeletorDeAgencia(static fn (array $usuario): array => [
+            'agencias' => $auth->agenciasDisponiveis($usuario),
+            'ativa' => $auth->agenciaAtiva($usuario),
+        ]);
+
         $installer = new InstallerController($this->config, $this->installer, $this->session, $this->view());
         $authController = new AuthController(
             $this->config,
@@ -101,6 +124,7 @@ final class Application
             $this->session,
             $this->view(),
             fn (): bool => $this->installer->needed(),
+            new AdminRepository($this->db),
         );
         $dashboard = new DashboardController($this->config, $this->db, $auth, $this->session, $this->view());
 
@@ -201,6 +225,8 @@ final class Application
         $this->router->get('/login', $authController->loginForm(...));
         $this->router->post('/login', $authController->login(...));
         $this->router->post('/logout', $authController->logout(...));
+        // Troca de agência pelo menu lateral (dono da instalação alterna).
+        $this->router->post('/trocar-agencia', $authController->switchCompany(...));
 
         $this->router->get('/dashboard', $dashboard->index(...));
 
@@ -368,6 +394,9 @@ final class Application
     {
         $this->session->start();
         $GLOBALS['smia_base_path'] = $this->config->basePath;
+        // O menu lateral devolve a pessoa para a tela em que ela estava depois
+        // de trocar de agência; para isso a View precisa saber o caminho atual.
+        View::informarCaminho($req->path);
 
         try {
             $resposta = $this->router->dispatch($req);
