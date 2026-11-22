@@ -49,7 +49,25 @@ $voltarParaAgencia = (string) ($current_path ?? '/dashboard');
   <?php if (in_array(($active ?? null), ['meta', 'schedule'], true)): ?>
     <link rel="stylesheet" href="<?= e(smia_asset('/assets/meta.css')) ?>">
   <?php endif; ?>
+  <?php /* Tema antes do CSS pintar: sem isto, quem escolheu escuro vê um flash
+           branco a cada navegação. Fica inline de propósito — é uma linha. */ ?>
+  <script>
+    (function () {
+      try {
+        var escolhido = localStorage.getItem('smia-tema');
+        var sistema = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (escolhido === 'escuro' || (escolhido !== 'claro' && sistema)) {
+          document.documentElement.setAttribute('data-theme', 'escuro');
+        }
+      } catch (e) { /* navegador sem storage: fica no claro */ }
+    })();
+  </script>
   <script src="<?= e(smia_asset('/assets/app.js')) ?>" defer></script>
+  <?php /* Scripts de uma tela só (ex.: análise do perfil do cliente). O
+           controller/view pede pelo caminho; nada é carregado à toa. */ ?>
+  <?php foreach (($scripts_extras ?? []) as $scriptExtra): ?>
+    <script src="<?= e(smia_asset((string) $scriptExtra)) ?>" defer></script>
+  <?php endforeach; ?>
 </head>
 <body>
 <div class="app-shell">
@@ -183,6 +201,14 @@ $voltarParaAgencia = (string) ($current_path ?? '/dashboard');
       <div class="breadcrumb"><a href="<?= e($config->url('/dashboard')) ?>">Workspace</a><span>/</span><?= e($title ?? 'Visão geral') ?></div>
       <div class="top-actions">
         <span class="status-pill"><i></i> Instância local</span>
+        <?php /* Alternador de tema: o estado inicial vem antes da pintura (no
+                 <head>) para não piscar branco; este botão só troca e guarda. */ ?>
+        <button class="theme-toggle" id="themeToggle" type="button"
+                aria-label="Alternar modo escuro" aria-pressed="false"
+                title="Modo claro / escuro">
+          <span class="theme-icon theme-icon-sun" aria-hidden="true">☀</span>
+          <span class="theme-icon theme-icon-moon" aria-hidden="true">☾</span>
+        </button>
         <span class="top-avatar"><?= e($iniciais !== '' ? $iniciais : 'U') ?></span>
       </div>
     </header>

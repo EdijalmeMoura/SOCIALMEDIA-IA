@@ -154,8 +154,39 @@ const servidor = createServer((req, res) => {
       return;
     }
 
-    // Dois contratos no mesmo provedor: planejamento manda "planejamento",
-    // estúdio manda "assunto". A resposta segue o pedido recebido.
+    // Três contratos no mesmo provedor: planejamento manda "planejamento",
+    // estúdio manda "assunto", a análise de perfil manda "tarefa". A resposta
+    // segue o pedido recebido.
+    if (JSON.parse(dados.messages?.[1]?.content ?? '{}').tarefa) {
+      const perfil = JSON.parse(dados.messages?.[1]?.content ?? '{}');
+      const nome = String(perfil.nome_informado || 'Marca do Teste');
+      responder(200, {
+        id: 'chatcmpl-perfil',
+        object: 'chat.completion',
+        model: dados.model,
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              trade_name: nome,
+              segment: 'Cafeteria de bairro',
+              description: 'Cafeteria que torra o próprio café e atende o bairro. '
+                + 'Dedução a partir do perfil informado.',
+              products_services: 'Café coado, espresso, pães de fermentação natural',
+              audience: 'Moradores do bairro, 25 a 45 anos, que trabalham perto',
+              business_goals: 'Aumentar o movimento no meio da tarde; divulgar o clube de assinatura',
+              instagram: '@marcadoteste',
+              facebook: 'https://facebook.com/marcadoteste',
+            }),
+          },
+          finish_reason: 'stop',
+        }],
+        usage: { prompt_tokens: 300, completion_tokens: 200, total_tokens: 500 },
+      });
+      return;
+    }
+
     const pedido = JSON.parse(dados.messages?.[1]?.content ?? '{}');
     const conteudo = pedido.planejamento
       ? { posts: gerarPosts(pedido.planejamento) }

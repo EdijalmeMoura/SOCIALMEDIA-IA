@@ -51,10 +51,9 @@ final class SettingsController
         }
 
         $aba = (string) ($req->input('aba') ?? 'ia');
-        $abas = ['ia', 'agencia', 'preferencias', 'conta', 'sistema'];
 
         return $this->render('settings/index', $req, $this->dados($usuario, $aba) + [
-            'aba' => in_array($aba, $abas, true) ? $aba : 'ia',
+            'aba' => $this->abaValida($usuario, $aba) ? $aba : 'ia',
         ], 200, 'settings');
     }
 
@@ -394,8 +393,9 @@ final class SettingsController
         if ($usuario instanceof Response) {
             return $usuario;
         }
-        if (!$this->podeGerenciar($usuario)) {
-            return $this->voltar($req, 'error', 'Somente o proprietário ou um administrador baixa o backup.', 403, 'sistema');
+        // Backup do banco inteiro é da instalação, não da agência: só o dono.
+        if (!$this->ehDonoInstalacao($usuario)) {
+            return $this->voltar($req, 'error', 'O backup do banco inteiro é exclusivo do dono da instalação.', 403, 'sistema');
         }
         if (!$this->session->csrfValid($req->input('csrf_token'))) {
             return $this->voltar($req, 'error', 'A sessão do navegador venceu. Recarregue a página e envie de novo.', 302, 'sistema');
@@ -498,6 +498,7 @@ final class SettingsController
             'preferencias' => $this->settings->preferencias($empresa, StudioGenerator::REDES, StudioGenerator::TONS),
             'redes' => StudioGenerator::REDES,
             'tons' => StudioGenerator::TONS,
+            'abas_permitidas' => $this->abasPermitidas($usuario),
             'conta' => [
                 'nome' => (string) ($usuario['name'] ?? ''),
                 'email' => (string) ($usuario['email'] ?? ''),
@@ -521,6 +522,37 @@ final class SettingsController
             || in_array((string) ($usuario['role'] ?? ''), self::PAPEIS_ADMIN, true);
     }
 
+    /** Dono da instalação (`is_super`): a única conta que vê a aba Sistema. */
+    private function ehDonoInstalacao(array $usuario): bool
+    {
+        return (int) ($usuario['is_super'] ?? 0) === 1;
+    }
+
+    /**
+     * Abas que esta conta pode abrir.
+     *
+     * A aba Sistema mostra versões dos arquivos, caminhos do servidor e o backup
+     * do banco inteiro — é diagnóstico da instalação, não da agência. Por isso
+     * ela é exclusiva do dono (`is_super`), como a área `/admin`. As demais
+     * abas continuam visíveis para todos (regra da v1.17).
+     *
+     * @return array<int,string>
+     */
+    private function abasPermitidas(array $usuario): array
+    {
+        $abas = ['ia', 'agencia', 'preferencias', 'conta'];
+        if ($this->ehDonoInstalacao($usuario)) {
+            $abas[] = 'sistema';
+        }
+
+        return $abas;
+    }
+
+    private function abaValida(array $usuario, string $aba): bool
+    {
+        return in_array($aba, $this->abasPermitidas($usuario), true);
+    }
+
     /**
      * Volta para a aba certa com a mensagem.
      *
@@ -534,6 +566,9 @@ final class SettingsController
             // Render direto: o flash ainda não foi consumido, então a mensagem
             // aparece uma vez só, na própria página.
             $usuario = $this->auth->user();
+            if ($usuario !== null && !$this->abaValida($usuario, $aba)) {
+                $aba = 'ia';
+            }
 
             return $this->render('settings/index', $req, $this->dados($usuario ?? [], $aba) + [
                 'erro' => $mensagem,

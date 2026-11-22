@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.19`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.19)** — todos os módulos,
+**Última versão: [`php-v1.20`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.20)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.19** | **Menu lateral**: cartão da agência virou troca de agência de verdade (só o dono alterna), avatar abre menu com **Sair da conta** e o menu rola/fecha certo no celular | [php-v1.19](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.19) | [`SOCIALMEDIA-IA-php-v1.19.zip`](downloads/SOCIALMEDIA-IA-php-v1.19.zip) |
+| **v1.20** | **Modo escuro** com botão no topo, **aba Sistema só para o dono** e **análise do perfil social** no cadastro de cliente (a IA preenche os campos e você revisa) | [php-v1.20](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.20) | [`SOCIALMEDIA-IA-php-v1.20.zip`](downloads/SOCIALMEDIA-IA-php-v1.20.zip) |
+| v1.19 | **Menu lateral**: cartão da agência virou troca de agência de verdade (só o dono alterna), avatar abre menu com **Sair da conta** e o menu rola/fecha certo no celular | [php-v1.19](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.19) | [`SOCIALMEDIA-IA-php-v1.19.zip`](downloads/SOCIALMEDIA-IA-php-v1.19.zip) |
 | v1.18 | **Atualização pelo painel do dono** (GitHub ou zip enviado, com cópia automática e restauração) e **responsivo** corrigido no celular | [php-v1.18](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.18) | [`SOCIALMEDIA-IA-php-v1.18.zip`](downloads/SOCIALMEDIA-IA-php-v1.18.zip) |
 | v1.17 | **Configurações em abas**: IA, agência, preferências do estúdio, minha conta e sistema (versões, permissões e backup do banco) | [php-v1.17](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.17) | [`SOCIALMEDIA-IA-php-v1.17.zip`](downloads/SOCIALMEDIA-IA-php-v1.17.zip) |
 | v1.16 | **Estúdio 2.0**: criação em etapas (rede, objetivo, tom, imagem), prancheta com enquadramento, guias, zoom e desfazer, legenda com contador e cópia | [php-v1.16](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16) | [`SOCIALMEDIA-IA-php-v1.16.zip`](downloads/SOCIALMEDIA-IA-php-v1.16.zip) |
@@ -77,6 +78,26 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.20 — Três coisas que faltavam no dia a dia.**
+  **Modo escuro** com botão ao lado de “Instância local”, no topo: a escolha
+  fica no navegador, sem piscar branco ao navegar (o tema é aplicado antes do
+  CSS) e, para quem nunca escolheu, o sistema segue a preferência do aparelho.
+  O contraste foi medido, não estimado: texto pequeno tem pelo menos 4,5:1 e a
+  suíte confere os pares principais.
+  **A aba Sistema das Configurações virou exclusiva do dono da instalação**
+  (`is_super`). Ela mostra versões dos arquivos, caminhos do servidor e baixa o
+  banco inteiro — diagnóstico da instalação, não da agência. Proprietário de
+  agência continua vendo as outras quatro abas e o aviso de onde fica o
+  Sistema; a rota e o download do backup também recusam quem não é dono.
+  No **cadastro de cliente** há agora **rede social** e **endereço do perfil**,
+  com o botão **“Analisar perfil e preencher”**: a IA lê o que você informou
+  (nome da marca, perfil, o que já estava escrito) e propõe segmento, descrição,
+  produtos, público, objetivos e os @ dos perfis. É proposta, não cadastro —
+  nada é gravado até você salvar, e campo que você já preencheu não é
+  sobrescrito. Sem chave de IA, o botão devolve um esqueleto e **diz que é
+  esqueleto**. Importante: o sistema **não raspa** Instagram/Facebook (isso
+  exige a API da Meta, que é o módulo Meta) e a IA é instruída a não inventar
+  preço, endereço, prêmio ou número de seguidores.
 - **v1.19 — O menu lateral passou a fazer o que aparentava fazer.**
   O cartão da agência tinha um `›` que não abria nada. Agora ele **abre a lista
   de agências** e troca de verdade: a escolha vale para todas as telas, porque

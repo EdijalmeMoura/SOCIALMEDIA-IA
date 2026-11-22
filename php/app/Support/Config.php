@@ -23,7 +23,7 @@ final class Config
      * Versão deste pacote. Aparece no rodapé do instalador porque a pergunta
      * mais comum ao dar erro é "o arquivo que subiu é o novo?".
      */
-    public const VERSAO = '1.19';
+    public const VERSAO = '1.20';
 
     public const MODELO_TEXTO_PADRAO = 'gpt-6-luna';
     public const MODELO_IMAGEM_PADRAO = 'gpt-image-2';

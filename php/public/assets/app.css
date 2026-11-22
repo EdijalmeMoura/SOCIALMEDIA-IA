@@ -387,3 +387,294 @@ body.menu-aberto { overflow: hidden; }
   font-size: 10px; line-height: 1.5; color: #8d93a2;
   background: #fafbff; border: 1px dashed #e6e9f2; border-radius: 9px;
 }
+
+/* ==================================================================== */
+/* v1.20 — Modo escuro e botão de tema no topo                          */
+/*                                                                      */
+/* O botão fica ao lado de "Instância local". A escolha é do navegador   */
+/* (localStorage) e o <html data-theme="escuro"> é aplicado antes da      */
+/* pintura, para não piscar branco.                                       */
+/* As telas foram escritas com cores fixas; aqui cada superfície clara   */
+/* ganha equivalente escuro. Regra de leitura: fundo nunca compete com o */
+/* texto, e a cor da marca continua sendo o azul nos dois temas.         */
+/* ==================================================================== */
+
+.theme-toggle {
+  display: inline-grid; place-items: center;
+  width: 34px; height: 34px; flex: 0 0 auto;
+  border: 1px solid #e7e9f1; border-radius: 10px;
+  background: #fff; color: #5d6475;
+  cursor: pointer; line-height: 1;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.theme-toggle:hover { background: #f5f7ff; border-color: #d8ddf2; color: #3e56d7; }
+.theme-toggle:focus-visible { outline: 2px solid #455fe3; outline-offset: 2px; }
+.theme-icon { font-size: 14px; line-height: 1; }
+.theme-icon-sun { display: none; }
+.theme-icon-moon { display: inline; }
+html[data-theme="escuro"] .theme-icon-sun { display: inline; }
+html[data-theme="escuro"] .theme-icon-moon { display: none; }
+html[data-theme="escuro"] .theme-toggle { background: #1b2130; border-color: #2b3345; color: #cfd6e6; }
+html[data-theme="escuro"] .theme-toggle:hover { background: #232b3c; color: #fff; }
+
+/* --- Base ------------------------------------------------------------ */
+html[data-theme="escuro"] { color-scheme: dark; }
+html[data-theme="escuro"] body {
+  background: #10141d; color: #e3e7f0;
+}
+html[data-theme="escuro"] ::selection { background: #33407a; color: #fff; }
+
+/* --- Estrutura: menu, topo, conteúdo --------------------------------- */
+html[data-theme="escuro"] .sidebar {
+  background: #161b26; border-right-color: #252c3a;
+}
+html[data-theme="escuro"] .topbar {
+  background: #141924; border-bottom-color: #252c3a;
+}
+html[data-theme="escuro"] .main-area,
+html[data-theme="escuro"] .page-content,
+html[data-theme="escuro"] .app-shell { background: #10141d; }
+html[data-theme="escuro"] .breadcrumb, html[data-theme="escuro"] .breadcrumb a { color: #98a1b5; }
+html[data-theme="escuro"] .status-pill {
+  background: #161b26; border-color: #252c3a; color: #b9c2d4;
+}
+html[data-theme="escuro"] .mobile-menu { color: #cfd6e6; }
+html[data-theme="escuro"] .sidebar-scrim { background: rgba(4, 7, 12, .62); }
+html[data-theme="escuro"] .sidebar-close { background: #212836; color: #cfd6e6; }
+html[data-theme="escuro"] .sidebar-close:hover { background: #2a3243; }
+
+/* --- Marca e menu ---------------------------------------------------- */
+html[data-theme="escuro"] .brand-copy { color: #eef1f8; }
+html[data-theme="escuro"] .brand-copy small, html[data-theme="escuro"] .nav-label { color: #7b8496; }
+html[data-theme="escuro"] .nav-link { color: #b9c2d4; }
+html[data-theme="escuro"] .nav-link:hover { background: #1e2532; color: #eef1f8; }
+html[data-theme="escuro"] .nav-link.active { background: #23305c; color: #cfd8ff; }
+html[data-theme="escuro"] .nav-link.muted-link, html[data-theme="escuro"] .nav-link.is-soon { color: #6f7889; }
+html[data-theme="escuro"] .nav-count { background: #23305c; color: #cfd8ff; }
+html[data-theme="escuro"] .sidebar-help {
+  background: #1a2130; border-color: #262e3d; color: #b9c2d4;
+}
+html[data-theme="escuro"] .sidebar-help p, html[data-theme="escuro"] .sidebar-help a { color: #98a1b5; }
+html[data-theme="escuro"] .help-orb { background: #23305c; color: #cfd8ff; }
+
+/* --- Cartão da agência e menu da conta ------------------------------- */
+html[data-theme="escuro"] .workspace-switch {
+  background: #1a2130; border-color: #262e3d;
+}
+html[data-theme="escuro"] .workspace-summary:hover { background: #212a3a; }
+html[data-theme="escuro"] .workspace-text b { color: #eef1f8; }
+html[data-theme="escuro"] .workspace-text small { color: #8a93a5; }
+html[data-theme="escuro"] .workspace-list {
+  background: #161b26; border-color: #262e3d;
+}
+html[data-theme="escuro"] .workspace-option { color: #cfd6e6; }
+html[data-theme="escuro"] .workspace-option:hover { background: #232b3c; }
+html[data-theme="escuro"] .workspace-option.is-current { background: #23305c; }
+html[data-theme="escuro"] .workspace-option-mark { background: #23305c; color: #cfd8ff; }
+html[data-theme="escuro"] .workspace-only {
+  background: #141924; border-color: #262e3d; color: #8a93a5;
+}
+html[data-theme="escuro"] .workspace-icon,
+html[data-theme="escuro"] .avatar,
+html[data-theme="escuro"] .top-avatar { background: #23305c; color: #cfd8ff; }
+html[data-theme="escuro"] .user-card { border-top-color: #262e3d; }
+html[data-theme="escuro"] .user-info b { color: #eef1f8; }
+html[data-theme="escuro"] .user-info small { color: #8a93a5; }
+html[data-theme="escuro"] .account-panel {
+  background: #161b26; border-color: #2b3345;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .5);
+}
+html[data-theme="escuro"] .account-head { border-bottom-color: #262e3d; }
+html[data-theme="escuro"] .account-company { border-bottom-color: #262e3d; color: #b9c2d4; }
+html[data-theme="escuro"] .account-link { color: #cfd6e6; }
+html[data-theme="escuro"] .account-link:hover { background: #232b3c; color: #cfd8ff; }
+html[data-theme="escuro"] .icon-button { color: #98a1b5; }
+html[data-theme="escuro"] .icon-button:hover { background: #212836; color: #eef1f8; }
+
+/* --- Cartões, painéis e tabelas -------------------------------------- */
+html[data-theme="escuro"] .panel,
+html[data-theme="escuro"] .stat-card,
+html[data-theme="escuro"] .client-card,
+html[data-theme="escuro"] .form-section,
+html[data-theme="escuro"] .settings-facts > div,
+html[data-theme="escuro"] .logo-upload-card,
+html[data-theme="escuro"] .reference-card,
+html[data-theme="escuro"] .visual-card,
+html[data-theme="escuro"] .detail-logo,
+html[data-theme="escuro"] .components-doc,
+html[data-theme="escuro"] .admin-table-block,
+html[data-theme="escuro"] .update-steps > li,
+html[data-theme="escuro"] .settings-status-grid > div {
+  background: #161b26; border-color: #262e3d;
+  box-shadow: none;
+}
+html[data-theme="escuro"] .panel-head, html[data-theme="escuro"] .card-divider,
+html[data-theme="escuro"] .detail-tabs { border-color: #262e3d; }
+html[data-theme="escuro"] h1, html[data-theme="escuro"] h2, html[data-theme="escuro"] h3,
+html[data-theme="escuro"] .panel h2, html[data-theme="escuro"] .stat-card strong { color: #eef1f8; }
+html[data-theme="escuro"] p, html[data-theme="escuro"] .muted,
+html[data-theme="escuro"] .page-sub, html[data-theme="escuro"] .page-subtitle,
+html[data-theme="escuro"] .hint { color: #98a1b5; }
+html[data-theme="escuro"] .eyebrow { color: #8a93a5; }
+html[data-theme="escuro"] .welcome-banner {
+  background: linear-gradient(120deg, #1d2740, #182031); border-color: #262e3d;
+}
+html[data-theme="escuro"] .title-count, html[data-theme="escuro"] .step > span,
+html[data-theme="escuro"] .section-number, html[data-theme="escuro"] .active-tag,
+html[data-theme="escuro"] .badge-ok, html[data-theme="escuro"] .role-chip {
+  background: #212a3a; color: #b9c2d4; border-color: #2b3345;
+}
+html[data-theme="escuro"] .step:not(:last-child):after { background: #262e3d; }
+
+/* --- Formulários ----------------------------------------------------- */
+html[data-theme="escuro"] .field input,
+html[data-theme="escuro"] .field textarea,
+html[data-theme="escuro"] .field select,
+html[data-theme="escuro"] .inline-form input,
+html[data-theme="escuro"] .inline-form select,
+html[data-theme="escuro"] .member-form select,
+html[data-theme="escuro"] .input-wrap input,
+html[data-theme="escuro"] input[type="text"],
+html[data-theme="escuro"] input[type="email"],
+html[data-theme="escuro"] input[type="password"],
+html[data-theme="escuro"] input[type="number"],
+html[data-theme="escuro"] input[type="url"],
+html[data-theme="escuro"] input[type="search"],
+html[data-theme="escuro"] textarea,
+html[data-theme="escuro"] select {
+  background: #121722; border-color: #2b3345; color: #e3e7f0;
+}
+html[data-theme="escuro"] .field input::placeholder,
+html[data-theme="escuro"] .field textarea::placeholder,
+html[data-theme="escuro"] textarea::placeholder,
+html[data-theme="escuro"] input::placeholder { color: #8b93a4; }
+html[data-theme="escuro"] .field input:focus,
+html[data-theme="escuro"] .field textarea:focus,
+html[data-theme="escuro"] input:focus, html[data-theme="escuro"] textarea:focus,
+html[data-theme="escuro"] select:focus { border-color: #4d63d8; box-shadow: 0 0 0 3px rgba(77, 99, 216, .22); }
+
+/* --- Botões ---------------------------------------------------------- */
+html[data-theme="escuro"] .button.outline {
+  background: #161b26; border-color: #2b3345; color: #cfd6e6;
+}
+html[data-theme="escuro"] .button.outline:hover { background: #1e2532; color: #fff; }
+html[data-theme="escuro"] .button.danger-outline {
+  background: transparent; border-color: #55303a; color: #ff9a9a;
+}
+html[data-theme="escuro"] .button.danger-outline:hover { background: #2a1a1f; }
+html[data-theme="escuro"] .view-toggle, html[data-theme="escuro"] .period-selector,
+html[data-theme="escuro"] .list-toolbar, html[data-theme="escuro"] .reference-toolbar {
+  background: #161b26; border-color: #262e3d; color: #b9c2d4;
+}
+
+/* --- Avisos ---------------------------------------------------------- */
+html[data-theme="escuro"] .alert,
+html[data-theme="escuro"] .error-alert,
+html[data-theme="escuro"] .success-alert,
+html[data-theme="escuro"] .info-alert,
+html[data-theme="escuro"] .setup-alert,
+html[data-theme="escuro"] .offline-note,
+html[data-theme="escuro"] .update-notes,
+html[data-theme="escuro"] .permission-note {
+  background: #1a2130; border-color: #2b3345; color: #cfd6e6;
+}
+html[data-theme="escuro"] .error-alert { background: #2a1a1f; border-color: #55303a; color: #ffb4b4; }
+html[data-theme="escuro"] .success-alert { background: #12251f; border-color: #1e4a3c; color: #9ce3c8; }
+html[data-theme="escuro"] .info-alert { background: #182338; border-color: #2b3d5e; color: #b9cbe8; }
+
+/* --- Tabelas --------------------------------------------------------- */
+html[data-theme="escuro"] .data-table th { background: #1a2130; color: #98a1b5; }
+html[data-theme="escuro"] .data-table td { border-color: #262e3d; color: #cfd6e6; }
+html[data-theme="escuro"] .data-table tr:hover td { background: #1a2130; }
+html[data-theme="escuro"] .data-table tr.row-off { background: #141924; }
+html[data-theme="escuro"] .admin-table-block tr { border-color: #262e3d; }
+html[data-theme="escuro"] .settings-path, html[data-theme="escuro"] code,
+html[data-theme="escuro"] .update-steps code {
+  background: #131824; border-color: #262e3d; color: #b9c2d4;
+}
+html[data-theme="escuro"] .table-scroll::-webkit-scrollbar-thumb,
+html[data-theme="escuro"] .sidebar::-webkit-scrollbar-thumb { background: #2b3345; }
+
+/* --- Abas de Configurações e detalhe --------------------------------- */
+html[data-theme="escuro"] .settings-tabs, html[data-theme="escuro"] .detail-tabs { border-color: #262e3d; }
+html[data-theme="escuro"] .settings-tab, html[data-theme="escuro"] .detail-tabs a { color: #98a1b5; }
+html[data-theme="escuro"] .settings-tab:hover, html[data-theme="escuro"] .detail-tabs a:hover { color: #e3e7f0; }
+html[data-theme="escuro"] .settings-tab.is-active { background: #23305c; color: #cfd8ff; }
+html[data-theme="escuro"] .detail-tabs a.selected { color: #cfd8ff; }
+html[data-theme="escuro"] .detail-tabs a span { background: #212a3a; color: #b9c2d4; }
+
+/* --- Telas de entrada e instalador ----------------------------------- */
+html[data-theme="escuro"] .auth-body { background: #0d1119; }
+html[data-theme="escuro"] .visual-main, html[data-theme="escuro"] .visual-card {
+  background: #161b26; border-color: #262e3d;
+}
+html[data-theme="escuro"] .mock-lines i, html[data-theme="escuro"] .mock-sun,
+html[data-theme="escuro"] .install-status-grid > div > span { background: #212a3a; }
+html[data-theme="escuro"] .install-status-pill { background: #1a2130; color: #b9c2d4; }
+html[data-theme="escuro"] .password-toggle { background: #1a2130; color: #98a1b5; }
+
+/* --- Aprovações, feed, relatórios, agenda, Meta e estúdio ------------ */
+/* Essas telas têm CSS próprio; as superfícies mais comuns são cobertas aqui
+   para o conjunto ficar legível sem duplicar cada arquivo. */
+html[data-theme="escuro"] .approval-card,
+html[data-theme="escuro"] .feed-card,
+html[data-theme="escuro"] .report-card,
+html[data-theme="escuro"] .meta-card,
+html[data-theme="escuro"] .schedule-card,
+html[data-theme="escuro"] .studio-card,
+html[data-theme="escuro"] .planner-card,
+html[data-theme="escuro"] .portal-card,
+html[data-theme="escuro"] .day-column,
+html[data-theme="escuro"] .studio-panel,
+html[data-theme="escuro"] .planner-panel,
+html[data-theme="escuro"] .approvals-panel,
+html[data-theme="escuro"] .feed-panel,
+html[data-theme="escuro"] .reports-panel,
+html[data-theme="escuro"] .meta-panel,
+html[data-theme="escuro"] .schedule-panel {
+  background: #161b26; border-color: #262e3d; color: #e3e7f0;
+}
+html[data-theme="escuro"] .approval-card p,
+html[data-theme="escuro"] .feed-card p,
+html[data-theme="escuro"] .report-card p,
+html[data-theme="escuro"] .meta-card p { color: #98a1b5; }
+
+/* --- Modo escuro no celular ----------------------------------------- */
+@media (max-width: 760px) {
+  .theme-toggle { width: 32px; height: 32px; }
+  html[data-theme="escuro"] .account-panel { box-shadow: 0 10px 30px rgba(0, 0, 0, .55); }
+}
+
+/* --- Análise do perfil social no cadastro de cliente ----------------- */
+.profile-analyzer { border-color: #dfe4f7; background: #fbfcff; }
+html[data-theme="escuro"] .profile-analyzer { background: #151b27; border-color: #26304a; }
+.analyzer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.analyzer-spark { color: #455fe3; }
+.analyzer-status { font-size: 11px; color: #7c849a; }
+.analyzer-status.is-ok { color: #13795b; }
+.analyzer-status.is-erro { color: #c0392b; }
+html[data-theme="escuro"] .analyzer-status { color: #98a1b5; }
+html[data-theme="escuro"] .analyzer-status.is-ok { color: #7fd8b6; }
+html[data-theme="escuro"] .analyzer-status.is-erro { color: #ff9a9a; }
+.analyzer-filled { border-color: #23b98a !important; box-shadow: 0 0 0 3px rgba(35, 185, 138, .18) !important; }
+.button.is-busy { opacity: .7; cursor: progress; }
+@media (max-width: 760px) {
+  .analyzer-actions { align-items: flex-start; flex-direction: column; }
+  .analyzer-actions .button { width: 100%; justify-content: center; }
+}
+.settings-note {
+  margin: 0 0 14px; padding: 9px 12px;
+  font-size: 11px; color: #6b7387;
+  background: #f7f8fc; border: 1px solid #e9ebf3; border-radius: 8px;
+}
+html[data-theme="escuro"] .settings-note { background: #161b26; border-color: #262e3d; color: #98a1b5; }
+
+/* Sobras do modo escuro: superfícies pequenas que ficaram claras. */
+html[data-theme="escuro"] .art-tile { background: #212a3a; color: #cfd8ff; box-shadow: 0 10px 26px rgba(0, 0, 0, .4); }
+html[data-theme="escuro"] .client-logo {
+  background: #161b26; border-color: #262e3d; color: var(--client-color, #cfd8ff);
+}
+html[data-theme="escuro"] .client-card-cover { background: linear-gradient(135deg, #1b2230, #232c3f); }
+html[data-theme="escuro"] .components-hero > div { background: #161b26; border-color: #262e3d; }
+html[data-theme="escuro"] .notification i { border-color: #141924; }
+html[data-theme="escuro"] .admin-jump a { background: #1a2130; border-color: #2b3345; color: #cfd6e6; }

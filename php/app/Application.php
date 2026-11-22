@@ -12,6 +12,7 @@ use Smia\Approvals\ApprovalRepository;
 use Smia\Approvals\PortalRepository;
 use Smia\Auth\Authenticator;
 use Smia\Clients\ClientRepository;
+use Smia\Clients\ProfileAnalyzer;
 use Smia\Controllers\AdminController;
 use Smia\Controllers\ApprovalController;
 use Smia\Controllers\AuthController;
@@ -207,6 +208,12 @@ final class Application
             $this->session,
             $this->view(),
             $this->upload,
+            new ProfileAnalyzer(
+                $configIa->openaiKey !== '' ? $configIa->openaiKey : null,
+                $configIa->openaiModel,
+                60,
+                $configIa->openaiEndpoint,
+            ),
         );
 
         $this->router->get('/', $authController->root(...));
@@ -301,6 +308,9 @@ final class Application
         $this->router->get('/clients', $clientes->index(...));
         $this->router->get('/clients/new', $clientes->createForm(...));
         $this->router->post('/clients/new', $clientes->create(...));
+        // Análise do perfil social informado: devolve proposta de campos (JSON),
+        // não grava nada — quem salva é o POST do formulário.
+        $this->router->post('/clients/analisar', $clientes->analyzeProfile(...));
         // A imagem tem que ser servida pelo roteador: public/ não conhece
         // o id do cliente, e a checagem de dono fica no controller.
         $this->router->get('/clients/file', $clientes->file(...));

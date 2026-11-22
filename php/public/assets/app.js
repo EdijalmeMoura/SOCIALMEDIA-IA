@@ -59,6 +59,37 @@ document.addEventListener('DOMContentLoaded', () => {
     link.addEventListener('click', () => definirMenu(false));
   });
 
+  // Tema claro/escuro. O <html data-theme> já vem definido pelo script do
+  // <head>; aqui o botão troca, guarda a escolha e conta o estado ao leitor de
+  // tela via aria-pressed. A escolha vale para o navegador inteiro (localStorage),
+  // não por usuário — quem entra em outro computador vê o padrão do sistema.
+  const raiz = document.documentElement;
+  const alternador = document.getElementById('themeToggle');
+  const temaAtual = () => (raiz.getAttribute('data-theme') === 'escuro' ? 'escuro' : 'claro');
+  const pintarBotao = () => {
+    const escuro = temaAtual() === 'escuro';
+    alternador?.setAttribute('aria-pressed', escuro ? 'true' : 'false');
+    alternador?.setAttribute('aria-label', escuro ? 'Desativar modo escuro' : 'Ativar modo escuro');
+    alternador?.setAttribute('title', escuro ? 'Voltar ao modo claro' : 'Ativar modo escuro');
+  };
+  pintarBotao();
+  alternador?.addEventListener('click', () => {
+    const novo = temaAtual() === 'escuro' ? 'claro' : 'escuro';
+    if (novo === 'escuro') raiz.setAttribute('data-theme', 'escuro');
+    else raiz.removeAttribute('data-theme');
+    try { localStorage.setItem('smia-tema', novo); } catch (e) { /* sem storage, só nesta página */ }
+    pintarBotao();
+  });
+  // Quem nunca escolheu acompanha o sistema quando ele muda ao vivo.
+  window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', (evento) => {
+    let escolhido = null;
+    try { escolhido = localStorage.getItem('smia-tema'); } catch (e) { escolhido = null; }
+    if (escolhido) return;
+    if (evento.matches) raiz.setAttribute('data-theme', 'escuro');
+    else raiz.removeAttribute('data-theme');
+    pintarBotao();
+  });
+
   // Confirmação antes de ações destrutivas
   document.querySelectorAll('form[data-confirm]').forEach((form) => {
     form.addEventListener('submit', (evento) => {

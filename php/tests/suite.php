@@ -3760,10 +3760,14 @@ $appCfg->handle(requisicao('POST', '/login', [
     'csrf_token' => $appCfg->session->csrfToken(), 'email' => 'leitora@cfg.example', 'password' => 'LeitorForte2026',
 ]));
 $csrfLeitor = $appCfg->session->csrfToken();
-foreach (['ia', 'agencia', 'preferencias', 'conta', 'sistema'] as $aba) {
+// Todos veem as abas da agência; Sistema é do dono da instalação (v1.20).
+foreach (['ia', 'agencia', 'preferencias', 'conta'] as $aba) {
     $telaLeitor = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => $aba]));
     assertSame('leitor abre a aba ' . $aba, 200, $telaLeitor->status);
 }
+$telaLeitorSistemaCfg = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => 'sistema']));
+assertSame('leitor pede a aba sistema e recebe a de IA', 200, $telaLeitorSistemaCfg->status);
+check('leitor não vê a aba sistema na lista', !str_contains($telaLeitorSistemaCfg->body, '?aba=sistema'));
 $telaLeitorAg = $appCfg->handle(requisicao('GET', '/settings', [], ['aba' => 'agencia']));
 check('leitor vê os campos bloqueados', substr_count($telaLeitorAg->body, 'readonly disabled') >= 5);
 check('leitor vê o aviso de permissão', str_contains($telaLeitorAg->body, 'só o proprietário ou um administrador altera'));
@@ -4126,6 +4130,232 @@ check('estilos do seletor de agência existem', str_contains($cssMenu, '.workspa
 check('estilos do menu do avatar existem', str_contains($cssMenu, '.account-panel'));
 check('JS fecha o menu no botão de fechar', str_contains($jsMenu, 'sidebarClose'));
 check('JS fecha o menu com Escape', str_contains($jsMenu, "'Escape'"));
+
+echo "\n[85] Modo escuro: botão no topo, escolha guardada e CSS de verdade\n";
+$cssTema = (string) file_get_contents(SMIA_APP_ROOT . '/public/assets/app.css');
+$jsTema = (string) file_get_contents(SMIA_APP_ROOT . '/public/assets/app.js');
+$layoutTema = (string) file_get_contents(SMIA_APP_ROOT . '/app/views/layouts/app.php');
+check('botão de tema existe no topo', str_contains($layoutTema, 'id="themeToggle"') && str_contains($layoutTema, 'theme-toggle'));
+check('botão diz o estado ao leitor de tela', str_contains($layoutTema, 'aria-pressed="false"'));
+check('tema é aplicado antes do CSS (sem piscar branco)', str_contains($layoutTema, "localStorage.getItem('smia-tema')"));
+check('sem escolha, segue o sistema', str_contains($layoutTema, 'prefers-color-scheme: dark'));
+check('JS troca e guarda a escolha', str_contains($jsTema, "localStorage.setItem('smia-tema'") && str_contains($jsTema, 'themeToggle'));
+check('JS acompanha o sistema quando ninguém escolheu', str_contains($jsTema, "addEventListener?.('change'"));
+check('CSS tem o tema escuro', str_contains($cssTema, 'html[data-theme="escuro"]'));
+foreach ([
+    'menu lateral' => 'html[data-theme="escuro"] .sidebar {',
+    'topo' => 'html[data-theme="escuro"] .topbar {',
+    'painéis' => 'html[data-theme="escuro"] .panel,',
+    'campos' => 'html[data-theme="escuro"] .field input,',
+    'tabelas' => 'html[data-theme="escuro"] .data-table th',
+    'menu da conta' => 'html[data-theme="escuro"] .account-panel {',
+    'abas' => 'html[data-theme="escuro"] .settings-tab.is-active',
+    'avisos' => 'html[data-theme="escuro"] .error-alert {',
+] as $area => $trecho) {
+    check('modo escuro cobre ' . $area, str_contains($cssTema, $trecho));
+}
+check('modo escuro também nas outras telas', str_contains($cssTema, 'html[data-theme="escuro"] .approval-card'));
+// Contraste do tema escuro: texto pequeno precisa de 4.5:1 (WCAG AA). Este
+// teste existe porque "parece legível" no meu monitor não é medida.
+$luminancia = static function (string $hex): float {
+    $hex = ltrim($hex, '#');
+    if (strlen($hex) === 3) {
+        $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+    }
+    $canais = [];
+    foreach ([0, 2, 4] as $i) {
+        $c = ((int) hexdec(substr($hex, $i, 2))) / 255;
+        $canais[] = $c <= 0.03928 ? $c / 12.92 : (($c + 0.055) / 1.055) ** 2.4;
+    }
+
+    return 0.2126 * $canais[0] + 0.7152 * $canais[1] + 0.0722 * $canais[2];
+};
+$contraste = static function (string $frente, string $fundo) use ($luminancia): float {
+    $a = $luminancia($frente);
+    $b = $luminancia($fundo);
+    [$maior, $menor] = $a > $b ? [$a, $b] : [$b, $a];
+
+    return ($maior + 0.05) / ($menor + 0.05);
+};
+$paresContraste = [
+    'texto da página' => ['#e3e7f0', '#10141d'],
+    'texto em painel' => ['#eef1f8', '#161b26'],
+    'texto secundário' => ['#98a1b5', '#161b26'],
+    'item de menu' => ['#b9c2d4', '#161b26'],
+    'item de menu ativo' => ['#cfd8ff', '#23305c'],
+    'placeholder de campo' => ['#8b93a4', '#121722'],
+    'texto digitado no campo' => ['#e3e7f0', '#121722'],
+    'alerta de erro' => ['#ffb4b4', '#2a1a1f'],
+    'alerta de sucesso' => ['#9ce3c8', '#12251f'],
+    'cabeçalho de tabela' => ['#98a1b5', '#1a2130'],
+    'botão primário' => ['#ffffff', '#455fe3'],
+];
+foreach ($paresContraste as $nomePar => [$frente, $fundo]) {
+    $taxa = $contraste($frente, $fundo);
+    check('contraste AA em ' . $nomePar . ' (' . number_format($taxa, 2, ',', '.') . ':1)', $taxa >= 4.5);
+}
+
+[$appTema, $_configTema] = appNova([]);
+$appTema->installer->install([
+    'agency_name' => 'Agência Tema', 'admin_name' => 'Dono Tema', 'admin_email' => 'dono@tema.example',
+    'password_hash' => password_hash('TemaForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appTema->handle(requisicao('GET', '/login'));
+$appTema->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appTema->session->csrfToken(), 'email' => 'dono@tema.example', 'password' => 'TemaForte2026',
+]));
+$htmlDono = (string) $appTema->handle(requisicao('GET', '/dashboard'))->body;
+check('botão de tema é renderizado de verdade', str_contains($htmlDono, 'id="themeToggle"') && str_contains($htmlDono, 'theme-icon-moon'));
+
+echo "\n[86] Configurações: aba Sistema só para o dono da instalação\n";
+// Instância própria: a seção 78 acabou de trocar a senha do leitor, e um teste
+// de aba não pode depender de sessão de outra seção.
+[$appAba, $_configAba] = appNova([]);
+$appAba->installer->install([
+    'agency_name' => 'Agência Aba', 'admin_name' => 'Dono Aba', 'admin_email' => 'dono@aba.example',
+    'password_hash' => password_hash('AbaForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appAba->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (1, 'Proprietária Aba', 'dona@aba.example', ?, 'owner', 0, 1)",
+    [password_hash('DonaForte2026', PASSWORD_DEFAULT)]
+);
+$appAba->handle(requisicao('GET', '/login'));
+$appAba->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAba->session->csrfToken(), 'email' => 'dono@aba.example', 'password' => 'AbaForte2026',
+]));
+$csrfAbaDono = $appAba->session->csrfToken();
+$telaDonoAba = $appAba->handle(requisicao('GET', '/settings'));
+check('dono da instalação vê a aba Sistema', str_contains($telaDonoAba->body, '?aba=sistema'));
+check('dono tem as cinco abas', substr_count($telaDonoAba->body, 'class="settings-tab ') === 5);
+
+$appAba->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfAbaDono]));
+$appAba->handle(requisicao('GET', '/login'));
+$appAba->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appAba->session->csrfToken(), 'email' => 'dona@aba.example', 'password' => 'DonaForte2026',
+]));
+$csrfAbaProp = $appAba->session->csrfToken();
+$telaPropAba = $appAba->handle(requisicao('GET', '/settings'));
+assertSame('proprietária de agência ainda abre Configurações', 200, $telaPropAba->status);
+check('proprietária de agência NÃO vê a aba Sistema', !str_contains($telaPropAba->body, '?aba=sistema'));
+check('as outras quatro abas continuam', substr_count($telaPropAba->body, 'class="settings-tab ') === 4);
+$avisoSistemaAba = $appAba->handle(requisicao('GET', '/settings', [], ['aba' => 'ia']));
+check('proprietária vê nota de que Sistema é do dono', str_contains($avisoSistemaAba->body, 'exclusiva do dono'));
+$abrirSistemaAba = $appAba->handle(requisicao('GET', '/settings', [], ['aba' => 'sistema']));
+assertSame('pedir aba sistema sem ser dono cai na de IA', 200, $abrirSistemaAba->status);
+check('conteúdo de sistema não vaza', !str_contains($abrirSistemaAba->body, 'VACUUM INTO') && !str_contains($abrirSistemaAba->body, 'socialmedia.sqlite'));
+check('sem sistema, a tela de IA aparece', str_contains($abrirSistemaAba->body, 'Chave da OpenAI'));
+assertSame('download de backup é recusado para proprietária de agência', 403,
+    $appAba->handle(requisicao('POST', '/settings/sistema/backup', ['csrf_token' => $csrfAbaProp]))->status);
+check('nenhum backup foi baixado', (int) $appAba->db->scalar(
+    "SELECT COUNT(*) FROM admin_actions WHERE action = 'settings.backup_downloaded'") === 0);
+
+echo "\n[87] Cadastro de cliente: rede social e análise que preenche os campos\n";
+[$appCli, $configCli] = appNova([]);
+$appCli->installer->install([
+    'agency_name' => 'Agência Cli', 'admin_name' => 'Dono Cli', 'admin_email' => 'dono@cli.example',
+    'password_hash' => password_hash('CliForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appCli->handle(requisicao('GET', '/login'));
+$appCli->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appCli->session->csrfToken(), 'email' => 'dono@cli.example', 'password' => 'CliForte2026',
+]));
+$csrfCli = $appCli->session->csrfToken();
+
+$formCli = $appCli->handle(requisicao('GET', '/clients/new'));
+assertSame('cadastro de cliente responde 200', 200, $formCli->status);
+check('formulário tem o campo de rede social', str_contains($formCli->body, 'name="social_network"'));
+check('formulário tem o endereço do perfil', str_contains($formCli->body, 'name="profile_url"'));
+check('formulário tem o botão de análise', str_contains($formCli->body, 'id="analyzeProfile"'));
+check('botão de análise aponta para a rota', str_contains($formCli->body, '/clients/analisar'));
+check('formulário carrega o JS da análise', str_contains($formCli->body, '/assets/clients.js'));
+check('aviso de que a análise não raspa a rede', str_contains($formCli->body, 'Sem raspagem'));
+
+// Sem chave de IA: esqueleto local, e a resposta diz isso (não finge análise).
+$localCli = $appCli->handle(requisicao('POST', '/clients/analisar', [
+    'csrf_token' => $csrfCli, 'social_network' => 'instagram', 'profile_url' => '@cafedoteste',
+    'company_name' => 'Café do Teste', 'notes' => '',
+]));
+assertSame('análise sem chave responde 200', 200, $localCli->status);
+$dadosLocal = json_decode($localCli->body, true);
+assertSame('sem chave, o modo é local', 'local', $dadosLocal['modo'] ?? '');
+check('esqueleto preenche o nome comercial', ($dadosLocal['campos']['trade_name'] ?? '') === 'Café do Teste');
+check('esqueleto completa o Instagram a partir do @', ($dadosLocal['campos']['instagram'] ?? '') === '@cafedoteste');
+check('esqueleto avisa que não é IA', str_contains((string) ($dadosLocal['aviso'] ?? ''), 'Sem chave de IA'));
+
+// Sem rede nem perfil não há o que analisar.
+assertSame('análise sem dados é recusada', 422, $appCli->handle(requisicao('POST', '/clients/analisar', [
+    'csrf_token' => $csrfCli, 'social_network' => '', 'profile_url' => '',
+]))->status);
+assertSame('análise sem CSRF é recusada', 419, $appCli->handle(requisicao('POST', '/clients/analisar', [
+    'social_network' => 'instagram', 'profile_url' => '@x',
+]))->status);
+
+// Gravado pelo formulário: a rede e o endereço entram no perfil.
+$criadoCli = $appCli->handle(requisicao('POST', '/clients/new', [
+    'csrf_token' => $csrfCli, 'company_name' => 'Café do Teste', 'segment' => 'Cafeteria',
+    'social_network' => 'instagram', 'profile_url' => '@cafedoteste',
+]));
+assertSame('cadastro com rede social é criado', 302, $criadoCli->status);
+$clienteCli = $appCli->db->one('SELECT * FROM clients WHERE company_name = ?', ['Café do Teste']);
+check('rede social gravada', ($clienteCli['social_network'] ?? '') === 'instagram');
+check('endereço do perfil gravado', ($clienteCli['profile_url'] ?? '') === '@cafedoteste');
+$detalheCli = $appCli->handle(requisicao('GET', '/clients/' . $clienteCli['id']));
+check('perfil do cliente mostra a rede', str_contains($detalheCli->body, 'Rede social principal'));
+check('perfil do cliente mantém o botão de análise', str_contains($detalheCli->body, 'id="analyzeProfile"'));
+
+// Caminho com IA de verdade: provedor falso do runner.
+$arquivoProvedorCli = __DIR__ . '/.provedor-ia';
+$endpointCli = is_file($arquivoProvedorCli) ? trim((string) file_get_contents($arquivoProvedorCli)) : '';
+if ($endpointCli === '') {
+    check('análise com IA tem provedor simulado', false, 'tests/.provedor-ia não foi escrito');
+} else {
+    $analisador = new \Smia\Clients\ProfileAnalyzer('chave-teste', 'gpt-6-luna', 20, $endpointCli);
+    $comIa = $analisador->analisar(['social_network' => 'instagram', 'profile_url' => '@marcadoteste', 'company_name' => 'Marca do Teste']);
+    check('análise com IA devolve modo ia', ($comIa['modo'] ?? '') === 'ia');
+    check('IA devolve o segmento', ($comIa['campos']['segment'] ?? '') === 'Cafeteria de bairro');
+    check('IA devolve descrição', str_contains((string) ($comIa['campos']['description'] ?? ''), 'Cafeteria'));
+    check('IA devolve público', str_contains((string) ($comIa['campos']['audience'] ?? ''), 'bairro'));
+    check('Instagram normalizado com @', ($comIa['campos']['instagram'] ?? '') === '@marcadoteste');
+    check('rede desconhecida é descartada', (new \Smia\Clients\ProfileAnalyzer(null))->normalizarRede('orkut') === '');
+    // Chave recusada pelo provedor: erro tratado, sem quebrar a tela.
+    $recusado = new \Smia\Clients\ProfileAnalyzer('chave-teste', 'gpt-6-luna', 20, $endpointCli . '?cenario=401');
+    try {
+        $recusado->analisar(['social_network' => 'instagram', 'profile_url' => '@x', 'company_name' => 'X']);
+        check('chave recusada vira mensagem clara', false, 'não lançou erro');
+    } catch (\Smia\Studio\StudioError $erro) {
+        check('chave recusada vira mensagem clara', str_contains($erro->getMessage(), 'recusada'), $erro->getMessage());
+    }
+    // Resposta fora do formato: erro tratado.
+    $quebrado = new \Smia\Clients\ProfileAnalyzer('chave-teste', 'gpt-6-luna', 20, $endpointCli . '?cenario=invalido');
+    try {
+        $quebrado->analisar(['social_network' => 'instagram', 'profile_url' => '@x', 'company_name' => 'X']);
+        check('resposta inválida vira erro tratado', false, 'não lançou erro');
+    } catch (\Smia\Studio\StudioError $erro) {
+        check('resposta inválida vira erro tratado', str_contains($erro->getMessage(), 'formato inesperado'), $erro->getMessage());
+    }
+}
+
+// Leitor não analisa (não gasta IA nem escreve nada).
+$appCli->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (1, 'Leitor Cli', 'leitor@cli.example', ?, 'viewer', 0, 1)",
+    [password_hash('LeitorForte2026', PASSWORD_DEFAULT)]
+);
+$appCli->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfCli]));
+$appCli->handle(requisicao('GET', '/login'));
+$appCli->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appCli->session->csrfToken(), 'email' => 'leitor@cli.example', 'password' => 'LeitorForte2026',
+]));
+$csrfLeitorCli = $appCli->session->csrfToken();
+assertSame('leitor não dispara análise', 403, $appCli->handle(requisicao('POST', '/clients/analisar', [
+    'csrf_token' => $csrfLeitorCli, 'social_network' => 'instagram', 'profile_url' => '@x',
+]))->status);
+check('a análise fica auditada', (int) $appCli->db->scalar(
+    "SELECT COUNT(*) FROM audit_log WHERE action = 'client.profile_analyzed'") >= 1);
 
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];

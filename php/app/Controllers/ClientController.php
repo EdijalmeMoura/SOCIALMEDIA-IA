@@ -6,11 +6,13 @@ namespace Smia\Controllers;
 
 use Smia\Auth\Authenticator;
 use Smia\Clients\ClientRepository;
+use Smia\Clients\ProfileAnalyzer;
 use Smia\Http\Request;
 use Smia\Http\Response;
 use Smia\Support\Config;
 use Smia\Support\Modules;
 use Smia\Support\Session;
+use Smia\Studio\StudioError;
 use Smia\Support\Upload;
 use Smia\Support\View;
 
@@ -32,6 +34,7 @@ final class ClientController
         private readonly Session $session,
         private readonly View $view,
         private readonly Upload $upload,
+        private readonly ProfileAnalyzer $analisador,
     ) {
     }
 
@@ -65,7 +68,9 @@ final class ClientController
             'modo' => 'novo',
             'cliente' => [],
             'erros' => [],
-        ]);
+            'redes' => ProfileAnalyzer::REDES,
+            'analise' => null,
+        ] + ['scripts_extras' => ['/assets/clients.js']]);
     }
 
     public function create(Request $req): Response
@@ -82,7 +87,9 @@ final class ClientController
                 'modo' => 'novo',
                 'cliente' => $req->post,
                 'erros' => ['Sessão expirada. Revise os dados e envie novamente.'],
-            ], 400);
+                'redes' => ProfileAnalyzer::REDES,
+                'analise' => null,
+            ] + ['scripts_extras' => ['/assets/clients.js']], 400);
         }
 
         $dados = ClientRepository::normalize($req->post);
@@ -92,7 +99,9 @@ final class ClientController
                 'modo' => 'novo',
                 'cliente' => $dados,
                 'erros' => $erros,
-            ], 422);
+                'redes' => ProfileAnalyzer::REDES,
+                'analise' => null,
+            ] + ['scripts_extras' => ['/assets/clients.js']], 422);
         }
 
         $clientId = $this->clients->create((int) $usuario['company_id'], $dados);
@@ -130,7 +139,8 @@ final class ClientController
             'pode_excluir' => $this->podeExcluir($usuario),
             'aviso' => $aviso,
             'erroUpload' => $erro !== null && $erro !== '' ? $erro : null,
-        ]);
+            'redes' => ProfileAnalyzer::REDES,
+        ] + ['scripts_extras' => ['/assets/clients.js']]);
     }
 
     public function update(Request $req, array $params): Response
@@ -265,6 +275,62 @@ final class ClientController
         }
 
         return Response::file($caminho, Upload::mime($nome));
+    }
+
+
+    /**
+     * POST /clients/analisar — a IA propõe o preenchimento a partir do perfil.
+     *
+     * Devolve JSON porque quem chama é o botão do formulário (JS progressivo):
+     * o resultado entra nos campos na hora, para a pessoa revisar antes de
+     * salvar. Sem JS não há como preencher vários campos de uma vez, então o
+     * formulário continua funcionando do jeito de sempre.
+     *
+     * NÃO grava nada: análise é proposta, não cadastro. Quem grava é o POST do
+     * formulário, com a revisão de quem cadastrou.
+     */
+    public function analyzeProfile(Request $req): Response
+    {
+        $usuario = $this->auth->user();
+        if ($usuario === null) {
+            return Response::json(['erro' => 'Sua sessão venceu. Entre de novo para analisar.'], 401);
+        }
+        if (!$this->podeEditar($usuario)) {
+            return Response::json(['erro' => 'Seu perfil não pode cadastrar clientes.'], 403);
+        }
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return Response::json(['erro' => 'A sessão do navegador venceu. Recarregue a página e tente de novo.'], 419);
+        }
+
+        $rede = ProfileAnalyzer::normalizarRede((string) $req->input('social_network', ''));
+        $perfil = ProfileAnalyzer::limparUrl((string) $req->input('profile_url', ''));
+        if ($rede === '' && $perfil === '') {
+            return Response::json(['erro' => 'Informe a rede social e o endereço do perfil antes de analisar.'], 422);
+        }
+
+        try {
+            $resultado = $this->analisador->analisar([
+                'social_network' => $rede,
+                'profile_url' => $perfil,
+                'company_name' => (string) $req->input('company_name', ''),
+                'notes' => (string) $req->input('notes', ''),
+            ]);
+        } catch (StudioError $erro) {
+            return Response::json(['erro' => $erro->getMessage()], 502);
+        }
+
+        $this->clients->audit((int) $usuario['company_id'], (int) $usuario['id'], 'client.profile_analyzed',
+            ($resultado['modo'] === 'ia' ? 'IA' : 'esqueleto local') . ' · ' . ($rede !== '' ? $rede : $perfil));
+
+        return Response::json([
+            'campos' => $resultado['campos'],
+            'modo' => $resultado['modo'],
+            'modelo' => $resultado['model'],
+            'rede' => $resultado['rede'],
+            'aviso' => $resultado['modo'] === 'ia'
+                ? 'Proposta da IA a partir do perfil informado. Revise antes de salvar.'
+                : 'Sem chave de IA configurada: os campos vieram de um esqueleto com os dados que você digitou.',
+        ]);
     }
 
     // ------------------------------------------------------------------

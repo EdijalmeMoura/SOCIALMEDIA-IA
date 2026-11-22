@@ -491,6 +491,10 @@ SQL);
         self::addColumn($db, 'companies', 'owner_email', 'TEXT');
         self::addColumn($db, 'companies', 'notes', 'TEXT');
         self::addColumn($db, 'users', 'last_seen_at', 'TEXT');
+        // v1.20: rede social informada no cadastro + endereço do perfil. A análise
+        // por IA propõe os outros campos a partir destes dois.
+        self::addColumn($db, 'clients', 'social_network', 'TEXT');
+        self::addColumn($db, 'clients', 'profile_url', 'TEXT');
 
         // --- v8: o pedido da arte fica guardado -------------------------
         // A criação agora pergunta para qual rede, com qual objetivo e em que

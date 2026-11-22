@@ -19,6 +19,8 @@ final class ClientRepository
         'company_name', 'trade_name', 'segment', 'description', 'products_services',
         'audience', 'address', 'phone', 'whatsapp', 'website', 'instagram', 'facebook',
         'business_goals',
+        // v1.20: rede informada no cadastro e endereço do perfil analisado.
+        'social_network', 'profile_url',
     ];
 
     /** Campos com limite maior (textos longos). */

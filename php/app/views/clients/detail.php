@@ -14,6 +14,8 @@
  */
 use Smia\Clients\ClientRepository;
 
+// O layout carrega o JS da análise (o controller manda em `scripts_extras`).
+
 $v = static fn (string $campo): string => (string) ($cliente[$campo] ?? '');
 $cor = ClientRepository::corValida($v('primary_color')) ? $v('primary_color') : '#3158d8';
 $corSecundaria = ClientRepository::corValida($v('secondary_color')) ? $v('secondary_color') : '#f57a45';
@@ -113,6 +115,29 @@ ob_start();
       <label class="field span-4">Endereço
         <input name="address" maxlength="500" value="<?= e($v('address')) ?>"<?= $desabilitar ?>>
       </label>
+      <label class="field span-4">Rede social principal
+        <select name="social_network" id="socialNetwork"<?= $desabilitar ?>>
+          <option value="">Escolha a rede</option>
+          <?php foreach (($redes ?? []) as $chaveRede => $rotuloRede): ?>
+            <option value="<?= e($chaveRede) ?>" <?= $v('social_network') === $chaveRede ? 'selected' : '' ?>><?= e($rotuloRede) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+      <label class="field span-8">Endereço do perfil
+        <input name="profile_url" id="profileUrl" maxlength="500" value="<?= e($v('profile_url')) ?>"<?= $desabilitar ?>
+               placeholder="@nomedamarca ou https://instagram.com/nomedamarca">
+      </label>
+      <?php if ($pode_editar): ?>
+        <div class="field span-12 analyzer-actions">
+          <button type="button" class="button outline" id="analyzeProfile"
+                  data-endpoint="<?= e($config->url('/clients/analisar')) ?>"
+                  data-csrf="<?= e($csrf) ?>">
+            <span class="analyzer-spark" aria-hidden="true">✦</span>
+            <span class="analyzer-label">Analisar perfil e completar os campos</span>
+          </button>
+          <span class="analyzer-status" id="analyzeStatus" role="status" aria-live="polite"></span>
+        </div>
+      <?php endif; ?>
       <label class="field span-6">Instagram
         <input name="instagram" maxlength="500" value="<?= e($v('instagram')) ?>"<?= $desabilitar ?>>
       </label>

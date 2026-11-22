@@ -1,6 +1,7 @@
 <?php
 /**
- * Configurações em cinco abas: IA, agência, preferências, minha conta, sistema.
+ * Configurações em cinco abas: IA, agência, preferências, minha conta e sistema
+ * (esta última só para o dono da instalação).
  *
  * Duas regras que a tela inteira segue:
  *  - **todos veem** tudo (transparência: a pessoa sabe com o que trabalha);
@@ -33,6 +34,7 @@ $resultado_teste = $resultado_teste ?? null;
 $aviso = $aviso ?? null;
 $equipe = $equipe ?? [];
 $pode_gerenciar = $pode_gerenciar ?? false;
+$conta = $conta ?? [];
 $cofre_disponivel = $cofre_disponivel ?? false;
 $aba = $aba ?? 'ia';
 $rotuloPapel = static fn (string $papel, int $super): string => $super === 1
@@ -45,6 +47,12 @@ $abas = [
     'conta' => 'Minha conta',
     'sistema' => 'Sistema',
 ];
+// A aba Sistema é diagnóstico da instalação (versões, caminhos, backup do banco
+// inteiro) e só o dono a vê. O controller manda a lista; o filtro aqui é para
+// uma view chamada direto em teste não mostrar o que não deve.
+if (isset($abas_permitidas) && is_array($abas_permitidas)) {
+    $abas = array_intersect_key($abas, array_flip($abas_permitidas));
+}
 // Campos bloqueados para quem só lê. `readonly` + `disabled` no botão é o que
 // o navegador respeita; o servidor recusa de novo em cada rota.
 $soLeitura = $pode_gerenciar ? '' : 'readonly disabled';
@@ -80,6 +88,10 @@ ob_start();
   <?php endforeach; ?>
 </nav>
 
+<?php if (!isset($abas['sistema']) && ($conta['super'] ?? false) === false): ?>
+  <p class="settings-note">A aba <b>Sistema</b> (versões, caminhos do servidor e backup do banco) é
+    exclusiva do dono da instalação.</p>
+<?php endif; ?>
 <?php if (!$pode_gerenciar && in_array($aba, ['ia', 'agencia', 'preferencias'], true)): ?>
   <div class="alert info-alert">
     Você pode ver esta aba, mas <b>só o proprietário ou um administrador altera</b>.
