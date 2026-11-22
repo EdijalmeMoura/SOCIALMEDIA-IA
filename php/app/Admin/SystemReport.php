@@ -112,9 +112,9 @@ final class SystemReport
      * não foi para o principal, e a cópia sairia sem as últimas gravações.
      * `VACUUM INTO` deixa o banco em um arquivo só, íntegro e já compactado.
      */
-    public function copiarBanco(): string
+    public function copiarBanco(?string $destino = null): string
     {
-        $destino = $this->config->dataDir . '/backup-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3)) . '.sqlite';
+        $destino ??= $this->config->dataDir . '/backup-' . gmdate('Ymd-His') . '-' . bin2hex(random_bytes(3)) . '.sqlite';
         $this->db->pdo()->exec("VACUUM INTO '" . str_replace("'", "''", $destino) . "'");
         @chmod($destino, 0o600);
 

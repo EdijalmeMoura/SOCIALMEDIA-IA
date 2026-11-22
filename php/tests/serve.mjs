@@ -203,6 +203,7 @@ $_GET = $r['get'];
 $_POST = $r['post'];
 $_COOKIE = $r['cookies'];
 $_FILES = $r['files'];
+define('SMIA_TEST_UPLOADS', true);
 require '/www/php/public/index.php';
 `,
     });

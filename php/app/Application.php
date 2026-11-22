@@ -6,6 +6,7 @@ namespace Smia;
 
 use Smia\Admin\AdminRepository;
 use Smia\Admin\SystemReport;
+use Smia\Admin\Updater;
 use Smia\Admin\SettingsRepository;
 use Smia\Approvals\ApprovalRepository;
 use Smia\Approvals\PortalRepository;
@@ -235,6 +236,7 @@ final class Application
             $auth,
             $this->session,
             $this->view(),
+            new Updater($this->config, $this->db, $instaladorAjustes),
         );
         $this->router->get('/admin', $dono->index(...));
         $this->router->post('/admin/agencias', $dono->createCompany(...));
@@ -244,6 +246,10 @@ final class Application
         $this->router->post('/admin/usuarios/{id}', $dono->updateUser(...));
         $this->router->post('/admin/usuarios/{id}/senha', $dono->resetPassword(...));
         $this->router->post('/admin/usuarios/{id}/ativar', $dono->toggleUser(...));
+        // Atualização pelo painel: só o dono da instalação.
+        $this->router->get('/admin/atualizacao/consultar', $dono->checkUpdate(...));
+        $this->router->post('/admin/atualizacao/aplicar', $dono->applyUpdate(...));
+        $this->router->post('/admin/atualizacao/restaurar', $dono->restoreUpdate(...));
 
         // --- Clientes -------------------------------------------------
         $studio = new StudioController(

@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.17`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.17)** — todos os módulos,
+**Última versão: [`php-v1.18`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.18)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,7 +27,8 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
-| **v1.17** | **Configurações em abas**: IA, agência, preferências do estúdio, minha conta e sistema (versões, permissões e backup do banco) | [php-v1.17](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.17) | [`SOCIALMEDIA-IA-php-v1.17.zip`](downloads/SOCIALMEDIA-IA-php-v1.17.zip) |
+| **v1.18** | **Atualização pelo painel do dono** (GitHub ou zip enviado, com cópia automática e restauração) e **responsivo** corrigido no celular | [php-v1.18](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.18) | [`SOCIALMEDIA-IA-php-v1.18.zip`](downloads/SOCIALMEDIA-IA-php-v1.18.zip) |
+| v1.17 | **Configurações em abas**: IA, agência, preferências do estúdio, minha conta e sistema (versões, permissões e backup do banco) | [php-v1.17](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.17) | [`SOCIALMEDIA-IA-php-v1.17.zip`](downloads/SOCIALMEDIA-IA-php-v1.17.zip) |
 | v1.16 | **Estúdio 2.0**: criação em etapas (rede, objetivo, tom, imagem), prancheta com enquadramento, guias, zoom e desfazer, legenda com contador e cópia | [php-v1.16](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.16) | [`SOCIALMEDIA-IA-php-v1.16.zip`](downloads/SOCIALMEDIA-IA-php-v1.16.zip) |
 | v1.15 | **Área do dono, Usuários e Configurações**: a chave de IA entra pela tela e é testada no servidor | [php-v1.15](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.15) | [`SOCIALMEDIA-IA-php-v1.15.zip`](downloads/SOCIALMEDIA-IA-php-v1.15.zip) |
 | v1.14 | **Diagnóstico da chave de IA e do `.env`**: testa a chave no servidor e aponta o erro exato do arquivo | [php-v1.14](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.14) | [`SOCIALMEDIA-IA-php-v1.14.zip`](downloads/SOCIALMEDIA-IA-php-v1.14.zip) |
@@ -75,6 +76,22 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.18 — Atualizar deixou de ser trabalho de FTP, e o celular deixou de quebrar.**
+  Na **Área do dono** há uma seção **Atualização do sistema**: ela consulta a
+  última release do pacote PHP. Se houver versão nova, mostra o que muda e
+  aplica em um clique. Antes de trocar qualquer arquivo, o sistema **confere a
+  versão lida de dentro do zip** (um zip renomeado não se passa por novo),
+  recusa pacote com caminho suspeito, guarda uma **cópia de `app/` e do banco**
+  em `data/backups/` e só então substitui `app/` e `public/`. Se algo falhar no
+  meio, a cópia volta sozinha — e há o botão **Restaurar** com a lista de
+  cópias. Para hospedagem **sem saída para a internet**, o mesmo painel aceita
+  o **zip enviado** do computador. `data/`, `.env` e tudo fora de `app/` e
+  `public/` nunca são tocados.
+  No **responsivo**, o que estava quebrado no celular foi corrigido: tabelas de
+  6 colunas viram rolagem horizontal (e a área do dono vira blocos com rótulo),
+  as abas rolam em vez de quebrar linha, o portal perdeu a largura fixa de
+  1140 px, cartões de resumo se reorganizam em 1 coluna, e nenhum campo tem
+  largura maior que a tela.
 - **v1.17 — Configurações é uma área, não uma chave.** A tela `/settings`
   virou cinco abas: **IA** (o que já existia: chave cifrada, teste no servidor
   e modelos), **Agência** (nome, razão social, documento, e-mail, telefone e

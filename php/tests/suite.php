@@ -12,6 +12,12 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/autoload.php';
 
+// Raiz dos arquivos da aplicação (app/ e public/). A suíte roda dentro do
+// wasm com o projeto em /www/php; as instâncias de teste vivem em /tmp.
+if (!defined('SMIA_APP_ROOT')) {
+    define('SMIA_APP_ROOT', dirname(__DIR__));
+}
+
 use Smia\Application;
 use Smia\Http\Request;
 use Smia\Http\Response;
@@ -3815,6 +3821,224 @@ foreach (['legal_name', 'document', 'contact_email', 'contact_phone', 'website']
         "SELECT COUNT(*) FROM pragma_table_info('companies') WHERE name = ?", [$coluna]
     ));
 }
+
+
+echo "\n[80] Atualização: o pacote é conferido antes de tocar em qualquer arquivo\n";
+// Cenário de apoio: uma instalação de verdade, da qual se copia app/ e public/
+// para montar pacotes de teste (um com a versão certa, outro adulterado).
+[$appUp, $configUp, $raizUp] = appNova([]);
+$appUp->installer->install([
+    'agency_name' => 'Agência Update', 'admin_name' => 'Dono Update', 'admin_email' => 'dono@up.example',
+    'password_hash' => password_hash('UpdateForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appUp->handle(requisicao('GET', '/login'));
+$appUp->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appUp->session->csrfToken(), 'email' => 'dono@up.example', 'password' => 'UpdateForte2026',
+]));
+check('instalação de apoio está pronta', !$appUp->installer->needed());
+
+/** Monta um zip no formato oficial: <raiz>/app/... + <raiz>/public/... */
+$montarPacote = static function (string $raiz) use ($appUp, $configUp): string {
+    $destino = $configUp->dataDir . '/pacote-' . bin2hex(random_bytes(4)) . '.zip';
+    $zip = new ZipArchive();
+    $zip->open($destino, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+    foreach (['app', 'public'] as $pasta) {
+        $base = SMIA_APP_ROOT . '/' . $pasta;
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS));
+        foreach ($it as $arquivo) {
+            $relativo = substr($arquivo->getPathname(), strlen(SMIA_APP_ROOT) + 1);
+            $zip->addFile($arquivo->getPathname(), 'SOCIALMEDIA-IA-php-' . $raiz . '/' . $relativo);
+        }
+    }
+    $zip->close();
+    return $destino;
+};
+
+$atualizadorUp = new \Smia\Admin\Updater($configUp, $appUp->db, $appUp->installer);
+$versaoBase = \Smia\Support\Config::VERSAO;
+$versaoNova = $versaoBase . '.1';
+$zipBom = $montarPacote('v' . $versaoBase);
+$planoBom = $atualizadorUp->inspecionar($zipBom);
+check('pacote oficial é reconhecido', $planoBom['ok'] === true, $planoBom['erro']);
+assertSame('versão lida de dentro do zip', $versaoBase, (string) $planoBom['versao']);
+check('plano lista arquivos de app e public', $planoBom['arquivos'] > 50, (string) $planoBom['arquivos']);
+check('data/ do pacote é ignorado de propósito', in_array('data/socialmedia.sqlite', $planoBom['ignorados'], true) || $planoBom['ignorados'] === []);
+
+// Zip com caminho que escapa para fora: recusado INTEIRO, nada aplicado.
+$zipMalicioso = $configUp->dataDir . '/malicioso.zip';
+$zip = new ZipArchive();
+$zip->open($zipMalicioso, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+$zip->addFromString('app/Support/Config.php', "<?php\n");
+$zip->addFromString('../fora.php', "<?php // tentativa de escrever fora\n");
+$zip->close();
+$planoMau = $atualizadorUp->inspecionar($zipMalicioso);
+check('zip com ".." é recusado', $planoMau['ok'] === false);
+check('a recusa sempre traz mensagem', $planoMau['erro'] !== '' && $planoMau['dica'] !== '');
+check('a recusa diz o caminho suspeito', str_contains($planoMau['erro'], 'fora.php'), $planoMau['erro']);
+
+// Arquivo que não é o pacote: recusado com explicação.
+$zipFalso = $configUp->dataDir . '/falso.zip';
+$zip = new ZipArchive();
+$zip->open($zipFalso, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+$zip->addFromString('leiame.txt', 'não sou o sistema');
+$zip->close();
+$planoFalso = $atualizadorUp->inspecionar($zipFalso);
+check('zip sem app/Application.php é recusado', $planoFalso['ok'] === false);
+check('a recusa do zip errado também traz mensagem', $planoFalso['erro'] !== '' && $planoFalso['dica'] !== '');
+check('a recusa diz o que faltou', str_contains($planoFalso['erro'], 'app/Application.php'));
+
+// Texto que não é zip.
+$txt = $configUp->dataDir . '/nao-e-zip.zip';
+file_put_contents($txt, 'isto é texto');
+$planoTexto = $atualizadorUp->inspecionar($txt);
+check('arquivo que não é zip é recusado', $planoTexto['ok'] === false);
+check('e diz por quê', str_contains($planoTexto['erro'], 'não é um zip'), $planoTexto['erro']);
+
+echo "\n[81] Atualização: aplica, guarda cópia e volta atrás\n";
+// O Updater escreve em $config->root. Para não mexer nos arquivos da suíte,
+// a aplicação roda numa réplica da instalação dentro de /tmp.
+$raizClone = sys_get_temp_dir() . '/smia-update-' . bin2hex(random_bytes(4));
+mkdir($raizClone . '/data', 0o700, true);
+foreach (['app', 'public'] as $pasta) {
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(SMIA_APP_ROOT . '/' . $pasta, FilesystemIterator::SKIP_DOTS));
+    foreach ($it as $arquivo) {
+        $rel = substr($arquivo->getPathname(), strlen(SMIA_APP_ROOT) + 1);
+        $alvo = $raizClone . '/' . $rel;
+        if (!is_dir(dirname($alvo))) { mkdir(dirname($alvo), 0o755, true); }
+        copy($arquivo->getPathname(), $alvo);
+    }
+}
+$configClone = new \Smia\Support\Config(
+    root: $raizClone, dataDir: $raizClone . '/data', dbPath: $raizClone . '/data/socialmedia.sqlite',
+    envFile: $raizClone . '/installer.env', basePath: '/edijalmemoura/socialai',
+    publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+    secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+);
+$appClone = new \Smia\Application($configClone);
+$atualizadorClone = new \Smia\Admin\Updater($configClone, $appClone->db, $appClone->installer);
+
+// Pacote "novo": mesmo conteúdo, mas com a versão lá dentro trocada de propósito,
+// para provar que o que chega ao disco é o conteúdo do zip, não o da instalação.
+$zipNovo = $configClone->dataDir . '/novo.zip';
+$zip = new ZipArchive();
+$zip->open($zipNovo, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+$it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($raizClone . '/app', FilesystemIterator::SKIP_DOTS));
+foreach ($it as $arquivo) {
+    $rel = substr($arquivo->getPathname(), strlen($raizClone) + 1);
+    $conteudo = file_get_contents($arquivo->getPathname());
+    if ($rel === 'app/Support/Config.php') {
+        $conteudo = str_replace("VERSAO = '" . $versaoBase . "'", "VERSAO = '" . $versaoNova . "'", $conteudo);
+    }
+    $zip->addFromString('SOCIALMEDIA-IA-php-v' . $versaoNova . '/' . $rel, $conteudo);
+}
+$zip->addFromString('SOCIALMEDIA-IA-php-v' . $versaoNova . '/public/marcador-da-v118.txt', 'arquivo novo da versão nova');
+$zip->close();
+
+$antesPublic = count(glob($raizClone . '/public/*'));
+$errado = $atualizadorClone->aplicar($zipNovo, '9.99');
+check('confirmar versão diferente da do zip é recusado', $errado['ok'] === false);
+assertSame('recusa não altera a versão no disco', $versaoBase, (string) $atualizadorClone->versaoAtual());
+
+$aplicado = $atualizadorClone->aplicar($zipNovo, $versaoNova);
+check('atualização aplica', $aplicado['ok'] === true, $aplicado['erro']);
+check('arquivo novo da versão chegou ao disco', is_file($raizClone . '/public/marcador-da-v118.txt'));
+check('versão no disco mudou para a do pacote', str_contains((string) file_get_contents($raizClone . '/app/Support/Config.php'), "VERSAO = '" . $versaoNova . "'"));
+check('cópia de segurança foi guardada', $aplicado['backup'] !== null && is_dir((string) $aplicado['backup'] . '/app'));
+check('a cópia guardou a versão anterior', str_contains((string) file_get_contents((string) $aplicado['backup'] . '/app/Support/Config.php'), "VERSAO = '" . $versaoBase . "'"));
+check('a cópia levou o banco junto', is_file((string) $aplicado['backup'] . '/banco.sqlite'));
+check('data/ não foi tocado pela atualização', is_dir($raizClone . '/data'));
+check('cópias aparecem na lista', count($atualizadorClone->backups()) === 1);
+assertSame('nenhuma pasta temporária sobrou', [], glob($configClone->dataDir . '/update-tmp/estagio-*') ?: []);
+
+$restaurado = $atualizadorClone->restaurar();
+check('restauração volta', $restaurado['ok'] === true, $restaurado['erro']);
+assertSame('versão restaurada é a anterior', $versaoBase, (string) $restaurado['versao']);
+check('marcador da versão nova saiu do disco', !is_file($raizClone . '/public/marcador-da-v118.txt'));
+check('arquivos originais voltaram', is_file($raizClone . '/app/Application.php'));
+
+echo "\n[82] Atualização: só o dono da instalação, e com as travas na tela\n";
+$telaDono = $appUp->handle(requisicao('GET', '/admin'));
+assertSame('área do dono abre para o dono', 200, $telaDono->status);
+check('menu tem a seção de atualização', str_contains($telaDono->body, 'id="atualizacao"'));
+check('mostra a versão no ar', str_contains($telaDono->body, 'v' . \Smia\Support\Config::VERSAO . ' no ar'));
+check('explica que data/ e .env não são tocados', str_contains($telaDono->body, 'nunca são substituídos'));
+check('tem o caminho de upload para quem não tem internet', str_contains($telaDono->body, 'name="pacote"'));
+check('sem cURL a tela avisa; com cURL não incomoda', function_exists('curl_init')
+    ? !str_contains($telaDono->body, 'cURL está desativado')
+    : str_contains($telaDono->body, 'cURL está desativado'));
+$rotasUp = array_values(array_filter($appUp->router->patterns(), static fn (string $r): bool => str_contains($r, '/admin/atualizacao')));
+check('três rotas de atualização registradas', count($rotasUp) === 3, implode(', ', $rotasUp));
+
+// Quem não é dono da instalação não entra nem com a rota na mão.
+$appUp->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active) VALUES (1, 'Admin', 'adm@up.example', ?, 'admin', 0, 1)",
+    [password_hash('AdminForte2026', PASSWORD_DEFAULT)]
+);
+$appUp->handle(requisicao('POST', '/logout', ['csrf_token' => $appUp->session->csrfToken()]));
+$appUp->handle(requisicao('GET', '/login'));
+$appUp->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appUp->session->csrfToken(), 'email' => 'adm@up.example', 'password' => 'AdminForte2026',
+]));
+$csrfAdminUp = $appUp->session->csrfToken();
+assertSame('admin de agência não consulta versão', 403, $appUp->handle(requisicao('GET', '/admin/atualizacao/consultar'))->status);
+assertSame('admin de agência não aplica atualização', 403, $appUp->handle(requisicao('POST', '/admin/atualizacao/aplicar', [
+    'csrf_token' => $csrfAdminUp, 'versao' => '9.99', 'origem' => 'github',
+]))->status);
+assertSame('admin de agência não restaura cópia', 403, $appUp->handle(requisicao('POST', '/admin/atualizacao/restaurar', [
+    'csrf_token' => $csrfAdminUp,
+]))->status);
+check('a recusa explica o motivo', str_contains((string) $appUp->handle(requisicao('GET', '/admin'))->body, 'Acesso restrito'));
+
+// Dono de volta: CSRF é obrigatório e versão inventada não passa.
+$appUp->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfAdminUp]));
+$appUp->handle(requisicao('GET', '/login'));
+$appUp->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appUp->session->csrfToken(), 'email' => 'dono@up.example', 'password' => 'UpdateForte2026',
+]));
+$csrfDonoUp = $appUp->session->csrfToken();
+$semCsrfUp = $appUp->handle(requisicao('POST', '/admin/atualizacao/aplicar', ['versao' => '9.99', 'origem' => 'github']));
+assertSame('aplicar sem CSRF volta com erro', 302, $semCsrfUp->status);
+$versaoVelha = $appUp->handle(requisicao('POST', '/admin/atualizacao/aplicar', [
+    'csrf_token' => $csrfDonoUp, 'versao' => '0.1', 'origem' => 'github',
+]));
+assertSame('versão mais antiga é recusada', 302, $versaoVelha->status);
+$semConsulta = $appUp->handle(requisicao('POST', '/admin/atualizacao/aplicar', [
+    'csrf_token' => $csrfDonoUp, 'versao' => '9.99', 'origem' => 'github',
+]));
+assertSame('sem consulta prévia não baixa nada', 302, $semConsulta->status);
+check('nada foi aplicado nos casos recusados', !is_dir($appUp->config->dataDir . '/backups/app-') || $atualizadorUp->backups() === []);
+
+
+echo "\n[83] Responsivo: as regras que impedem tela quebrada no celular\n";
+$cssApp = (string) file_get_contents(SMIA_APP_ROOT . '/public/assets/app.css');
+assertSame('CSS com chaves balanceadas', substr_count($cssApp, '{'), substr_count($cssApp, '}'));
+check('tabela de dados rola na horizontal em vez de estourar', str_contains($cssApp, '.table-scroll'));
+check('tabela de 6 colunas tem largura mínima (senão vira ilegível)', str_contains($cssApp, '.table-scroll table.data-table { min-width: 560px; }'));
+check('tabela de diagnóstico de 3 colunas não rola à toa', str_contains($cssApp, '.is-compact { min-width: 0; }'));
+check('abas rolam em vez de quebrar linha', str_contains($cssApp, '.settings-tabs, .detail-tabs {'));
+check('área do dono vira blocos no celular', str_contains($cssApp, '.admin-table-block thead { display: none; }'));
+check('existe faixa para 380 px (celular pequeno)', str_contains($cssApp, '@media (max-width: 380px)'));
+check('existe faixa para 480 px', str_contains($cssApp, '@media (max-width: 480px)'));
+check('portal não usa mais largura fixa de 1140 px', !str_contains($cssApp, '.portal-content { width: 1140px'));
+check('cartões do dono em 1 coluna no celular pequeno', str_contains($cssApp, '.admin-stats { grid-template-columns: 1fr; }'));
+foreach (['viewport' => 'width=device-width, initial-scale=1'] as $chave => $valor) {
+    foreach (['app', 'install', 'portal'] as $layout) {
+        check('layout ' . $layout . ' declara viewport', str_contains((string) file_get_contents(SMIA_APP_ROOT . '/app/views/layouts/' . $layout . '.php'), $valor));
+    }
+}
+// Toda tabela em view precisa de um caminho para rolar ou de layout em blocos.
+$semRolagem = [];
+foreach (glob(SMIA_APP_ROOT . '/app/views/*/*.php') ?: [] as $view) {
+    $txt = (string) file_get_contents($view);
+    if (preg_match_all('#<table#', $txt) > 0) {
+        $envoltorios = preg_match_all('#table-scroll|approval-table#', $txt);
+        if ($envoltorios === 0) {
+            $semRolagem[] = basename(dirname($view)) . '/' . basename($view);
+        }
+    }
+}
+check('nenhuma tabela sem rolagem horizontal', $semRolagem === [], implode(', ', $semRolagem));
 
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];

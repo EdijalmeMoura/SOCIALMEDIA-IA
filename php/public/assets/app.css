@@ -64,6 +64,8 @@
 .button.small{padding:5px 10px;font-size:9px}
 .admin-row-actions{display:flex;flex-direction:column;gap:6px;min-width:210px}
 .admin-stats{margin-bottom:14px}
+/* A área do dono tem 3 cartões, não 4: a grade padrão de 4 deixava um vazio. */
+.admin-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
 .admin-new-company,.admin-new-user{margin-top:14px;border-top:1px solid #f0f2f9;padding-top:12px}
 .admin-new-user h3{margin:0 0 8px;font-size:11px}
 .admin-log{list-style:none;margin:0;padding:0}
@@ -91,3 +93,131 @@
 .settings-plain-list{margin:6px 0 0;padding-left:18px;font-size:11px;line-height:1.7;color:#5b6478}
 .settings-plain-list li{margin-bottom:6px}
 .panel-hint-only{min-height:0}
+
+/* ==================================================================== */
+/* v1.18 — Área do dono: atalhos e atualização do sistema pelo painel    */
+/* ==================================================================== */
+
+.admin-jump {
+  display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0 16px;
+}
+.admin-jump a {
+  font-size: 11px; font-weight: 700; color: #495266; background: #fff;
+  border: 1px solid #e6e8ef; border-radius: 999px; padding: 6px 12px;
+}
+.admin-jump a:hover { border-color: #bfc7f7; color: #465cda; }
+
+.update-steps { display: grid; gap: 14px; margin: 14px 0 0; padding: 0; list-style: none; counter-reset: passo; }
+.update-steps > li {
+  border: 1px solid #eceef4; border-radius: 10px; padding: 14px 16px; background: #fcfcfe;
+}
+.update-steps > li > b { display: block; font-size: 12.5px; margin-bottom: 4px; }
+.update-steps p { margin: 0 0 10px; font-size: 11px; line-height: 1.6; }
+.update-steps code, .update-steps .hint code { background: #f1f2f7; border-radius: 4px; padding: 1px 4px; font-size: 10.5px; }
+.update-found { margin: 4px 0 10px; }
+.update-found p { margin: 0 0 8px; }
+.update-notes { border: 1px solid #eceef4; border-radius: 8px; background: #fff; padding: 10px 12px; margin-bottom: 10px; }
+.update-notes summary { cursor: pointer; font-size: 11px; font-weight: 700; color: #46527a; }
+.update-notes-body { margin-top: 8px; font-size: 11px; line-height: 1.65; color: #5b6478; max-height: 260px; overflow: auto; }
+.update-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.update-form .field { min-width: 190px; margin: 0; }
+.update-form .form-hint { flex-basis: 100%; }
+.update-upload { margin-top: 12px; border-top: 1px dashed #e6e8ef; padding-top: 10px; }
+.update-upload summary { cursor: pointer; font-size: 11px; font-weight: 700; color: #46527a; }
+.update-upload p { margin: 8px 0 10px; }
+.update-upload .update-form { align-items: flex-end; }
+.offline-note { font-size: 10.5px; color: #8a6a33; background: #fdf8ec; border: 1px solid #f0e2c0; border-radius: 6px; padding: 8px 10px; }
+.updating-lock { opacity: .6; pointer-events: none; }
+
+/* ==================================================================== */
+/* v1.18 — Responsivo: correções para telas estreitas (360–420 px)       */
+/*                                                                      */
+/* Cada regra aqui responde a um problema concreto encontrado na         */
+/* auditoria: tabela sem rolagem, abas estourando, tabela de 4 colunas   */
+/* espremida, menu do dono quebrando e campos com largura fixa.          */
+/* ==================================================================== */
+
+/* Rolagem horizontal em toda tabela de dados, com dica visual de que há
+   mais conteúdo à direita. Sem isso, 6 colunas viram ilegíveis. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+}
+/* Só tabelas de verdade precisam de largura mínima; as de 2–3 colunas
+   (agências, cópias, equipe) cabem em 360 px e não devem rolar. */
+.table-scroll table.data-table { min-width: 560px; }
+/* Tabelas de diagnóstico (Item/Situação/Detalhe): 3 colunas, cabem sem rolar. */
+.table-scroll table.data-table.is-compact { min-width: 0; }
+.table-scroll::-webkit-scrollbar { height: 8px; }
+.table-scroll::-webkit-scrollbar-thumb { background: #dcdfea; border-radius: 999px; }
+.table-scroll { scrollbar-width: thin; }
+
+/* Abas: rolagem horizontal em vez de quebra em duas linhas desalinhadas. */
+.settings-tabs, .detail-tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+}
+.settings-tabs::-webkit-scrollbar, .detail-tabs::-webkit-scrollbar { display: none; }
+.settings-tab, .detail-tabs a { white-space: nowrap; flex: 0 0 auto; }
+
+@media (max-width: 760px) {
+  /* Rodapé e conteúdo do portal: largura fixa estourava a barra de rolagem. */
+  .portal-content, .portal-footer { width: auto; max-width: 100%; padding-left: 14px; padding-right: 14px; }
+
+  /* Cabeçalho de página e botões de ação empilhados. */
+  .page-title-row, .welcome-row { flex-wrap: wrap; gap: 10px; }
+  .page-title-row .button, .welcome-row .button { flex: 1 1 auto; }
+
+  /* Formulários: rótulo e botão em largura cheia evitam campo de 40 px. */
+  .update-form { flex-direction: column; align-items: stretch; }
+  .update-form .button { width: 100%; }
+  .settings-form-inline { flex-direction: column; align-items: stretch; }
+
+  /* Resumo por rede/IA em relatórios: 4 colunas não cabem. */
+  .report-ia-head, .report-ia-row { grid-template-columns: 1.1fr .9fr 58px; gap: 6px; }
+  .report-ia-head > :last-child, .report-ia-row > :last-child { display: none; }
+
+  /* Filtros e barras de ferramentas com muitas opções. */
+  .search-box { width: 100%; }
+  .canvas-toolbar { flex-wrap: wrap; gap: 8px; }
+  .canvas-tool-title { flex-wrap: wrap; }
+}
+
+@media (max-width: 480px) {
+  .report-network-head, .report-network-row { grid-template-columns: 1fr 62px 40px; gap: 6px; }
+  .report-table-head, .report-table-row { grid-template-columns: 78px minmax(70px, .8fr) minmax(120px, 1.4fr) 70px; gap: 6px; }
+
+  /* A tabela de usuários da área do dono tem formulário em cada célula:
+     em 360 px ela precisa virar blocos com rótulo, não colunas. */
+  .admin-table-block thead { display: none; }
+  .admin-table-block table, .admin-table-block tbody, .admin-table-block tr, .admin-table-block td { display: block; width: 100%; }
+  .admin-table-block tr { border: 1px solid #eceef4; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: #fff; }
+  .admin-table-block td { border: 0; padding: 6px 0; }
+  .admin-table-block .inline-form { flex-direction: column; align-items: stretch; gap: 8px; }
+  .admin-table-block .inline-form .button { width: 100%; }
+
+  /* Cabeçalho do dono: título e badge em coluna. */
+  .panel-head { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .admin-stats { grid-template-columns: 1fr; }
+  .error-page { padding-top: 60px; }
+  .error-code { font-size: 46px; }
+}
+
+@media (max-width: 760px) {
+  /* A área do dono usa .stat-grid (não .stats-grid): 3 colunas em 360 px
+     deixavam números com 2 dígitos. */
+  .admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-log { gap: 10px; }
+  .admin-log li { flex-direction: column; align-items: flex-start; gap: 3px; }
+}
+
+@media (max-width: 380px) {
+  .admin-stats { grid-template-columns: 1fr; }
+  .page-content { padding-left: 12px; padding-right: 12px; }
+  .button { padding: 0 12px; }
+}
+
+.update-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.update-banner a { color: #3e56d7; font-weight: 700; text-decoration: underline; }

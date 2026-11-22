@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Smia\Controllers;
 
 use Smia\Admin\AdminRepository;
+use Smia\Admin\Updater;
 use Smia\Auth\Authenticator;
 use Smia\Http\Request;
 use Smia\Http\Response;
@@ -33,6 +34,7 @@ final class AdminController
         private readonly Authenticator $auth,
         private readonly Session $session,
         private readonly View $view,
+        private readonly ?Updater $updater = null,
     ) {
     }
 
@@ -49,6 +51,7 @@ final class AdminController
             'usuarios' => $this->admin->todosUsuarios(),
             'acoes' => $this->admin->ultimasAcoes(15),
             'papeis' => $this->papeis(),
+            'atualizacao' => $this->estadoDaAtualizacao($req),
         ]);
     }
 
@@ -374,5 +377,278 @@ final class AdminController
             'active' => 'admin',
             'current_path' => $req->path,
         ], $status)->withSecurityHeaders();
+    }
+
+    // ==================================================================
+    // Atualização do sistema
+    // ==================================================================
+
+    /** GET /admin/atualizacao/consultar — pergunta ao GitHub o que existe. */
+    public function checkUpdate(Request $req): Response
+    {
+        $usuario = $this->auth->user();
+        if (($bloqueio = $this->guardar($req, $usuario, false)) !== null) {
+            return $bloqueio;
+        }
+        $atualizador = $this->atualizador($req);
+        if ($atualizador instanceof Response) {
+            return $atualizador;
+        }
+
+        $consulta = $atualizador->consultarGitHub();
+        $this->session->put('update_check', $consulta);
+
+        if ($consulta['ok'] !== true) {
+            $this->session->flash('error', $consulta['erro'] . ' ' . $consulta['dica']);
+
+            return $this->voltarAtualizacao($req);
+        }
+
+        $comparacao = $atualizador->comparar((string) $consulta['versao'], $atualizador->versaoAtual());
+        if ($comparacao <= 0) {
+            $this->session->flash('success', 'Você já está na versão mais nova (v' . $atualizador->versaoAtual() . ').');
+
+            return $this->voltarAtualizacao($req);
+        }
+
+        $this->session->flash('success', 'Existe versão nova: v' . $consulta['versao'] . '. Leia as notas e confirme a atualização.');
+
+        return $this->voltarAtualizacao($req);
+    }
+
+    /**
+     * POST /admin/atualizacao/aplicar — baixa, confere, faz backup e aplica.
+     *
+     * Falha em qualquer etapa e nada é alterado. O nome do pacote confirmado
+     * precisa ser o que foi inspecionado: entre a tela e o clique, o arquivo
+     * pode ter mudado.
+     */
+    public function applyUpdate(Request $req): Response
+    {
+        $usuario = $this->auth->user();
+        if (($bloqueio = $this->guardar($req, $usuario, true)) !== null) {
+            return $bloqueio;
+        }
+        $atualizador = $this->atualizador($req);
+        if ($atualizador instanceof Response) {
+            return $atualizador;
+        }
+
+        $versao = trim((string) $req->input('versao', ''));
+        if (preg_match('/^[0-9]+\.[0-9]+(?:\.[0-9]+)?$/', $versao) !== 1) {
+            $this->session->flash('error', 'Não sei qual versão aplicar. Consulte de novo e repita o passo.');
+
+            return $this->voltarAtualizacao($req);
+        }
+        if ($atualizador->comparar($versao, $atualizador->versaoAtual()) <= 0) {
+            $this->session->flash('error', 'A versão ' . $versao . ' não é mais nova que a instalada (v' . $atualizador->versaoAtual() . '). Nada foi alterado.');
+
+            return $this->voltarAtualizacao($req);
+        }
+
+        $origem = (string) $req->input('origem', 'github');
+        $zip = '';
+
+        if ($origem === 'upload') {
+            $enviado = $_FILES['pacote'] ?? [];
+            [$zip, $erroUpload] = $this->receberPacote($enviado);
+            if ($zip === '') {
+                $this->session->flash('error', $erroUpload);
+
+                return $this->voltarAtualizacao($req);
+            }
+        } else {
+            $consulta = $this->session->get('update_check');
+            $url = is_array($consulta) ? (string) ($consulta['url'] ?? '') : '';
+            if ($url === '') {
+                $this->session->flash('error', 'A consulta ao GitHub venceu. Clique em "Verificar versão nova" de novo.');
+
+                return $this->voltarAtualizacao($req);
+            }
+            $baixado = $atualizador->baixar($url);
+            if ($baixado['ok'] !== true) {
+                $this->session->flash('error', 'Não consegui baixar o pacote: ' . $baixado['erro'] . ' Você pode enviar o zip pelo painel.');
+
+                return $this->voltarAtualizacao($req);
+            }
+            $zip = $baixado['caminho'];
+        }
+
+        $resultado = $atualizador->aplicar($zip, $versao);
+
+        if ($resultado['ok'] !== true) {
+            $this->admin->registrar((int) $usuario['id'], (int) $usuario['company_id'], 'update.failed');
+            $this->session->flash('error', $resultado['erro'] . ' ' . $resultado['dica']);
+
+            return $this->voltarAtualizacao($req);
+        }
+
+        $atualizador->limparBackups(5);
+        $this->admin->registrar((int) $usuario['id'], (int) $usuario['company_id'], 'update.applied');
+
+        $aviso = 'Atualizado para v' . (string) $resultado['versao'] . '. A cópia da versão anterior está em data/backups/' . basename((string) $resultado['backup']) . '.';
+        $aviso .= ' Recarregue a página: a migração do banco roda na primeira abertura.';
+        $this->session->flash('success', $aviso);
+
+        return $this->voltarAtualizacao($req);
+    }
+
+    /** POST /admin/atualizacao/restaurar — volta a cópia escolhida. */
+    public function restoreUpdate(Request $req): Response
+    {
+        $usuario = $this->auth->user();
+        if (($bloqueio = $this->guardar($req, $usuario, true)) !== null) {
+            return $bloqueio;
+        }
+        $atualizador = $this->atualizador($req);
+        if ($atualizador instanceof Response) {
+            return $atualizador;
+        }
+
+        $escolhida = basename((string) $req->input('copia', ''));
+        $pasta = null;
+        if ($escolhida !== '') {
+            foreach ($atualizador->backups() as $copia) {
+                if ($copia['nome'] === $escolhida) {
+                    $pasta = $copia['pasta'];
+                    break;
+                }
+            }
+            if ($pasta === null) {
+                $this->session->flash('error', 'Não encontrei a cópia "' . $escolhida . '". Nada foi alterado.');
+
+                return $this->voltarAtualizacao($req);
+            }
+        }
+
+        $resultado = $atualizador->restaurar($pasta);
+        if ($resultado['ok'] !== true) {
+            $this->admin->registrar((int) $usuario['id'], (int) $usuario['company_id'], 'update.restore_failed');
+            $this->session->flash('error', $resultado['erro'] . ' ' . $resultado['dica']);
+
+            return $this->voltarAtualizacao($req);
+        }
+
+        $this->admin->registrar((int) $usuario['id'], (int) $usuario['company_id'], 'update.restored');
+        $this->session->flash(
+            'success',
+            'Sistema restaurado para a versão v' . (string) $resultado['versao'] . ', a partir de ' . basename((string) $resultado['de']) . '. '
+            . 'O banco NÃO é substituído automaticamente: se precisar dele, o arquivo banco.sqlite está dentro da mesma pasta.'
+        );
+
+        return $this->voltarAtualizacao($req);
+    }
+
+    /**
+     * O que a aba de atualização mostra agora: versão no ar, cópias guardadas e
+     * o resultado da última consulta. Não consulta a rede ao abrir a página —
+     * abrir a tela não deve depender de internet.
+     *
+     * @return array<string,mixed>
+     */
+    private function estadoDaAtualizacao(Request $req): array
+    {
+        $atualizador = $this->updater;
+        if ($atualizador === null) {
+            return ['disponivel' => false, 'motivo' => 'Atualização indisponível neste ambiente.', 'atual' => Config::VERSAO, 'copias' => [], 'consulta' => null];
+        }
+
+        $consulta = $this->session->get('update_check');
+        $podeAtualizar = true;
+        $motivos = [];
+        foreach (['app', 'public'] as $pasta) {
+            $caminho = $this->config->root . '/' . $pasta;
+            if (!is_dir($caminho) || !is_writable($caminho)) {
+                $podeAtualizar = false;
+                $motivos[] = $pasta . '/ precisa de permissão de escrita';
+            }
+        }
+        if (!class_exists('ZipArchive')) {
+            $podeAtualizar = false;
+            $motivos[] = 'a extensão Zip do PHP está desativada';
+        }
+        if (!is_writable($this->config->dataDir)) {
+            $podeAtualizar = false;
+            $motivos[] = 'data/ precisa de permissão de escrita (para a cópia de segurança)';
+        }
+
+        return [
+            'disponivel' => true,
+            'motivo' => implode('; ', $motivos),
+            'pode' => $podeAtualizar,
+            'atual' => $atualizador->versaoAtual(),
+            'consulta' => is_array($consulta) ? $consulta : null,
+            'copias' => $atualizador->backups(),
+            'tem_curl' => function_exists('curl_init'),
+        ];
+    }
+
+    private function atualizador(Request $req): Updater|Response
+    {
+        if ($this->updater === null) {
+            return $this->render('admin/forbidden', $req, [
+                'motivo' => 'A atualização pelo painel não está disponível nesta instalação.',
+            ], 403);
+        }
+
+        return $this->updater;
+    }
+
+    private function voltarAtualizacao(Request $req): Response
+    {
+        return Response::redirect($this->config->url('/admin#atualizacao'));
+    }
+
+    /**
+     * Guarda o zip enviado na pasta temporária.
+     *
+     * Não usa o Upload de imagens: aqui o arquivo é um zip, com outro limite e
+     * outra validação (quem valida de verdade é o Updater::inspecionar).
+     *
+     * @param array<string,mixed> $enviado
+     * @return array{0:string,1:string} caminho (vazio em caso de erro), mensagem
+     */
+    private function receberPacote(array $enviado): array
+    {
+        $erro = (int) ($enviado['error'] ?? UPLOAD_ERR_NO_FILE);
+        if ($erro === UPLOAD_ERR_NO_FILE) {
+            return ['', 'Escolha o arquivo .zip do pacote antes de enviar.'];
+        }
+        if ($erro === UPLOAD_ERR_INI_SIZE || $erro === UPLOAD_ERR_FORM_SIZE) {
+            return ['', 'O zip é maior do que o servidor aceita (' . ini_get('upload_max_filesize') . '). Envie direto pelo cPanel ou aumente o limite.'];
+        }
+        if ($erro !== UPLOAD_ERR_OK) {
+            return ['', 'O envio falhou (código ' . $erro . '). Tente de novo.'];
+        }
+        $tamanho = (int) ($enviado['size'] ?? 0);
+        if ($tamanho <= 0 || $tamanho > Updater::TAMANHO_MAXIMO) {
+            return ['', 'O arquivo tem ' . round($tamanho / 1024) . ' KB, fora do esperado para um pacote (até 25 MB).'];
+        }
+        $tmp = (string) ($enviado['tmp_name'] ?? '');
+        // `is_uploaded_file` é a garantia de que o caminho veio de um upload de
+        // verdade. O harness de teste monta $_FILES à mão (o php-wasm não
+        // popula sozinho), então ele liga SMIA_TEST_UPLOADS — em produção a
+        // constante não existe e a checagem continua valendo integralmente.
+        $veioDeUpload = is_uploaded_file($tmp);
+        $ehHarness = defined('SMIA_TEST_UPLOADS') && SMIA_TEST_UPLOADS === true && is_file($tmp);
+        if ($tmp === '' || (!$veioDeUpload && !$ehHarness)) {
+            return ['', 'O arquivo enviado não chegou ao servidor.'];
+        }
+        $assinatura = (string) @file_get_contents($tmp, false, null, 0, 4);
+        if (!str_starts_with($assinatura, "PK")) {
+            return ['', 'O arquivo não é um zip. Escolha o SOCIALMEDIA-IA-php-vX.Y.zip baixado da página de releases.'];
+        }
+
+        $pasta = $this->config->dataDir . '/update-tmp';
+        if (!is_dir($pasta) && !@mkdir($pasta, 0o755, true) && !is_dir($pasta)) {
+            return ['', 'Não consegui criar a pasta temporária em data/. Confira a permissão.'];
+        }
+        $destino = $pasta . '/enviado-' . bin2hex(random_bytes(4)) . '.zip';
+        $moveu = $veioDeUpload ? @move_uploaded_file($tmp, $destino) : @copy($tmp, $destino);
+        if (!$moveu) {
+            return ['', 'Não consegui guardar o arquivo em data/update-tmp.'];
+        }
+
+        return [$destino, ''];
     }
 }

@@ -23,13 +23,15 @@ function collect(dir, base = dir) {
     const full = join(dir, entry);
     if (entry === 'node_modules' || entry === 'data' || entry.startsWith('.')) continue;
     if (statSync(full).isDirectory()) out.push(...collect(full, base));
-    else if (entry.endsWith('.php')) out.push(relative(base, full));
+    // Além do PHP, o CSS entra: os testes de responsivo leem o arquivo de
+    // verdade. Testar "o CSS tem a regra" exige o CSS estar lá.
+    else if (/\.(php|css)$/.test(entry)) out.push(relative(base, full));
   }
   return out;
 }
 
 const arquivos = collect(ROOT);
-console.log(`Arquivos PHP a verificar: ${arquivos.length}`);
+console.log(`Arquivos a enviar para o teste: ${arquivos.length}`);
 
 // Provedor de IA falso: o wasm não tem internet nem servidor de sockets, então o
 // caminho de IA precisa de um par Node para ser realmente exercitado.

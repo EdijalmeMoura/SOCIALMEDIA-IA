@@ -11,6 +11,7 @@
  * @var array<int,array<string,mixed>> $usuarios
  * @var array<int,array<string,mixed>> $acoes
  * @var array<string,string> $papeis
+ * @var array<string,mixed> $atualizacao
  */
 $rotuloPapel = static fn (string $papel, int $super): string => $super === 1
     ? 'Dono da instalação'
@@ -25,7 +26,22 @@ ob_start();
   </div>
 </div>
 
-<div class="stat-grid admin-stats">
+<nav class="admin-jump" aria-label="Seções da área do dono">
+  <a href="#agencias">Agências</a>
+  <a href="#usuarios">Usuários</a>
+  <a href="#atualizacao">Atualização do sistema</a>
+  <a href="#acoes">Últimas ações</a>
+</nav>
+
+<?php $consultaTopo = $atualizacao['consulta'] ?? null; ?>
+<?php if (is_array($consultaTopo) && ($consultaTopo['ok'] ?? false) === true && version_compare((string) $consultaTopo['versao'], (string) $atualizacao['atual']) > 0): ?>
+  <div class="alert info-alert update-banner">
+    <b>Versão v<?= e((string) $consultaTopo['versao']) ?> disponível</b> — você está na v<?= e((string) $atualizacao['atual']) ?>.
+    <a href="#atualizacao">Ver e aplicar</a>
+  </div>
+<?php endif; ?>
+
+<div class="stats-grid admin-stats">
   <div class="stat-card">
     <span class="stat-label">AGÊNCIAS</span>
     <b class="stat-value"><?= (int) $resumo['active_companies'] ?></b>
@@ -51,7 +67,7 @@ ob_start();
     </div>
   </div>
 
-  <div class="table-scroll">
+  <div class="table-scroll admin-table-block">
     <table class="data-table">
       <thead>
         <tr>
@@ -116,7 +132,7 @@ ob_start();
     </div>
   </div>
 
-  <div class="table-scroll">
+  <div class="table-scroll admin-table-block">
     <table class="data-table">
       <thead>
         <tr><th>Nome</th><th>E-mail</th><th>Agência</th><th>Papel</th><th>Situação</th><th>Último acesso</th><th></th></tr>
@@ -215,7 +231,116 @@ ob_start();
   </form>
 </section>
 
-<section class="panel">
+
+<section class="panel" id="atualizacao">
+  <div class="panel-head">
+    <div>
+      <h2>Atualização do sistema</h2>
+      <p class="muted">Atualiza o código (app/ e public/) sem FTP nem cPanel. O banco, as imagens e o .env nunca são substituídos.</p>
+    </div>
+    <span class="badge">v<?= e((string) $atualizacao['atual']) ?> no ar</span>
+  </div>
+
+  <?php if (($atualizacao['disponivel'] ?? false) !== true): ?>
+    <div class="alert error-alert"><?= e((string) ($atualizacao['motivo'] ?? 'Atualização indisponível.')) ?></div>
+  <?php else: ?>
+
+    <?php if (($atualizacao['pode'] ?? true) !== true): ?>
+      <div class="alert error-alert">
+        <b>Não dá para atualizar por aqui ainda:</b> <?= e((string) $atualizacao['motivo']) ?>.
+        Peça à hospedagem para ajustar as permissões (pastas 755, arquivos 644) e volte.
+      </div>
+    <?php endif; ?>
+
+    <ol class="update-steps">
+      <li>
+        <b>1. Verificar versão nova</b>
+        <p class="muted">Consulta a última release do pacote PHP e mostra as notas antes de qualquer mudança.</p>
+        <a class="button outline" href="<?= e($config->url('/admin/atualizacao/consultar')) ?>">Verificar versão nova</a>
+      </li>
+
+      <li>
+        <b>2. Aplicar (com cópia de segurança)</b>
+        <?php $consulta = $atualizacao['consulta'] ?? null; ?>
+        <?php if (is_array($consulta) && ($consulta['ok'] ?? false) === true): ?>
+          <div class="update-found">
+            <p>
+              Versão publicada: <b>v<?= e((string) $consulta['versao']) ?></b> ·
+              você está na <b>v<?= e((string) $atualizacao['atual']) ?></b>.
+            </p>
+            <?php if (trim((string) ($consulta['notas'] ?? '')) !== ''): ?>
+              <details class="update-notes">
+                <summary>O que muda nesta versão</summary>
+                <div class="update-notes-body"><?= nl2br(e(mb_substr((string) $consulta['notas'], 0, 4000))) ?></div>
+              </details>
+            <?php endif; ?>
+          </div>
+          <form method="post" action="<?= e($config->url('/admin/atualizacao/aplicar')) ?>" class="update-form"
+                onsubmit="return confirm('Atualizar para a v<?= e((string) $consulta['versao']) ?>? Uma cópia da versão atual e do banco é guardada em data/backups antes de trocar os arquivos.');">
+            <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
+            <input type="hidden" name="versao" value="<?= e((string) $consulta['versao']) ?>">
+            <input type="hidden" name="origem" value="github">
+            <button class="button primary" type="submit" <?= ($atualizacao['pode'] ?? true) ? '' : 'disabled' ?>>Atualizar para v<?= e((string) $consulta['versao']) ?></button>
+            <span class="form-hint">A página vai recarregar na versão nova. Se algo quebrar, use o passo 3.</span>
+          </form>
+        <?php else: ?>
+          <p class="muted">Clique em <b>Verificar versão nova</b> primeiro: só depois de ver a versão e as notas o botão de atualizar aparece.</p>
+        <?php endif; ?>
+
+        <details class="update-upload">
+          <summary>Sem saída para a internet? Envie o zip baixado</summary>
+          <p class="muted">
+            Baixe o <b>SOCIALMEDIA-IA-php-vX.Y.zip</b> na página de releases deste projeto, no seu computador,
+            e envie aqui. O arquivo é conferido antes de aplicar: a versão lida de dentro do zip precisa ser a que você digitar.
+          </p>
+          <form method="post" action="<?= e($config->url('/admin/atualizacao/aplicar')) ?>" enctype="multipart/form-data" class="update-form"
+                onsubmit="return confirm('Aplicar o zip enviado? A cópia da versão atual e do banco é guardada antes.');">
+            <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
+            <input type="hidden" name="origem" value="upload">
+            <label class="field">Arquivo .zip
+              <input type="file" name="pacote" accept=".zip,application/zip" required>
+            </label>
+            <label class="field">Versão que está dentro do zip
+              <input type="text" name="versao" inputmode="decimal" placeholder="1.18" required pattern="[0-9]+\.[0-9]+(\.[0-9]+)?">
+            </label>
+            <button class="button outline" type="submit" <?= ($atualizacao['pode'] ?? true) ? '' : 'disabled' ?>>Conferir e aplicar o zip</button>
+          </form>
+        </details>
+      </li>
+
+      <li>
+        <b>3. Voltar atrás</b>
+        <p class="muted">Cada atualização guarda <code>app/</code> e o banco em <code>data/backups/</code>. Restaurar troca o código de volta; o banco fica na pasta, para você decidir se também volta.</p>
+        <?php if (($atualizacao['copias'] ?? []) === []): ?>
+          <p class="muted">Nenhuma cópia ainda — a primeira é criada na primeira atualização.</p>
+        <?php else: ?>
+          <form method="post" action="<?= e($config->url('/admin/atualizacao/restaurar')) ?>" class="update-form"
+                onsubmit="return confirm('Restaurar esta cópia? O código atual é substituído pela versão guardada.');">
+            <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
+            <label class="field">Cópia guardada
+              <select name="copia">
+                <?php foreach ($atualizacao['copias'] as $copia): ?>
+                  <option value="<?= e((string) $copia['nome']) ?>">
+                    <?= e((string) $copia['nome']) ?> — v<?= e((string) $copia['versao']) ?><?= $copia['banco'] ? ' · com banco' : '' ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </label>
+            <button class="button danger-outline" type="submit">Restaurar esta cópia</button>
+          </form>
+        <?php endif; ?>
+      </li>
+    </ol>
+
+    <p class="hint">
+      O que a atualização nunca faz: tocar em <code>data/</code> (banco, imagens, backups), no <code>.env</code>
+      ou em arquivos fora de <code>app/</code> e <code>public/</code>. A migração do banco roda sozinha na primeira abertura.
+      <?php if (empty($atualizacao['tem_curl'])): ?><br><b>Atenção:</b> cURL está desativado neste servidor — a consulta ao GitHub não vai funcionar; use o envio do zip.<?php endif; ?>
+    </p>
+  <?php endif; ?>
+</section>
+
+<section class="panel" id="acoes">
   <div class="panel-head">
     <div>
       <h2>Últimas ações administrativas</h2>

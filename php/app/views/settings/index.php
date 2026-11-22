@@ -409,7 +409,7 @@ ob_start();
     </div>
   </div>
   <div class="table-scroll">
-    <table class="data-table">
+    <table class="data-table is-compact">
       <thead><tr><th>Item</th><th>Situação</th><th>Detalhe</th></tr></thead>
       <tbody>
         <?php foreach (($sistema_ambiente ?? []) as $check): ?>
@@ -440,7 +440,7 @@ ob_start();
     </div>
   </div>
   <div class="table-scroll">
-    <table class="data-table">
+    <table class="data-table is-compact">
       <thead><tr><th>Item</th><th>Situação</th><th>Caminho</th></tr></thead>
       <tbody>
         <?php foreach (($sistema_arquivos ?? []) as $item): ?>

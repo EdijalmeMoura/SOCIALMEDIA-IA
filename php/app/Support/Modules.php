@@ -45,7 +45,7 @@ final class Modules
             ['slug' => 'users', 'name' => 'Usuários', 'hint' => 'Equipe da agência e permissões', 'path' => '/settings?aba=ia', 'icon' => '☺', 'ready' => true],
             ['slug' => 'settings', 'name' => 'Configurações', 'hint' => 'IA, agência, preferências e sistema', 'path' => '/settings', 'icon' => '⚙', 'ready' => true],
             // Só aparece para quem é dono da instalação; o layout filtra.
-            ['slug' => 'admin', 'name' => 'Área do dono', 'hint' => 'Todas as agências e todos os usuários', 'path' => '/admin', 'icon' => '◆', 'ready' => true],
+            ['slug' => 'admin', 'name' => 'Área do dono', 'hint' => 'Agências, usuários e atualização do sistema', 'path' => '/admin', 'icon' => '◆', 'ready' => true],
         ];
     }
 
