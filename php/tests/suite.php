@@ -4357,6 +4357,298 @@ assertSame('leitor não dispara análise', 403, $appCli->handle(requisicao('POST
 check('a análise fica auditada', (int) $appCli->db->scalar(
     "SELECT COUNT(*) FROM audit_log WHERE action = 'client.profile_analyzed'") >= 1);
 
+echo "\n[88] Editor de arte: status, refazer, inline, miniatura, reescrita e aprovação\n";
+// Seção independente: o estúdio de [31]-[37] já tem histórico mexido demais.
+[$appEd, $configEd] = appNova([]);
+$appEd->installer->install([
+    'agency_name' => 'Agência Ed', 'admin_name' => 'Dona Ed', 'admin_email' => 'dona@ed.example',
+    'password_hash' => password_hash('EdForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appEd->handle(requisicao('GET', '/login'));
+$appEd->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appEd->session->csrfToken(), 'email' => 'dona@ed.example', 'password' => 'EdForte2026',
+]));
+$csrfEd = $appEd->session->csrfToken();
+$clienteEd = $appEd->handle(requisicao('POST', '/clients/new', [
+    'csrf_token' => $csrfEd, 'company_name' => 'Estúdio Ed', 'segment' => 'Fotografia',
+]));
+assertSame('cliente do editor criado', 302, $clienteEd->status);
+$clienteEdId = (int) $appEd->db->scalar('SELECT id FROM clients ORDER BY id DESC LIMIT 1');
+$criouEd = $appEd->handle(requisicao('POST', '/studio/generate', [
+    'csrf_token' => $csrfEd, 'client_id' => (string) $clienteEdId,
+    'subject' => 'Ensaio de fim de ano', 'format_key' => 'square',
+]));
+assertSame('arte do editor criada', 302, $criouEd->status);
+$arteEdId = (int) $appEd->db->scalar('SELECT id FROM creative_posts ORDER BY id DESC LIMIT 1');
+$layoutEd = json_decode((string) $appEd->db->scalar('SELECT layout_json FROM creative_posts WHERE id = ?', [$arteEdId]), true);
+
+// --- HTML: os controles das melhorias estão na tela -------------------
+$telaEd = $appEd->handle(requisicao('GET', '/studio/posts/' . $arteEdId));
+assertSame('editor responde 200', 200, $telaEd->status);
+check('[11] botão de refazer existe e nasce desligado', str_contains($telaEd->body, 'data-redo') && str_contains($telaEd->body, 'data-redo title="Refazer o último desfeito (Ctrl+Shift+Z)" disabled'));
+check('[11] contador de passos do histórico aparece', str_contains($telaEd->body, 'data-history'));
+check('[4] barra de status de salvamento na tela', str_contains($telaEd->body, 'data-save-status') && str_contains($telaEd->body, 'Ctrl+S salva de qualquer aba'));
+check('[4] barra fixa de salvar no celular', str_contains($telaEd->body, 'mobile-save-bar') && str_contains($telaEd->body, 'form="studioSave"'));
+check('[13] botão de grade com aria-pressed', str_contains($telaEd->body, 'data-grid aria-pressed="false"'));
+check('[10] canvas tem alternative textual ligada por aria-describedby', str_contains($telaEd->body, 'aria-describedby="canvasAltText"') && str_contains($telaEd->body, 'id="canvasAltText"'));
+check('[10] texto alternativo repete o título da arte', str_contains($telaEd->body, 'O que está na arte'));
+check('[7] miniatura fixa dentro da aba Legenda', str_contains($telaEd->body, 'data-caption-preview') && str_contains($telaEd->body, 'data-preview-image'));
+check('[9] reescrita de legenda e de hashtags tem botão', str_contains($telaEd->body, 'value="caption"') && str_contains($telaEd->body, 'value="hashtags"') && substr_count($telaEd->body, '/reescrever') >= 2);
+check('[9] CSS da reescrita e da miniatura carregado', str_contains($telaEd->body, 'studio.css'));
+check('[12] só um campo de prompt de imagem', substr_count($telaEd->body, 'name="image_prompt"') === 1);
+check('[3] upload sem required no campo escondido', !str_contains($telaEd->body, 'hidden required') && str_contains($telaEd->body, 'data-upload-feedback'));
+check('[8] envio para aprovação aparece desligado sem exportação', str_contains($telaEd->body, 'Enviar para aprovação') && str_contains($telaEd->body, 'Exporte a arte em PNG ou JPG para enviar'));
+check('[6] sem desfazer de salvamento fora de ?ok=saved', !str_contains($telaEd->body, 'Desfazer este salvamento'));
+
+// --- [2]/[1]/[11] JS: sujo nos gestos, desfazer marca sujo, refazer ---
+$jsEd = (string) file_get_contents(__DIR__ . '/../public/assets/studio.js');
+check('[2] gesto na prancheta marca a arte como alterada', str_contains($jsEd, 'if (gesto) marcarSujo();'));
+check('[2] todo ajuste do histórico marca como alterado', (bool) preg_match('/function registrar\(\) \{[\s\S]{0,220}marcarSujo\(\)/', $jsEd));
+check('[2] barra de status e aviso de saída usam a mesma marcação', str_contains($jsEd, 'if (estadoSalvar) estadoSalvar.classList.add(\'is-dirty\')') && str_contains($jsEd, 'if (!sujo) return;'));
+check('[1] desfazer marca como alterado', (bool) preg_match('/function desfazer\(\)[\s\S]{0,600}marcarSujo\(\)/', $jsEd));
+check('[11] refazer devolve o estado desfeito', (bool) preg_match('/function refazer\(\)[\s\S]{0,400}aplicarEstado\(proximo\)/', $jsEd));
+check('[11] registrar limpa a pilha de refazer', str_contains($jsEd, 'refeitos.length = 0'));
+check('[4] Ctrl+S salva pelo formulário', str_contains($jsEd, "tecla === 's'") && str_contains($jsEd, 'function salvarAgora'));
+check('[5] duplo clique abre editor sobre a arte', str_contains($jsEd, 'canvas-inline-editor') && str_contains($jsEd, 'function editarNoLugar'));
+check('[13] grade é desenhada só na tela', str_contains($jsEd, 'if (grade && mostrarSelecao && editavel)'));
+check('[13] guias agora desligam de verdade', str_contains($jsEd, "document.querySelector('[data-guides]')?.addEventListener"));
+check('[7] miniatura é atualizada a cada desenho', str_contains($jsEd, 'function agendarPreview') && str_contains($jsEd, 'requestAnimationFrame'));
+check('[3] upload mostra feedback antes de enviar', str_contains($jsEd, "data-upload-feedback"));
+check('[11] Ctrl+Y também refaz', str_contains($jsEd, "tecla === 'y'"));
+check('[1] o aviso de sair usa a mesma marcação de alteração', str_contains($jsEd, "window.addEventListener('beforeunload'"));
+
+// --- [6] desfazer este salvamento -------------------------------------
+$salvarEd = function (array $extra = []) use ($appEd, $csrfEd, $arteEdId, $layoutEd): \Smia\Http\Response {
+    return $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/save', array_merge([
+        'csrf_token' => $csrfEd,
+        'layout_json' => json_encode(['elements' => $layoutEd['elements']]),
+        'background_color' => '#123456',
+        'title' => 'Título antes de desfazer',
+        'subtitle' => 'Subtítulo',
+        'cta' => 'Chamar',
+        'caption' => 'Legenda salva.',
+        'hashtags' => '#um #dois',
+        'visual_brief' => 'Briefing.',
+        'image_suggestion' => 'Sugestão.',
+        'composition' => 'Composição.',
+        'image_prompt' => 'Prompt.',
+    ], $extra)));
+};
+$antesDoSalvar = (string) $appEd->db->scalar('SELECT background_color FROM creative_posts WHERE id = ?', [$arteEdId]);
+$salvoEd = $salvarEd();
+assertSame('salvamento redireciona', 302, $salvoEd->status);
+check('redirect de salvamento com ok=saved', str_contains((string) $salvoEd->header('Location'), 'ok=saved'));
+$depoisDoSalvar = (string) $appEd->db->scalar('SELECT background_color FROM creative_posts WHERE id = ?', [$arteEdId]);
+assertSame('cor do salvamento gravada', '#123456', $depoisDoSalvar);
+$telaSalva = $appEd->handle(requisicao('GET', '/studio/posts/' . $arteEdId, [], ['ok' => 'saved']));
+check('[6] a tela oferece desfazer o salvamento', str_contains($telaSalva->body, 'Desfazer este salvamento'));
+$desfeito = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/desfazer-salvamento', ['csrf_token' => $csrfEd]));
+assertSame('desfazer salvamento redireciona', 302, $desfeito->status);
+check('desfazer avisa o usuário', str_contains((string) $desfeito->header('Location'), 'ok=archived'));
+assertSame('arte volta ao estado anterior ao salvamento', $antesDoSalvar, (string) $appEd->db->scalar('SELECT background_color FROM creative_posts WHERE id = ?', [$arteEdId]));
+check('o próprio desfazer fica no histórico', str_contains((string) $appEd->db->scalar(
+    'SELECT version_label FROM post_versions WHERE creative_id = ? ORDER BY id DESC LIMIT 1', [$arteEdId]), 'Restaurado'));
+assertSame('desfazer salvamento exige CSRF', 302, $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/desfazer-salvamento', ['csrf_token' => 'x']))->status);
+check('CSRF inválido explica o motivo', str_contains((string) $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/desfazer-salvamento', ['csrf_token' => 'x']))->header('Location'), 'expirada'));
+
+// --- [8] enviar para aprovação ---------------------------------------
+$aprovarSemExport = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/aprovar', ['csrf_token' => $csrfEd]));
+assertSame('arte não exportada volta para a tela', 302, $aprovarSemExport->status);
+check('arte não exportada pede exportação', str_contains((string) $aprovarSemExport->header('Location'), 'Exporte'));
+assertSame('nada foi enviado sem exportação', 0, (int) $appEd->db->scalar('SELECT COUNT(*) FROM approvals'));
+// Marcando como exportada pelo caminho real do repositório de aprovações.
+$appEd->db->run("UPDATE creative_posts SET status = 'exported', export_path = 'artes/ed.png' WHERE id = ?", [$arteEdId]);
+$enviadoEd = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/aprovar', ['csrf_token' => $csrfEd]));
+assertSame('envio para aprovação redireciona', 302, $enviadoEd->status);
+check('envio leva para a revisão', str_contains((string) $enviadoEd->header('Location'), '/approvals/') && str_contains((string) $enviadoEd->header('Location'), 'sent=1'));
+$aprovacaoEd = $appEd->db->one('SELECT * FROM approvals ORDER BY id DESC LIMIT 1');
+check('aprovação gravada com o criativo', $aprovacaoEd !== null && (int) $aprovacaoEd['creative_id'] === $arteEdId);
+assertSame('aprovação nasce pendente', 'pending', (string) $aprovacaoEd['status']);
+check('envio fica auditado pelo estúdio', (int) $appEd->db->scalar("SELECT COUNT(*) FROM audit_log WHERE action = 'approval.sent'") >= 1);
+$telaPendente = $appEd->handle(requisicao('GET', '/studio/posts/' . $arteEdId));
+check('[8] com revisão aberta a tela avisa e linka', str_contains($telaPendente->body, 'aguardando a aprovação do cliente') && str_contains($telaPendente->body, '/approvals/' . (int) $aprovacaoEd['id']));
+check('[8] com revisão aberta não oferece enviar de novo', !str_contains($telaPendente->body, 'Enviar para aprovação</button>'));
+$duplicadoEd = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/aprovar', ['csrf_token' => $csrfEd]));
+check('reenvio é barrado com mensagem', str_contains((string) $duplicadoEd->header('Location'), 'aguardando%20aprova%C3%A7%C3%A3o') || str_contains((string) $duplicadoEd->header('Location'), 'aguardando'));
+assertSame('não nasce uma segunda revisão', 1, (int) $appEd->db->scalar('SELECT COUNT(*) FROM approvals'));
+
+// --- sem portal, o envio não finge que avisou -------------------------
+$appEd->db->run("UPDATE approvals SET status = 'approved', resolved_at = datetime('now') WHERE id = ?", [(int) $aprovacaoEd['id']]);
+$semPortal = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/aprovar', ['csrf_token' => $csrfEd]));
+assertSame('novo ciclo de aprovação é aceito', 302, $semPortal->status);
+assertSame('cliente sem portal não recebe aviso', 0, (int) $appEd->db->scalar(
+    "SELECT COUNT(*) FROM notifications WHERE recipient_type = 'client'"));
+$appEd->db->run(
+    "INSERT INTO client_portal_users (company_id, client_id, name, email, password_hash, is_active)
+     VALUES (1, ?, 'Cliente Ed', 'cliente@ed.example', 'x', 1)",
+    [$clienteEdId]
+);
+$appEd->db->run("UPDATE approvals SET status = 'approved' WHERE status = 'pending'");
+$comPortal = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/aprovar', ['csrf_token' => $csrfEd]));
+assertSame('envio com portal é aceito', 302, $comPortal->status);
+assertSame('cliente com portal é avisado uma vez', 1, (int) $appEd->db->scalar(
+    "SELECT COUNT(*) FROM notifications WHERE recipient_type = 'client'"));
+$appEd->db->run("UPDATE approvals SET status = 'rejected' WHERE status = 'pending'");
+
+// --- [9] reescrever só a legenda -------------------------------------
+$reescreverSemIa = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/reescrever', [
+    'csrf_token' => $csrfEd, 'target' => 'caption',
+]));
+check('reescrita sem IA explica o que falta', str_contains((string) $reescreverSemIa->header('Location'), 'IA%20configurada'));
+$alvoInvalido = $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/reescrever', [
+    'csrf_token' => $csrfEd, 'target' => 'tudo',
+]));
+check('alvo inválido de reescrita é recusado', str_contains((string) $alvoInvalido->header('Location'), 'legenda%20ou%20hashtags') || str_contains((string) $alvoInvalido->header('Location'), 'hashtags'));
+
+$arquivoProvedorEd = __DIR__ . '/.provedor-ia';
+$endpointEd = is_file($arquivoProvedorEd) ? trim((string) file_get_contents($arquivoProvedorEd)) : '';
+if ($endpointEd === '') {
+    check('reescrita com IA tem provedor simulado', false, 'tests/.provedor-ia não foi escrito');
+} else {
+    // Caminho real: config com IA e a mesma rota do editor.
+    $configIaEd = new Config(
+        root: $configEd->root, dataDir: $configEd->dataDir, dbPath: $configEd->dbPath,
+        envFile: $configEd->envFile, basePath: '/edijalmemoura/socialai',
+        publicOrigin: 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+        secretKey: '', cookieSecure: false, installToken: null, timezone: 'America/Sao_Paulo',
+        openaiKey: 'chave-teste', openaiModel: 'gpt-6-luna', openaiEndpoint: $endpointEd,
+    );
+    $appIaEd = new Application($configIaEd);
+    $appIaEd->session->start();
+    $appIaEd->session->put('user_id', 1);
+    $telaIaEd = $appIaEd->handle(requisicao('GET', '/studio/posts/' . $arteEdId));
+    check('com IA o botão de reescrever fica ativo', str_contains($telaIaEd->body, 'Reescrever legenda') && !str_contains($telaIaEd->body, 'Precisa da chave de IA em Configurações'));
+    $csrfIaEd = $appIaEd->session->csrfToken();
+    $antesReescrever = json_decode((string) $appEd->db->scalar('SELECT content_json FROM creative_posts WHERE id = ?', [$arteEdId]), true);
+    $reescreveu = $appIaEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/reescrever', [
+        'csrf_token' => $csrfIaEd, 'target' => 'caption', 'rewrite_instruction' => 'mais curto',
+    ]));
+    assertSame('reescrita de legenda redireciona', 302, $reescreveu->status);
+    check('reescrita avisa o que mudou', str_contains((string) $reescreveu->header('Location'), 'ok=recaption'));
+    $depoisReescrever = json_decode((string) $appEd->db->scalar('SELECT content_json FROM creative_posts WHERE id = ?', [$arteEdId]), true);
+    check('legenda mudou', ($depoisReescrever['caption'] ?? '') !== ($antesReescrever['caption'] ?? ''));
+    assertSame('o resto do conteúdo ficou igual', $antesReescrever['title'], $depoisReescrever['title']);
+    assertSame('o briefing ficou igual', $antesReescrever['visual_brief'], $depoisReescrever['visual_brief']);
+    check('hashtags normalizadas com #', str_contains((string) $depoisReescrever['hashtags'], '#'));
+    assertSame('reescrita vira versão no histórico', 'Reescrita da legenda', (string) $appEd->db->scalar(
+        'SELECT version_label FROM post_versions WHERE creative_id = ? ORDER BY id DESC LIMIT 1', [$arteEdId]));
+    assertSame('reescrita tira o estado exportado', 'draft', (string) $appEd->db->scalar('SELECT status FROM creative_posts WHERE id = ?', [$arteEdId]));
+
+    $antesTags = json_decode((string) $appEd->db->scalar('SELECT content_json FROM creative_posts WHERE id = ?', [$arteEdId]), true);
+    $soTags = $appIaEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/reescrever', [
+        'csrf_token' => $csrfIaEd, 'target' => 'hashtags',
+    ]));
+    check('reescrita de hashtags avisa', str_contains((string) $soTags->header('Location'), 'ok=rehashtags'));
+    $depoisTags = json_decode((string) $appEd->db->scalar('SELECT content_json FROM creative_posts WHERE id = ?', [$arteEdId]), true);
+    assertSame('só as hashtags mudaram', $antesTags['caption'], $depoisTags['caption']);
+    check('hashtags continuam começando com #', str_starts_with((string) $depoisTags['hashtags'], '#'));
+    assertSame('reescrita de hashtags no histórico', 'Reescrita das hashtags', (string) $appEd->db->scalar(
+        'SELECT version_label FROM post_versions WHERE creative_id = ? ORDER BY id DESC LIMIT 1', [$arteEdId]));
+
+    // O gerador em si: limite por rede e falha do provedor.
+    $geradorEd = new \Smia\Studio\StudioGenerator('chave-teste', 'gpt-6-luna', 'gpt-image', 20, 20, $endpointEd);
+    check('reescrever devolve só a legenda pedida', array_keys($geradorEd->reescrever('caption', ['caption' => 'x', 'hashtags' => '#a'], ['network' => 'whatsapp'])) === ['caption', 'hashtags']);
+    check('reecrita respeita o limite da rede', mb_strlen($geradorEd->reescrever('caption', ['caption' => 'x'], ['network' => 'whatsapp'])['caption'] ?? '') <= 700);
+    try {
+        (new \Smia\Studio\StudioGenerator(null))->reescrever('caption', [], []);
+        check('reescrever sem chave é recusado', false, 'não lançou erro');
+    } catch (\Smia\Studio\StudioError $erro) {
+        check('reescrever sem chave é recusado', str_contains($erro->getMessage(), 'IA configurada'), $erro->getMessage());
+    }
+    try {
+        (new \Smia\Studio\StudioGenerator('chave-teste', 'gpt-6-luna', 'gpt-image', 20, 20, $endpointEd . '?cenario=invalido'))
+            ->reescrever('caption', ['caption' => 'x'], ['network' => 'instagram']);
+        check('resposta inválida na reescrita vira erro tratado', false, 'não lançou erro');
+    } catch (\Smia\Studio\StudioError $erro) {
+        check('resposta inválida na reescrita vira erro tratado', str_contains($erro->getMessage(), 'inválido') || str_contains($erro->getMessage(), 'legenda'), $erro->getMessage());
+    }
+}
+
+// --- permissões e isolamento -----------------------------------------
+$appEd->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (1, 'Leitor Ed', 'leitor@ed.example', ?, 'viewer', 0, 1)",
+    [password_hash('LeitorEd2026', PASSWORD_DEFAULT)]
+);
+$appEd->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfEd]));
+$appEd->handle(requisicao('GET', '/login'));
+$appEd->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appEd->session->csrfToken(), 'email' => 'leitor@ed.example', 'password' => 'LeitorEd2026',
+]));
+$csrfLeitorEd = $appEd->session->csrfToken();
+assertSame('leitor não envia para aprovação', 403, $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/aprovar', ['csrf_token' => $csrfLeitorEd]))->status);
+assertSame('leitor não reescreve texto', 403, $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/reescrever', ['csrf_token' => $csrfLeitorEd, 'target' => 'caption']))->status);
+assertSame('leitor não desfaz salvamento', 403, $appEd->handle(requisicao('POST', '/studio/posts/' . $arteEdId . '/desfazer-salvamento', ['csrf_token' => $csrfLeitorEd]))->status);
+// Leitor é barrado antes de olhar a arte (403); quem pode editar recebe 404.
+$appEd->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfLeitorEd]));
+$appEd->handle(requisicao('GET', '/login'));
+$appEd->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appEd->session->csrfToken(), 'email' => 'dona@ed.example', 'password' => 'EdForte2026',
+]));
+$csrfDonaEd = $appEd->session->csrfToken();
+assertSame('arte inexistente responde 404', 404, $appEd->handle(requisicao('POST', '/studio/posts/99999/aprovar', ['csrf_token' => $csrfDonaEd]))->status);
+assertSame('arte inexistente no desfazer responde 404', 404, $appEd->handle(requisicao('POST', '/studio/posts/99999/desfazer-salvamento', ['csrf_token' => $csrfDonaEd]))->status);
+assertSame('arte inexistente na reescrita responde 404', 404, $appEd->handle(requisicao('POST', '/studio/posts/99999/reescrever', ['csrf_token' => $csrfDonaEd, 'target' => 'caption']))->status);
+
+// --- contraste das cores novas (AA) ---------------------------------
+$luminanciaEd = static function (string $hex): float {
+    $hex = ltrim($hex, '#');
+    $canais = [hexdec(substr($hex, 0, 2)), hexdec(substr($hex, 2, 2)), hexdec(substr($hex, 4, 2))];
+    $linear = array_map(static fn (int $c): float => ($c / 255) <= 0.03928
+        ? ($c / 255) / 12.92
+        : ((($c / 255) + 0.055) / 1.055) ** 2.4, $canais);
+
+    return 0.2126 * $linear[0] + 0.7152 * $linear[1] + 0.0722 * $linear[2];
+};
+$contrasteEd = static function (string $frente, string $fundo) use ($luminanciaEd): float {
+    $a = $luminanciaEd($frente);
+    $b = $luminanciaEd($fundo);
+    [$maior, $menor] = $a > $b ? [$a, $b] : [$b, $a];
+
+    return ($maior + 0.05) / ($menor + 0.05);
+};
+$paresEditor = [
+    'status de salvamento (claro)' => ['#6b7183', '#fbfcfe'],
+    'status com alteração (claro)' => ['#8a5a0a', '#fffaf0'],
+    'arte salva (claro)' => ['#12784e', '#fbfcfe'],
+    'atalho Ctrl+S (claro)' => ['#4c5468', '#ffffff'],
+    'texto alternativo (claro)' => ['#6b7183', '#fafbfe'],
+    'miniatura da legenda (claro)' => ['#6b7183', '#fafbfe'],
+    'feedback de upload (claro)' => ['#6b5a12', '#ffffff'],
+    'status de salvamento (escuro)' => ['#98a1b5', '#141924'],
+    'status com alteração (escuro)' => ['#f0bf72', '#221d12'],
+    'arte salva (escuro)' => ['#7fd8b6', '#141924'],
+    'atalho Ctrl+S (escuro)' => ['#cfd6e6', '#1b2130'],
+    'texto alternativo (escuro)' => ['#98a1b5', '#141924'],
+    'miniatura da legenda (escuro)' => ['#98a1b5', '#141924'],
+    'feedback de upload (escuro)' => ['#e0c07a', '#141924'],
+    'barra fixa no celular (escuro)' => ['#98a1b5', '#161b26'],
+];
+foreach ($paresEditor as $nomePar => [$frente, $fundo]) {
+    $taxa = $contrasteEd($frente, $fundo);
+    check('contraste AA no editor em ' . $nomePar . ' (' . number_format($taxa, 2, ',', '.') . ':1)', $taxa >= 4.5);
+}
+
+// --- CSS: os componentes novos e o par no modo escuro -----------------
+$cssEd = (string) file_get_contents(__DIR__ . '/../public/assets/studio.css');
+foreach (['.canvas-status', '.canvas-alt-text', '.canvas-inline-editor', '.caption-preview', '.rewrite-box', '.upload-feedback', '.mobile-save-bar', '.canvas-history'] as $classe) {
+    check('CSS do editor tem ' . $classe, str_contains($cssEd, $classe));
+}
+check('[13] CSS da grade fica sobre a prancheta, não na exportação', str_contains($cssEd, '.canvas-inline-editor'));
+$paresEscuros = [
+    '.canvas-status', '.canvas-alt-text', '.canvas-history', '.caption-preview',
+    '.rewrite-box', '.upload-feedback', '.mobile-save-bar', '.save-hint kbd',
+];
+$semPar = [];
+foreach ($paresEscuros as $classe) {
+    $achados = substr_count($cssEd, 'html[data-theme="escuro"] ' . $classe);
+    if ($achados === 0) {
+        $semPar[] = $classe;
+    }
+}
+check('todo componente novo da v1.21 tem par no modo escuro', $semPar === [], implode(', ', $semPar));
+
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];
 $iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));

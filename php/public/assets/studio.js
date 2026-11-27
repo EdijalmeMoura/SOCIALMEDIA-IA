@@ -42,7 +42,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let selecionado = elementos.find((el) => el.id === 'title') || elementos[0];
   let fundo = canvas.dataset.bgColor || '#3158d8';
   let guias = true;
+  let grade = false;
   let zoom = 0;
+  // `sujo` nasce aqui: antes era declarado no fim do arquivo e só o submit do
+  // formulário o marcava, então um gesto na prancheta saía sem aviso nenhum.
+  let sujo = false;
 
   const imagem = new Image();
   let imagemPronta = false;
@@ -57,48 +61,115 @@ document.addEventListener('DOMContentLoaded', () => {
   const botaoDesfazer = document.querySelector('[data-undo]');
   const rotuloZoom = document.querySelector('[data-zoom-value]');
   const ajudaEncaixe = document.querySelector('[data-fit-help]');
+  // Miniatura da aba Legenda: declarada aqui porque `desenhar()` a agenda, e
+  // `desenhar()` roda no fim da inicialização — antes destas linhas, TDZ.
+  const previewCaixa = document.querySelector('[data-caption-preview]');
+  const previewImagem = document.querySelector('[data-preview-image]');
+  const previewTitulo = document.querySelector('[data-preview-title]');
+  let previewAgendado = 0;
+  const statusSalvar = document.querySelector('[data-save-status]');
+  const estadoSalvar = document.querySelector('[data-save-state]');
+  const textoEstado = document.querySelector('[data-save-state-text]');
+  const formulario = document.getElementById('studioSave');
+  const rotuloSalvo = statusSalvar?.dataset.savedLabel || 'Tudo salvo';
   const clamp = (valor, min, max) => Math.max(min, Math.min(max, valor));
 
   /* ---------- histórico ---------- */
 
   const historico = [];
+  const refeitos = [];
   const LIMITE_HISTORICO = 40;
-  let estadoAntesDoGesto = null;
+  const botaoRefazer = document.querySelector('[data-redo]');
+  const contadorHistorico = document.querySelector('[data-history]');
 
   const copiar = () => JSON.parse(JSON.stringify(layout.elements));
 
-  function registrar() {
-    historico.push(copiar());
-    if (historico.length > LIMITE_HISTORICO) historico.shift();
-    if (botaoDesfazer) botaoDesfazer.disabled = false;
+  function atualizarHistorico() {
+    if (botaoDesfazer) botaoDesfazer.disabled = historico.length === 0;
+    if (botaoRefazer) botaoRefazer.disabled = refeitos.length === 0;
+    if (contadorHistorico) {
+      contadorHistorico.textContent = String(historico.length);
+      contadorHistorico.title = historico.length === 0
+        ? 'Nenhum passo para desfazer'
+        : `${historico.length} ${historico.length === 1 ? 'passo' : 'passos'} para desfazer`;
+    }
   }
 
-  function desfazer() {
-    const anterior = historico.pop();
-    if (!anterior) {
-      if (botaoDesfazer) botaoDesfazer.disabled = true;
-      return;
-    }
-    // Reaplica em cima dos mesmos objetos: `elementos`, `moldura` e
-    // `selecionado` são referências vivas. Trocar o array no lugar quebraria
-    // a seleção e os controles da direita.
-    const porId = new Map(anterior.map((el) => [el.id, el]));
+  function registrar() {
+    // Todo ajuste que entra no histórico é uma alteração não salva. Fica aqui
+    // (e não em cada listener) para nenhum caminho novo esquecer de avisar.
+    marcarSujo();
+    historico.push(copiar());
+    if (historico.length > LIMITE_HISTORICO) historico.shift();
+    // Um ajuste novo invalida o futuro que estava refeito: senão Ctrl+Shift+Z
+    // traria de volta um estado que não é mais filho do atual.
+    refeitos.length = 0;
+    atualizarHistorico();
+  }
+
+  /** Reaplica um estado em cima dos mesmos objetos (referências vivas). */
+  function aplicarEstado(estado) {
+    const porId = new Map(estado.map((el) => [el.id, el]));
     for (const el of layout.elements) {
       const salvo = porId.get(el.id);
       if (salvo) Object.assign(el, salvo);
     }
     sincronizarControles();
     desenhar();
-    if (botaoDesfazer) botaoDesfazer.disabled = historico.length === 0;
+    atualizarHistorico();
+  }
+
+  function desfazer() {
+    const anterior = historico.pop();
+    if (!anterior) {
+      atualizarHistorico();
+      return;
+    }
+    refeitos.push(copiar());
+    aplicarEstado(anterior);
+    // Desfazer também é uma alteração: sem isso, sair da tela depois de
+    // Ctrl+Z não avisava nada.
+    marcarSujo();
+  }
+
+  function refazer() {
+    const proximo = refeitos.pop();
+    if (!proximo) {
+      atualizarHistorico();
+      return;
+    }
+    historico.push(copiar());
+    aplicarEstado(proximo);
+    marcarSujo();
   }
 
   botaoDesfazer?.addEventListener('click', desfazer);
+  botaoRefazer?.addEventListener('click', refazer);
+  atualizarHistorico();
+
   document.addEventListener('keydown', (evento) => {
     if (!editavel) return;
-    const digitando = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
-    if ((evento.ctrlKey || evento.metaKey) && evento.key.toLowerCase() === 'z' && !digitando) {
+    const digitando = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)
+      || document.activeElement?.isContentEditable === true;
+    const comando = evento.ctrlKey || evento.metaKey;
+    const tecla = evento.key.toLowerCase();
+
+    // Ctrl+S salva de qualquer aba, sem depender do botão estar à vista.
+    if (comando && tecla === 's') {
       evento.preventDefault();
-      desfazer();
+      salvarAgora();
+      return;
+    }
+    if (comando && tecla === 'z' && !digitando) {
+      evento.preventDefault();
+      if (evento.shiftKey) refazer();
+      else desfazer();
+      return;
+    }
+    // Ctrl+Y é o refazer de quem vem do Windows.
+    if (comando && tecla === 'y' && !digitando) {
+      evento.preventDefault();
+      refazer();
       return;
     }
     // Setas movem o elemento selecionado: ajuste fino sem brigar com o mouse.
@@ -271,6 +342,36 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.restore();
     }
 
+    // Grade de alinhamento (item 13): só na tela, nunca na exportação —
+    // `desenhar(false)` é o caminho da arte final.
+    if (grade && mostrarSelecao && editavel) {
+      ctx.save();
+      const passo = Math.max(24, Math.round(largura / 12));
+      ctx.strokeStyle = 'rgba(255,255,255,.18)';
+      ctx.lineWidth = Math.max(1, largura * 0.0012);
+      ctx.beginPath();
+      for (let x = passo; x < largura; x += passo) {
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, altura);
+      }
+      for (let y = passo; y < altura; y += passo) {
+        ctx.moveTo(0, y);
+        ctx.lineTo(largura, y);
+      }
+      ctx.stroke();
+      // Terços: onde o olho procura o assunto.
+      ctx.strokeStyle = 'rgba(255,255,255,.34)';
+      ctx.beginPath();
+      for (const fracao of [1 / 3, 2 / 3]) {
+        ctx.moveTo(largura * fracao, 0);
+        ctx.lineTo(largura * fracao, altura);
+        ctx.moveTo(0, altura * fracao);
+        ctx.lineTo(largura, altura * fracao);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Guias de encaixe: mostram a margem segura e o centro da arte.
     if (guias && editavel && selecionado) {
       ctx.save();
@@ -319,6 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (semImagem) semImagem.hidden = imagemPronta;
+    agendarPreview();
   }
 
   /* ---------- encaixe ---------- */
@@ -407,6 +509,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-align]').forEach((botao) => botao.addEventListener('click', () => {
     if (!selecionado || selecionado.id === 'image') return;
     registrar();
+    marcarSujo();
     selecionado.align = botao.dataset.align;
     sincronizarControles();
     desenhar();
@@ -415,6 +518,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('[data-bold]')?.addEventListener('click', () => {
     if (!selecionado || selecionado.id === 'image') return;
     registrar();
+    marcarSujo();
     selecionado.bold = !selecionado.bold;
     sincronizarControles();
     desenhar();
@@ -424,6 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('[data-fill]')?.addEventListener('click', () => {
     if (!selecionado || selecionado.id === 'image') return;
     registrar();
+    marcarSujo();
     selecionado.fill = selecionado.fill ? '' : '#1b2344';
     sincronizarControles();
     desenhar();
@@ -445,6 +550,7 @@ document.addEventListener('DOMContentLoaded', () => {
       botao.classList.toggle('is-on', botao.dataset.fit === fit);
     });
     if (ajudaEncaixe) ajudaEncaixe.textContent = ajudaPorEncaixe[fit] || '';
+    marcarSujo();
     desenhar();
   }
   document.querySelectorAll('[data-fit]').forEach((botao) => {
@@ -456,6 +562,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('[data-image-editable]')?.addEventListener('click', () => {
     if (!moldura) return;
     registrar();
+    marcarSujo();
     moldura.loose = !moldura.loose;
     if (!moldura.loose) {
       Object.assign(moldura, { x: 0, y: 0, w: canvas.width, h: canvas.height });
@@ -567,20 +674,104 @@ document.addEventListener('DOMContentLoaded', () => {
     desenhar();
   });
 
-  const soltar = () => { gesto = null; };
+  const soltar = () => {
+    // Fecha o gesto e marca a arte como alterada: mover/redimensionar/girar
+    // mudam o layout tanto quanto digitar no formulário.
+    if (gesto) marcarSujo();
+    gesto = null;
+  };
   canvas.addEventListener('pointerup', soltar);
   canvas.addEventListener('pointercancel', soltar);
 
-  // Duplo clique: edita o texto direto na prancheta, sem procurar o campo.
+  /* ---------- edição no lugar (duplo clique sobre a arte) ---------- */
+
+  // Um contenteditable sobreposto ao elemento: o texto é editado onde ele
+  // aparece. Ao sair (blur, Enter, Esc ou clique fora), o valor volta para o
+  // campo do painel — que continua sendo a fonte da verdade no envio.
+  let editorInline = null;
+  let textoAntesDoInline = '';
+
+  function fecharInline(confirmar = true) {
+    if (!editorInline) return;
+    const { el, caixa } = editorInline;
+    const campo = campos.find((input) => input.dataset.layoutText === el.id);
+    const valor = caixa.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    // Sair do estado antes de remover: `remove()` pode disparar blur, e o
+    // handler de blur chamaria esta função de novo em recursão.
+    editorInline = null;
+    canvas.style.pointerEvents = '';
+    caixa.remove();
+    if (confirmar && campo && valor !== textoAntesDoInline) {
+      campo.value = valor;
+      el.text = valor;
+      registrar();
+      marcarSujo();
+      atualizarContadores();
+    }
+    desenhar();
+    canvas.focus?.();
+  }
+
+  function editarNoLugar(el) {
+    if (!el || el.id === 'image' || el.id === 'logo') return;
+    fecharInline();
+    const retangulo = canvas.getBoundingClientRect();
+    const escalaX = retangulo.width / canvas.width;
+    const escalaY = retangulo.height / canvas.height;
+    const caixa = document.createElement('div');
+    caixa.className = 'canvas-inline-editor';
+    caixa.contentEditable = 'true';
+    caixa.spellcheck = false;
+    caixa.setAttribute('role', 'textbox');
+    caixa.setAttribute('aria-label', `Editar ${el.label || el.id} direto na arte`);
+    caixa.textContent = el.text;
+    Object.assign(caixa.style, {
+      left: `${retangulo.left + el.x * escalaX}px`,
+      top: `${retangulo.top + el.y * escalaY}px`,
+      width: `${Math.max(60, el.w * escalaX)}px`,
+      minHeight: `${Math.max(28, el.h * escalaY)}px`,
+      fontSize: `${Math.max(12, el.fontSize * escalaY)}px`,
+      color: el.color || '#fff',
+      fontWeight: el.bold ? '800' : '500',
+      textAlign: el.align || 'left',
+      lineHeight: '1.18',
+    });
+    document.body.append(caixa);
+    canvas.style.pointerEvents = 'none';
+    textoAntesDoInline = el.text;
+    editorInline = { el, caixa };
+    // `preventScroll`: focar um elemento fora da vista rola a página, e o
+    // handler de scroll fecharia a edição no mesmo instante.
+    caixa.focus({ preventScroll: true });
+    const selecao = window.getSelection();
+    const intervalo = document.createRange();
+    intervalo.selectNodeContents(caixa);
+    selecao?.removeAllRanges();
+    selecao?.addRange(intervalo);
+    caixa.addEventListener('keydown', (evento) => {
+      if (evento.key === 'Escape') {
+        evento.preventDefault();
+        fecharInline(false);
+      }
+      // Enter quebra linha de propósito só com Shift; Enter sozinho confirma.
+      if (evento.key === 'Enter' && !evento.shiftKey) {
+        evento.preventDefault();
+        fecharInline(true);
+      }
+      evento.stopPropagation();
+    });
+    caixa.addEventListener('blur', () => fecharInline(true));
+  }
+
+  // A caixa é `position: fixed`: ao rolar, ela deixaria de cobrir o texto.
+  window.addEventListener('scroll', () => fecharInline(true), true);
+
   canvas.addEventListener('dblclick', (evento) => {
     if (!editavel) return;
     const el = elementoEm(ponto(evento));
     if (!el) return;
-    const campo = campos.find((input) => input.dataset.layoutText === el.id);
-    if (!campo) return;
     document.querySelector('[data-tab="arte"]')?.click();
-    campo.focus();
-    campo.select?.();
+    editarNoLugar(el);
   });
 
   /* ---------- contadores e cópia ---------- */
@@ -646,9 +837,39 @@ document.addEventListener('DOMContentLoaded', () => {
       painel.classList.toggle('is-active', mostrar);
       painel.hidden = !mostrar;
     });
+    // A miniatura só é gerada com a aba aberta: ao abrir, atualiza já.
+    if (botao.dataset.tab === 'legenda') agendarPreview(true);
   }));
 
-  /* ---------- salvamento e exportação ---------- */
+  /* ---------- estado de salvamento ---------- */
+
+  /**
+   * Marca a arte como alterada e atualiza a barra de status.
+   *
+   * `marcarSujo()` é o único caminho: qualquer gesto, tecla, cor ou campo que
+   * muda a arte chama daqui, então a barra e o aviso de saída nunca discordam.
+   */
+  function marcarSujo() {
+    sujo = true;
+    if (estadoSalvar) estadoSalvar.classList.add('is-dirty');
+    if (textoEstado) textoEstado.textContent = 'Alterações não salvas';
+    if (statusSalvar) statusSalvar.classList.add('is-dirty');
+  }
+
+  function marcarLimpo() {
+    sujo = false;
+    if (estadoSalvar) estadoSalvar.classList.remove('is-dirty');
+    if (textoEstado) textoEstado.textContent = rotuloSalvo;
+    if (statusSalvar) statusSalvar.classList.remove('is-dirty');
+  }
+
+  /** Envia o formulário de edição (usado pelo Ctrl+S e pela barra fixa). */
+  function salvarAgora() {
+    if (!formulario) return;
+    if (typeof formulario.reportValidity === 'function' && !formulario.reportValidity()) return;
+    fecharInline();
+    formulario.requestSubmit();
+  }
 
   // O layout enviado no salvamento é exatamente o que está na tela.
   function prepararLayout() {
@@ -660,28 +881,97 @@ document.addEventListener('DOMContentLoaded', () => {
     if (campo) campo.value = JSON.stringify({ elements: layout.elements });
   }
 
-  document.getElementById('studioSave')?.addEventListener('submit', prepararLayout);
-
-  document.getElementById('imageGenerationForm')?.addEventListener('submit', () => {
-    const origem = document.getElementById('imagePromptSave');
-    const destino = document.getElementById('imageGenerationPrompt');
-    if (origem && destino) destino.value = origem.value;
+  formulario?.addEventListener('submit', (evento) => {
+    prepararLayout();
+    // Os botões de reescrita enviam o mesmo formulário para outra rota: só o
+    // salvamento de verdade limpa o estado "alterações não salvas".
+    const acao = evento.submitter?.formAction || formulario.getAttribute('action') || '';
+    if (!acao.includes('/reescrever')) marcarLimpo();
   });
+  formulario?.addEventListener('input', marcarSujo);
+
+  /* ---------- grade e guias ---------- */
+
+  document.querySelector('[data-grid]')?.addEventListener('click', (evento) => {
+    grade = !grade;
+    const botao = evento.currentTarget;
+    botao.classList.toggle('is-on', grade);
+    botao.setAttribute('aria-pressed', grade ? 'true' : 'false');
+    desenhar();
+  });
+
+  document.querySelector('[data-guides]')?.addEventListener('click', (evento) => {
+    // O botão já tinha o rótulo "Guias" e nascia ligado, mas não fazia nada:
+    // agora liga e desliga a margem segura e o centro.
+    guias = !guias;
+    const botao = evento.currentTarget;
+    botao.classList.toggle('is-on', guias);
+    botao.setAttribute('aria-pressed', guias ? 'true' : 'false');
+    desenhar();
+  });
+
+  /* ---------- miniatura na aba Legenda ---------- */
+
+  /**
+   * Copia a prancheta para a miniatura da aba Legenda.
+   *
+   * Feito com `toDataURL` (não com o canvas inteiro) porque o desenho pode ser
+   * grande; a miniatura é reduzida pelo CSS. Agendado com `requestAnimationFrame`
+   * para não redesenhar uma vez por pixel durante o arrasto.
+   */
+  function agendarPreview(forcar = false) {
+    if (!previewCaixa || !previewImagem) return;
+    // Enquanto a aba Legenda está fechada não há quem veja a miniatura: só é
+    // gerada quando ela abre (ou por pedido explícito ao trocar de aba).
+    const painel = document.getElementById('tabLegenda');
+    if (!forcar && painel && painel.hidden) return;
+    if (previewAgendado) return;
+    previewAgendado = window.requestAnimationFrame(() => {
+      previewAgendado = 0;
+      try {
+        previewImagem.src = canvas.toDataURL('image/jpeg', 0.72);
+        if (previewTitulo) {
+          previewTitulo.textContent = document.querySelector('[data-layout-text="title"]')?.value || '';
+        }
+        previewCaixa.hidden = false;
+      } catch {
+        // Canvas contaminado por imagem externa: a miniatura simplesmente
+        // não aparece, e o resto do editor continua funcionando.
+        previewCaixa.hidden = true;
+      }
+    });
+  }
+
+  /* ---------- imagem de fundo e upload ---------- */
+
+  const feedbackUpload = document.querySelector('[data-upload-feedback]');
+  const rotuloUpload = document.querySelector('[data-upload-label]');
 
   document.querySelector('[data-image-upload]')?.addEventListener('change', (evento) => {
-    if (evento.target.files?.length) evento.target.form.requestSubmit();
+    const arquivo = evento.target.files?.[0];
+    if (!arquivo) return;
+    // Feedback imediato: o envio de 8 MB demora e a tela parecia travada.
+    if (feedbackUpload) feedbackUpload.hidden = false;
+    if (rotuloUpload) rotuloUpload.classList.add('is-busy');
+    evento.target.form?.requestSubmit();
   });
+
+  /* ---------- exportação ---------- */
 
   document.querySelectorAll('[data-export]').forEach((botao) => botao.addEventListener('click', () => {
     const formato = botao.dataset.export;
+    const rotulo = botao.textContent;
     botao.disabled = true;
+    botao.textContent = 'Exportando…';
+    fecharInline(false);
     prepararLayout();
-    desenhar(false); // a arte final não leva a moldura de seleção
+    desenhar(false); // a arte final não leva a moldura de seleção nem a grade
     canvas.toBlob(async (blob) => {
       desenhar(true);
       if (!blob) {
         window.alert('Não foi possível renderizar a arte.');
         botao.disabled = false;
+        botao.textContent = rotulo;
         return;
       }
       const dados = new FormData();
@@ -691,25 +981,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const resposta = await fetch(canvas.dataset.exportUrl, { method: 'POST', body: dados });
         const resultado = await resposta.json();
         if (!resposta.ok) throw new Error(resultado.error || 'Erro ao exportar');
-        sujo = false; // exportar já salvou o layout; não faz sentido avisar
+        marcarLimpo(); // exportar já salvou o layout; não faz sentido avisar
         window.location.reload();
       } catch (erro) {
         window.alert(erro.message);
         botao.disabled = false;
+        botao.textContent = rotulo;
       }
     }, formato === 'jpg' ? 'image/jpeg' : 'image/png', 0.95);
   }));
 
-  // Alterações não salvas: sair sem avisar perderia o ajuste fino.
-  let sujo = false;
-  document.getElementById('studioSave')?.addEventListener('input', () => { sujo = true; });
-  document.querySelector('[data-undo]')?.addEventListener('click', () => { sujo = true; });
+  /* ---------- sair com alteração pendente ---------- */
+
   window.addEventListener('beforeunload', (evento) => {
     if (!sujo) return;
     evento.preventDefault();
     evento.returnValue = '';
   });
-  document.getElementById('studioSave')?.addEventListener('submit', () => { sujo = false; });
 
   atualizarContadores();
   aplicarZoom();

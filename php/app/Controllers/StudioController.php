@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Smia\Controllers;
 
 use Smia\Admin\SettingsRepository;
+use Smia\Approvals\ApprovalError;
+use Smia\Approvals\ApprovalRepository;
+use Smia\Approvals\PortalRepository;
 use Smia\Auth\Authenticator;
 use Smia\Http\Request;
 use Smia\Http\Response;
@@ -63,6 +66,11 @@ final class StudioController
         private readonly Session $session,
         private readonly View $view,
         private readonly ?SettingsRepository $ajustes = null,
+        // Aprovação e reescrita são opcionais no construtor: um teste que só
+        // edita a prancheta não deve ser obrigado a montar os dois repositórios.
+        private readonly ?ApprovalRepository $aprovacoes = null,
+        private readonly ?PortalRepository $portal = null,
+        private readonly ?StudioGenerator $geradorTexto = null,
     ) {
     }
 
@@ -329,9 +337,14 @@ final class StudioController
             default => $this->avisoDaQuery($req),
         };
 
-        return $this->render('studio/editor', $req, $this->dadosEditor($arte, $usuario) + [
+        $dados = $this->dadosEditor($arte, $usuario);
+
+        return $this->render('studio/editor', $req, $dados + [
             'aviso' => $aviso,
             'erro' => $req->input('erro'),
+            // "Desfazer este salvamento" só faz sentido no instante seguinte ao
+            // salvamento — depois disso a lista de versões já conta a história.
+            'pode_desfazer' => (string) ($req->input('ok') ?? '') === 'saved' && $dados['salvamento_recente'],
         ]);
     }
 
@@ -470,7 +483,9 @@ final class StudioController
         try {
             $enviado = $this->upload->store($_FILES['file'] ?? [], (int) $arte['client_id'], 'studio');
             if ($enviado === null) {
-                return Response::redirect($this->config->url('/studio/posts/' . $arte['id']));
+                // Nenhum arquivo escolhido: dizer isso é melhor que recarregar
+                // a tela como se nada tivesse sido pedido.
+                return $this->voltarComErro($arte, 'Escolha um arquivo de imagem para enviar.');
             }
             $temporario = $enviado['filename'];
             $bytes = (string) file_get_contents($this->upload->diretorio() . '/' . $temporario);
@@ -649,6 +664,173 @@ final class StudioController
         return Response::redirect($this->config->url('/studio/posts/' . $novoId . '?created=1'));
     }
 
+    /**
+     * Envia a arte exportada para a aprovação do cliente.
+     *
+     * Mesmo caminho da tela de Aprovações: exige `exported` + `export_path`
+     * (é o arquivo que o cliente vê) e avisa quem tem acesso ao portal. Sem
+     * esse aviso, o pedido ficaria esperando numa tela que ninguém abre.
+     */
+    public function sendToApproval(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario) || $this->aprovacoes === null) {
+            return $this->semPermissao($req);
+        }
+        $arte = $this->arteDoUsuario($req, $usuario, $params);
+        if ($arte instanceof Response) {
+            return $arte;
+        }
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return $this->voltarComErro($arte, 'Sessão expirada. Recarregue a página e envie novamente.');
+        }
+
+        $empresa = (int) $arte['company_id'];
+        $fonte = $this->aprovacoes->fonte('creative', (int) $arte['id'], (int) $arte['client_id'], $empresa);
+        if ($fonte === null) {
+            // A arte foi editada depois de exportada: o arquivo antigo não vale.
+            return $this->voltarComErro($arte, 'Exporte a arte antes de enviar para aprovação.');
+        }
+
+        try {
+            $id = $this->aprovacoes->enviar(
+                $empresa,
+                (int) $arte['client_id'],
+                (int) $usuario['id'],
+                'creative',
+                (int) $arte['id'],
+                ApprovalRepository::snapshot('creative', $fonte),
+                Layout::textoCurto($req->input('message') ?? '', 500),
+            );
+        } catch (ApprovalError $erro) {
+            return $this->voltarComErro($arte, $erro->getMessage());
+        }
+
+        if ($this->portal !== null) {
+            $aprovacao = $this->aprovacoes->aprovacao($id, $empresa);
+            $this->portal->avisarCliente(
+                $empresa,
+                (int) $arte['client_id'],
+                'Novo conteúdo para revisão',
+                (string) ($aprovacao['title'] ?? $arte['subject']),
+                '/portal/approvals/' . $id,
+            );
+        }
+        $this->aprovacoes->auditoria($empresa, (int) $usuario['id'], 'approval.sent', 'creative:' . $arte['id'] . ' -> ' . $id);
+
+        return Response::redirect($this->config->url('/approvals/' . $id . '?sent=1'));
+    }
+
+    /**
+     * Reescreve só uma parte do texto, mantendo o resto do conteúdo.
+     *
+     * "Gerar outra versão" refazia tudo e apagava o que já estava bom; aqui o
+     * usuário escolhe legenda (texto + hashtags) ou só as hashtags.
+     */
+    public function rewrite(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario)) {
+            return $this->semPermissao($req);
+        }
+        $arte = $this->arteDoUsuario($req, $usuario, $params);
+        if ($arte instanceof Response) {
+            return $arte;
+        }
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return $this->voltarComErro($arte, 'Sessão expirada. Recarregue a página e tente novamente.');
+        }
+
+        $alvo = (string) ($req->input('target') ?? '');
+        if (!in_array($alvo, ['caption', 'hashtags'], true)) {
+            return $this->voltarComErro($arte, 'Escolha o que reescrever: legenda ou hashtags.');
+        }
+        $gerador = $this->geradorTexto ?? $this->gerador;
+        if (!$gerador->iaConfigurada()) {
+            return $this->voltarComErro($arte, 'A reescrita pede a IA configurada. Em Ajustes, informe a chave do provedor.');
+        }
+
+        $conteudo = json_decode((string) $arte['content_json'], true);
+        $conteudo = is_array($conteudo) ? $conteudo : [];
+        $atual = [
+            'title' => (string) ($conteudo['title'] ?? ''),
+            'caption' => (string) ($conteudo['caption'] ?? ''),
+            'hashtags' => (string) ($conteudo['hashtags'] ?? ''),
+        ];
+
+        try {
+            $novo = $gerador->reescrever(
+                $alvo,
+                $atual,
+                [
+                    'subject' => (string) $arte['subject'],
+                    'network' => (string) $arte['network'],
+                    'objective' => (string) $arte['objective'],
+                    'tone' => (string) $arte['tone'],
+                    'format' => Layout::rotulo((string) $arte['format_key']),
+                    'client' => (string) (($arte['trade_name'] ?? '') ?: $arte['company_name']),
+                    'segment' => (string) $arte['segment'],
+                ],
+                (string) ($req->input('instruction') ?? ''),
+            );
+        } catch (StudioError $erro) {
+            return $this->voltarComErro($arte, $erro->getMessage());
+        }
+
+        foreach ($novo as $campo => $valor) {
+            if (array_key_exists($campo, $conteudo) || in_array($campo, ['caption', 'hashtags'], true)) {
+                $conteudo[$campo] = $valor;
+            }
+        }
+
+        $this->repo->atualizar((int) $arte['id'], (int) $arte['company_id'], (int) $usuario['id'], [
+            'content_json' => json_encode($conteudo, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            'export_path' => null,
+            'status' => 'draft',
+        ], $alvo === 'caption' ? 'Reescrita da legenda' : 'Reescrita das hashtags');
+
+        return Response::redirect($this->config->url('/studio/posts/' . $arte['id'] . '?ok=' . ($alvo === 'caption' ? 'recaption' : 'rehashtags')));
+    }
+
+    /**
+     * Desfaz o último salvamento manual, voltando ao estado anterior.
+     *
+     * É o "Ctrl+Z" do salvamento: a lista de versões já existia, mas descobrir
+     * qual delas é a anterior exigia abrir a aba. O botão só aparece em
+     * `?ok=saved`, logo depois do salvamento que o criou.
+     */
+    public function undoLastSave(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario)) {
+            return $this->semPermissao($req);
+        }
+        $arte = $this->arteDoUsuario($req, $usuario, $params);
+        if ($arte instanceof Response) {
+            return $arte;
+        }
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return $this->voltarComErro($arte, 'Sessão expirada. Recarregue a página e tente novamente.');
+        }
+
+        $versao = $this->repo->estadoAnteriorAoSalvamento((int) $arte['id'], (int) $arte['company_id'], (int) $usuario['id']);
+        if ($versao === null) {
+            return $this->voltarComErro($arte, 'Não há salvamento recente para desfazer.');
+        }
+        $this->repo->restaurar((int) $arte['id'], (int) $arte['company_id'], (int) $usuario['id'], $versao);
+
+        return Response::redirect($this->config->url('/studio/posts/' . $arte['id'] . '?ok=archived'));
+    }
+
     public function restore(Request $req, array $params): Response
     {
         $usuario = $this->precisaLogin();
@@ -753,6 +935,47 @@ final class StudioController
             'pode_editar' => $this->podeEditar($usuario),
             'imagem_url' => $arte['image_path'] ? $this->config->url('/studio/files?file=' . rawurlencode((string) $arte['image_path'])) : null,
             'logo_url' => $arte['logo_path'] ? $this->config->url('/clients/file?file=' . rawurlencode((string) $arte['logo_path'])) : null,
+            // Envio para aprovação: a arte precisa estar exportada, e o cliente
+            // precisa ter alguém com acesso ao portal — senão o envio some numa
+            // caixa que ninguém abre. As duas condições são ditas na tela.
+            'pode_enviar' => $this->podeEditar($usuario) && $this->aprovacoes !== null,
+            'exportada' => (string) $arte['export_path'] !== '',
+            'portal_ativo' => $this->portalDoCliente((int) $arte['company_id'], (int) $arte['client_id']),
+            'aprovacao_pendente' => $this->aprovacaoPendente((int) $arte['id'], (int) $empresa),
+            // "Desfazer este salvamento": só depois de salvar e só do próprio autor.
+            'salvamento_recente' => $this->repo->ultimoSalvamento((int) $arte['id'], (int) $empresa, (int) $usuario['id']) !== null,
+        ];
+    }
+
+    /** Quantos acessos ativos ao portal este cliente tem (0 = ninguém vê). */
+    private function portalDoCliente(int $empresa, int $cliente): int
+    {
+        if ($this->portal === null) {
+            return 0;
+        }
+
+        return count(array_filter(
+            $this->portal->contas($empresa),
+            static fn (array $conta): bool => (int) $conta['client_id'] === $cliente && (int) ($conta['is_active'] ?? 1) === 1
+        ));
+    }
+
+    /**
+     * Revisão aguardando resposta deste conteúdo.
+     *
+     * Sem isso o editor oferecia "Enviar para aprovação" para uma arte que já
+     * estava na fila, e o usuário descobria o duplicado por mensagem de erro.
+     */
+    private function aprovacaoPendente(int $creativeId, int $empresa): ?array
+    {
+        if ($this->aprovacoes === null) {
+            return null;
+        }
+        $linha = $this->aprovacoes->pendenteDoCriativo($creativeId, $empresa);
+
+        return $linha === null ? null : [
+            'id' => (int) $linha['id'],
+            'enviado_em' => (string) ($linha['submitted_at'] ?? ''),
         ];
     }
 
@@ -838,6 +1061,9 @@ final class StudioController
             'duplicated' => 'Cópia criada. Ela é independente da arte original.',
             'imagem' => 'Imagem de capa gerada na criação.',
             'deleted' => 'Criação excluída.',
+            'recaption' => 'Legenda reescrita. O resto do conteúdo ficou como estava.',
+            'rehashtags' => 'Hashtags reescritas. Confira antes de exportar.',
+            'archived' => 'Salvamento desfeito: a versão anterior foi restaurada.',
             default => null,
         };
     }

@@ -154,6 +154,24 @@ final class ApprovalRepository
         );
     }
 
+    /**
+     * Revisão ainda em aberto para uma arte.
+     *
+     * Usada pelo editor do estúdio para não oferecer "Enviar para aprovação"
+     * duas vezes e para mostrar em que pé está o pedido.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function pendenteDoCriativo(int $creativeId, int $companyId): ?array
+    {
+        return $this->db->one(
+            "SELECT id, status, submitted_at FROM approvals
+             WHERE company_id = ? AND creative_id = ? AND status = 'pending'
+             ORDER BY id DESC LIMIT 1",
+            [$companyId, $creativeId]
+        );
+    }
+
     public function fonte(string $tipo, int $sourceId, int $clientId, int $companyId): ?array
     {
         if ($tipo === 'creative') {

@@ -285,24 +285,33 @@ final class Application
         $this->router->post('/admin/atualizacao/restaurar', $dono->restoreUpdate(...));
 
         // --- Clientes -------------------------------------------------
+        // Um gerador só para o estúdio: o controller edita e o "reescrever"
+        // fala com o provedor; instâncias separadas divergiriam no modelo.
+        $studioGerador = new StudioGenerator(
+            $configIa->openaiKey !== '' ? $configIa->openaiKey : null,
+            $configIa->openaiModel,
+            $configIa->openaiImageModel,
+            90,
+            180,
+            $configIa->openaiEndpoint,
+            $configIa->openaiImageEndpoint,
+        );
         $studio = new StudioController(
             $configIa,
             new StudioRepository($this->db),
-            new StudioGenerator(
-                $configIa->openaiKey !== '' ? $configIa->openaiKey : null,
-                $configIa->openaiModel,
-                $configIa->openaiImageModel,
-                90,
-                180,
-                $configIa->openaiEndpoint,
-                $configIa->openaiImageEndpoint,
-            ),
+            $studioGerador,
             $this->upload,
             $auth,
             $this->session,
             $this->view(),
             // O estúdio começa com as preferências da agência (Configurações).
             $ajustes,
+            // "Enviar para aprovação" daqui usa o mesmo caminho da tela de
+            // Aprovações: um envio pela metade criaria dois jeitos de aprovar.
+            new ApprovalRepository($this->db),
+            new PortalRepository($this->db),
+            // "Reescrever só a legenda" reaproveita o gerador de conteúdo.
+            $studioGerador,
         );
 
         $this->router->get('/clients', $clientes->index(...));
@@ -346,6 +355,11 @@ final class Application
         $this->router->post('/studio/posts/{id}/versions/{version}/restore', $studio->restore(...));
         $this->router->post('/studio/posts/{id}/duplicate', $studio->duplicate(...));
         $this->router->post('/studio/posts/{id}/delete', $studio->delete(...));
+        // Atalhos do editor: enviar para aprovação e reescrever só a legenda.
+        $this->router->post('/studio/posts/{id}/aprovar', $studio->sendToApproval(...));
+        $this->router->post('/studio/posts/{id}/reescrever', $studio->rewrite(...));
+        // "Desfazer este salvamento" depois de ?ok=saved.
+        $this->router->post('/studio/posts/{id}/desfazer-salvamento', $studio->undoLastSave(...));
 
         // --- Feed ------------------------------------------------------
         $this->router->get('/feed', $feed->index(...));

@@ -217,6 +217,46 @@ final class StudioRepository
     }
 
     /**
+     * Última versão gravada por um salvamento manual do usuário.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function ultimoSalvamento(int $creativeId, int $companyId, int $userId): ?array
+    {
+        return $this->db->one(
+            "SELECT * FROM post_versions
+             WHERE creative_id = ? AND company_id = ? AND user_id = ? AND version_label = 'Edição manual'
+             ORDER BY id DESC LIMIT 1",
+            [$creativeId, $companyId, $userId]
+        );
+    }
+
+    /**
+     * Estado de antes do último salvamento manual do usuário.
+     *
+     * `atualizar()` grava no histórico o estado **novo** (cada linha é uma
+     * fotografia do que ficou salvo). Desfazer o salvamento, então, é restaurar
+     * a versão imediatamente anterior a essa — não a própria "Edição manual",
+     * que devolveria exatamente o estado atual. Só o autor do salvamento pode
+     * desfazê-lo: restaurar o de outra pessoa seria mexer no trabalho alheio.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function estadoAnteriorAoSalvamento(int $creativeId, int $companyId, int $userId): ?array
+    {
+        return $this->db->one(
+            "SELECT * FROM post_versions
+             WHERE creative_id = ? AND company_id = ?
+               AND id < (SELECT COALESCE(MAX(id), 0) FROM post_versions
+                         WHERE creative_id = ? AND company_id = ? AND user_id = ?
+                           AND version_label = 'Edição manual')
+             ORDER BY id DESC LIMIT 1",
+            [$creativeId, $companyId, $creativeId, $companyId, $userId]
+        );
+    }
+
+    /**
+     * Arquivos da arte (atual e das versões) — usados para apagar do disco    /**
      * Arquivos da arte (atual e das versões) — usados para apagar do disco
      * depois que a linha some do banco.
      *

@@ -11,11 +11,11 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 > partir do que já foi produzido, o relatório operacional com exportação em CSV e
 > o módulo **Meta**: conexões de Páginas Facebook/Instagram por OAuth, agenda
 > interna e publicação manual real (com resultado incerto quando a Meta não
-> responde).
+> responde), e o editor de arte que avisa, desfaz e envia para aprovação.
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.20`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.20)** — todos os módulos,
+**Última versão: [`php-v1.21`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.21)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,6 +27,7 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
+| **v1.21** | **Editor de arte 3.0**: avisa o que não foi salvo, desfaz e refaz de verdade, edita o texto na própria prancheta, miniatura na aba Legenda, **reescrever só a legenda/hashtags**, **enviar para aprovação** de dentro do editor, grade de alinhamento e barra de salvar fixa no celular | [php-v1.21](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.21) | [`SOCIALMEDIA-IA-php-v1.21.zip`](downloads/SOCIALMEDIA-IA-php-v1.21.zip) |
 | **v1.20** | **Modo escuro** com botão no topo, **aba Sistema só para o dono** e **análise do perfil social** no cadastro de cliente (a IA preenche os campos e você revisa) | [php-v1.20](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.20) | [`SOCIALMEDIA-IA-php-v1.20.zip`](downloads/SOCIALMEDIA-IA-php-v1.20.zip) |
 | v1.19 | **Menu lateral**: cartão da agência virou troca de agência de verdade (só o dono alterna), avatar abre menu com **Sair da conta** e o menu rola/fecha certo no celular | [php-v1.19](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.19) | [`SOCIALMEDIA-IA-php-v1.19.zip`](downloads/SOCIALMEDIA-IA-php-v1.19.zip) |
 | v1.18 | **Atualização pelo painel do dono** (GitHub ou zip enviado, com cópia automática e restauração) e **responsivo** corrigido no celular | [php-v1.18](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.18) | [`SOCIALMEDIA-IA-php-v1.18.zip`](downloads/SOCIALMEDIA-IA-php-v1.18.zip) |
@@ -77,6 +78,40 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 ```
 
 ### Descrição de cada módulo
+
+- **v1.21 — O editor de arte passou a avisar o que faz.**
+  Treze correções que só aparecem quando se usa a prancheta de verdade.
+  **Nada se perde sem aviso**: mover, redimensionar, girar, trocar cor, tamanho,
+  alinhamento ou digitar marcam a arte como alterada, a barra de status diz
+  “Alterações não salvas” e sair da tela pede confirmação (antes só o botão
+  Salvar marcava, então um gesto na prancheta saía em silêncio; desfazer, ao
+  contrário, avisava sem motivo).
+  **Salvar ficou à mão**: `Ctrl+S` salva de qualquer aba e, no celular, uma
+  barra fixa no rodapé faz o mesmo sem rolar a página até o fim.
+  **Desfazer e refazer**: `Ctrl+Shift+Z` (ou `Ctrl+Y`) refaz, o contador mostra
+  quantos passos existem e o botão **Guias** — que nascia ligado e não fazia
+  nada — agora liga e desliga margem segura e centro. Novo botão **Grade**
+  desenha a grade e os terços sobre a arte, só na tela: a exportação continua
+  limpa.
+  **Editar no lugar**: duplo clique em um texto da prancheta abre uma caixa de
+  edição em cima dele (Enter confirma, Esc cancela) e o resultado volta para o
+  campo do painel.
+  **A aba Legenda mostra a arte**: uma miniatura fixa acompanha o que está na
+  prancheta, para escrever a legenda no celular sem rolar para cima.
+  **Reescrever sem refazer**: os botões **Reescrever legenda** e
+  **Reescrever só hashtags** mudam apenas o texto pedido, no tom da marca e
+  dentro do limite da rede — título, data, CTA e arte ficam como estavam, e
+  cada reescrita vira uma versão no histórico. Sem chave de IA, o botão fica
+  desligado e diz o motivo.
+  **Desfazer este salvamento**: logo depois de salvar aparece o atalho para
+  voltar ao estado anterior (a versão de antes já está no histórico).
+  **Enviar para aprovação** de dentro do editor, sem passar pela tela de
+  Aprovações: usa o mesmo caminho (exige arte exportada, avisa quem tem acesso
+  ao portal) e, com revisão já aberta, mostra “aguardando o cliente” e o link
+  em vez de oferecer enviar de novo. Sem portal, o aviso é explícito.
+  Também: canvas com alternativa textual para leitor de tela, upload sem
+  `required` em campo escondido (Safari/Android recusavam enviar) com feedback
+  de envio, e o prompt de imagem duplicado virou um campo só.
 
 - **v1.20 — Três coisas que faltavam no dia a dia.**
   **Modo escuro** com botão ao lado de “Instância local”, no topo: a escolha

@@ -348,3 +348,125 @@
   .create-preview { position: static; order: -1; }
   .preview-frame { max-height: 240px; }
 }
+
+/* ==================================================================== */
+/* v1.21 — editor que avisa, desfaz de verdade e envia para aprovação    */
+/* ==================================================================== */
+
+/* --- Barra de status do salvamento ---------------------------------- */
+.canvas-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; padding: 9px 14px; border-top: 1px solid #eceef6;
+  background: #fbfcfe; font-size: 11.5px; color: #6b7183;
+}
+.canvas-status.is-dirty { background: #fffaf0; }
+.save-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: #12784e; }
+.save-state i { width: 7px; height: 7px; border-radius: 50%; background: #148a58; }
+.save-state.is-dirty { color: #8a5a0a; }
+.save-state.is-dirty i { background: #d89a2a; }
+.save-hint { color: #6b7183; font-size: 10.5px; }
+.save-hint kbd, .save-note kbd {
+  font: 600 10px 'DM Sans', sans-serif; padding: 1px 5px; border-radius: 4px;
+  border: 1px solid #dfe2ec; background: #fff; color: #4c5468;
+}
+.save-bar { display: flex; flex-direction: column; gap: 5px; }
+
+/* --- Alternativa textual da prancheta ------------------------------- */
+.canvas-alt-text {
+  margin: 0; padding: 10px 14px; font-size: 11.5px; line-height: 1.5;
+  color: #6b7183; background: #fafbfe; border-top: 1px solid #f1f2f7;
+}
+.canvas-alt-text b { color: #3d4352; }
+
+/* --- Histórico: refazer e contador ---------------------------------- */
+.canvas-history {
+  display: inline-grid; place-items: center; min-width: 22px; height: 22px;
+  padding: 0 6px; border-radius: 999px; background: #f1f3f9;
+  font-size: 10px; font-weight: 700; color: #6b7183;
+}
+
+/* --- Edição no lugar (duplo clique na arte) ------------------------- */
+.canvas-inline-editor {
+  position: fixed; z-index: 60; margin: 0; padding: 4px 6px;
+  border: 2px solid #3158d8; border-radius: 6px;
+  background: rgba(12, 17, 30, .55); color: #fff; outline: none;
+  font-family: Manrope, Arial, sans-serif; white-space: pre-wrap;
+  overflow-wrap: anywhere; box-shadow: 0 8px 26px rgba(15, 22, 45, .38);
+}
+
+/* --- Miniatura da aba Legenda --------------------------------------- */
+.caption-preview {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px; margin-bottom: 12px; border: 1px solid #e6e8f0;
+  border-radius: 10px; background: #fafbfe;
+}
+.caption-preview img {
+  width: 76px; height: 76px; object-fit: cover; border-radius: 7px;
+  background: #e9ecf6; flex: 0 0 auto;
+}
+.caption-preview-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.caption-preview-text b { font-size: 12.5px; line-height: 1.3; }
+.caption-preview-text small { font-size: 10.5px; color: #6b7183; }
+
+/* --- Reescrita de legenda/hashtags ---------------------------------- */
+.rewrite-box {
+  margin-top: 4px; padding: 12px; border: 1px solid #e6e8f0;
+  border-radius: 10px; background: #fafbfe;
+}
+.rewrite-box .control-group-label { margin-top: 0; }
+.rewrite-note { margin: 0 0 10px; }
+.rewrite-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.rewrite-actions .button { flex: 1 1 160px; justify-content: center; }
+
+/* --- Upload: feedback imediato -------------------------------------- */
+.upload-feedback { margin: 8px 0 0; font-size: 11px; color: #6b5a12; }
+.button.is-busy { opacity: .7; cursor: progress; }
+
+/* --- Salvar: alerta com desfazer ------------------------------------ */
+.save-alert {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.save-alert form { display: inline; }
+
+/* --- Barra fixa de salvar no celular -------------------------------- */
+.mobile-save-bar {
+  display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; background: #fff; border-top: 1px solid #e6e8f0;
+  box-shadow: 0 -6px 18px rgba(31, 42, 77, .07);
+}
+.mobile-save-state { font-size: 11.5px; color: #6b7183; }
+
+@media (max-width: 1040px) {
+  /* Espaço para a barra fixa não cobrir o rodapé da tela. */
+  .mobile-save-bar { display: flex; }
+  .page-content:has(.mobile-save-bar) { padding-bottom: 88px; }
+  .canvas-status { font-size: 11px; }
+  .caption-preview img { width: 64px; height: 64px; }
+  .rewrite-actions .button { flex: 1 1 100%; }
+}
+
+/* --- Modo escuro ---------------------------------------------------- */
+html[data-theme="escuro"] .canvas-status { background: #141924; border-top-color: #262e3d; color: #98a1b5; }
+html[data-theme="escuro"] .canvas-status.is-dirty { background: #221d12; }
+html[data-theme="escuro"] .save-state { color: #7fd8b6; }
+html[data-theme="escuro"] .save-state i { background: #7fd8b6; }
+html[data-theme="escuro"] .save-state.is-dirty { color: #f0bf72; }
+html[data-theme="escuro"] .save-state.is-dirty i { background: #f0bf72; }
+html[data-theme="escuro"] .save-hint { color: #8f98ab; }
+html[data-theme="escuro"] .save-hint kbd,
+html[data-theme="escuro"] .save-note kbd {
+  background: #1b2130; border-color: #2b3345; color: #cfd6e6;
+}
+html[data-theme="escuro"] .canvas-alt-text { background: #141924; border-top-color: #262e3d; color: #98a1b5; }
+html[data-theme="escuro"] .canvas-alt-text b { color: #dfe4f0; }
+html[data-theme="escuro"] .canvas-history { background: #1b2130; color: #b9c2d4; }
+html[data-theme="escuro"] .caption-preview { background: #141924; border-color: #262e3d; }
+html[data-theme="escuro"] .caption-preview img { background: #1b2130; }
+html[data-theme="escuro"] .caption-preview-text b { color: #e3e7f0; }
+html[data-theme="escuro"] .caption-preview-text small { color: #98a1b5; }
+html[data-theme="escuro"] .rewrite-box { background: #141924; border-color: #262e3d; }
+html[data-theme="escuro"] .upload-feedback { color: #e0c07a; }
+html[data-theme="escuro"] .mobile-save-bar { background: #161b26; border-top-color: #262e3d; box-shadow: 0 -6px 18px rgba(0, 0, 0, .45); }
+html[data-theme="escuro"] .mobile-save-state { color: #98a1b5; }

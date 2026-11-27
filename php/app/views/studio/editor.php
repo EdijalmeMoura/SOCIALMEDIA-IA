@@ -20,6 +20,11 @@
  * @var array<string,array{label:string,limite:int,tags:int}> $redes
  * @var array<string,string> $tons
  * @var array<string,int> $limites
+ * @var bool $pode_enviar
+ * @var bool $exportada
+ * @var int $portal_ativo
+ * @var array{id:int,enviado_em:string}|null $aprovacao_pendente
+ * @var bool $pode_desfazer
  */
 $formato = $formatos[(string) $arte['format_key']] ?? ['label' => $arte['format_key'], 'width' => $arte['canvas_width'], 'height' => $arte['canvas_height']];
 $erroQuery = $config->url('/studio/posts/' . (int) $arte['id']);
@@ -51,6 +56,21 @@ ob_start();
         <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
         <button class="button outline" type="submit" title="Criar uma cópia independente desta arte">⧉ Duplicar</button>
       </form>
+      <?php if (empty($aprovacao_pendente)): ?>
+        <?php if ($exportada): ?>
+          <form method="post" action="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/aprovar')) ?>"
+                data-confirm="<?= $portal_ativo > 0
+                    ? 'Enviar esta arte para a aprovação do cliente? Ele recebe um aviso no portal.'
+                    : 'Este cliente ainda não tem acesso ao portal: ninguém será avisado. Enviar mesmo assim?' ?>">
+            <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
+            <button class="button primary" type="submit">✓ Enviar para aprovação</button>
+          </form>
+        <?php else: ?>
+          <?php // Sem exportação não há arquivo para o cliente aprovar: o botão explica em vez de falhar. ?>
+          <button class="button outline" type="button" disabled
+                  title="Exporte a arte em PNG ou JPG para enviar à aprovação">✓ Enviar para aprovação</button>
+        <?php endif; ?>
+      <?php endif; ?>
       <form method="post" action="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/delete')) ?>"
             data-confirm="Excluir esta criação e todas as versões salvas?">
         <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
@@ -61,10 +81,35 @@ ob_start();
 </div>
 
 <?php if (!empty($aviso)): ?>
-  <div class="alert success-alert"><?= e($aviso) ?></div>
+  <div class="alert success-alert save-alert">
+    <span><?= e($aviso) ?></span>
+    <?php if (!empty($pode_desfazer)): ?>
+      <?php // Volta ao estado de antes do salvamento: a versão atual já está no histórico. ?>
+      <form method="post" action="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/desfazer-salvamento')) ?>"
+            data-confirm="Voltar ao estado de antes deste salvamento?">
+        <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
+        <button class="button outline small-button" type="submit">↶ Desfazer este salvamento</button>
+      </form>
+    <?php endif; ?>
+  </div>
+<?php endif; ?>
+<?php if (!empty($aprovacao_pendente)): ?>
+  <?php // Enquanto o cliente não responde, avisar aqui evita mandar duas vezes. ?>
+  <div class="alert info-alert">
+    <span>Esta arte está aguardando a aprovação do cliente.</span>
+    <a class="button outline small-button" href="<?= e($config->url('/approvals/' . (int) $aprovacao_pendente['id'])) ?>">Ver revisão →</a>
+  </div>
 <?php endif; ?>
 <?php if (!empty($erro)): ?>
   <div class="alert error-alert"><?= e($erro) ?></div>
+<?php endif; ?>
+
+<?php // Barra fixa no rodapé em telas pequenas: salvar sem caçar o botão. ?>
+<?php if ($pode_editar): ?>
+  <div class="mobile-save-bar" data-mobile-save>
+    <span class="mobile-save-state" data-save-state-text>Alterações não salvas</span>
+    <button class="button primary" type="submit" form="studioSave">Salvar</button>
+  </div>
 <?php endif; ?>
 
 <div class="studio-workspace">
@@ -77,7 +122,11 @@ ob_start();
       <div class="canvas-actions">
         <?php if ($pode_editar): ?>
           <button type="button" class="canvas-tool-button" data-undo title="Desfazer o último ajuste (Ctrl+Z)" disabled>↶ Desfazer</button>
-          <button type="button" class="canvas-tool-button is-on" data-guides title="Mostrar guias de encaixe">⊞ Guias</button>
+          <button type="button" class="canvas-tool-button" data-redo title="Refazer o último desfeito (Ctrl+Shift+Z)" disabled>↷ Refazer</button>
+          <span class="canvas-history" data-history title="Passos no histórico">0</span>
+          <button type="button" class="canvas-tool-button is-on" data-guides title="Mostrar margem segura e centro">⊞ Guias</button>
+          <?php // Grade visual: alinhar sem depender do olho. Fica só na tela. ?>
+          <button type="button" class="canvas-tool-button" data-grid aria-pressed="false" title="Grade e margem segura sobre a arte">▦ Grade</button>
           <button type="button" class="canvas-tool-button" data-zoom="out" aria-label="Diminuir zoom">−</button>
           <span class="canvas-zoom-value" data-zoom-value>ajustar</span>
           <button type="button" class="canvas-tool-button" data-zoom="in" aria-label="Aumentar zoom">+</button>
@@ -99,18 +148,36 @@ ob_start();
                 data-export-url="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/export')) ?>"
                 data-csrf="<?= e($csrf) ?>"
                 data-marca="<?= e(trim((string) ($arte['trade_name'] ?? '')) ?: (string) $arte['company_name']) ?>"
-                data-editable="<?= $pode_editar ? '1' : '0' ?>"></canvas>
+                data-editable="<?= $pode_editar ? '1' : '0' ?>"
+                role="img"
+                aria-label="<?= e('Arte: ' . (string) $arte['subject'] . ' — ' . (string) $conteudo['title'] . ($conteudo['subtitle'] ? ' / ' . (string) $conteudo['subtitle'] : '')) ?>"
+                aria-describedby="canvasAltText"
+                tabindex="0"></canvas>
         <div class="canvas-no-image" id="canvasNoImage" <?= $imagem_url ? 'hidden' : '' ?>>
           <span>✦</span><b>Imagem de fundo</b>
           <small>Gere uma imagem com IA ou envie uma referência para começar.</small>
         </div>
       </div>
     </div>
+    <?php // Alternativa textual: leitores de tela não enxergam o canvas. ?>
+    <p class="canvas-alt-text" id="canvasAltText">
+      <b>O que está na arte:</b>
+      <?= e((string) ($conteudo['title'] ?? '')) ?><?php if (($conteudo['subtitle'] ?? '') !== ''): ?> — <?= e((string) $conteudo['subtitle']) ?><?php endif; ?><?php if (($conteudo['cta'] ?? '') !== ''): ?> · <?= e((string) $conteudo['cta']) ?><?php endif; ?>.
+      <?php if ($imagem_url): ?>Imagem de fundo aplicada<?= ($conteudo['alt_text'] ?? '') !== '' ? ': ' . e((string) $conteudo['alt_text']) : '' ?>.<?php else: ?>Sem imagem de fundo ainda.<?php endif; ?>
+    </p>
     <div class="canvas-hint">
       <span>↗</span>
-      Clique em um texto para editar no lugar. Arraste para mover, use o puxador do canto para
-      redimensionar e a alça de cima para girar. Setas movem 1 px (Shift move 10) e Ctrl+Z desfaz.
+      <span>Clique em um texto para editar no lugar. Arraste para mover, use o puxador do canto para
+      redimensionar e a alça de cima para girar. Setas movem 1 px (Shift move 10), Ctrl+Z desfaz e
+      Ctrl+Shift+Z refaz.</span>
     </div>
+    <?php if ($pode_editar): ?>
+      <?php // Barra de status: diz se há alteração pendente e qual o atalho de salvar. ?>
+      <div class="canvas-status" data-save-status data-saved-label="Tudo salvo">
+        <span class="save-state" data-save-state><i></i><span data-save-state-text>Tudo salvo</span></span>
+        <span class="save-hint">Ctrl+S salva de qualquer aba.</span>
+      </div>
+    <?php endif; ?>
     <?php if ($arte['export_path']): ?>
       <a class="export-ready" href="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/download')) ?>">
         ✓ Arte exportada — baixar arquivo <span>↓</span>
@@ -199,6 +266,19 @@ ob_start();
         </div>
 
         <div class="editor-tab-panel" id="tabLegenda" role="tabpanel" hidden>
+          <?php // Miniatura fixa: no celular a prancheta fica acima e some ao rolar;
+                // sem ela, escrever a legenda vira adivinhação. É o mesmo canvas,
+                // copiado para um <img> cada vez que o desenho muda. ?>
+          <div class="caption-preview" data-caption-preview hidden>
+            <img alt="Prévia da arte enquanto você escreve a legenda" data-preview-image>
+            <div class="caption-preview-text">
+              <b data-preview-title><?= e((string) ($conteudo['title'] ?? '')) ?></b>
+              <small>
+                <?= e((string) $formato['label']) ?> · <?= (int) $arte['canvas_width'] ?> × <?= (int) $arte['canvas_height'] ?>
+                <?= $exportada ? ' · exportada' : ' · não exportada' ?>
+              </small>
+            </div>
+          </div>
           <div class="caption-toolbar">
             <span class="field-kicker">PARA <?= e(mb_strtoupper($redeInfo['label'])) ?></span>
             <button type="button" class="button outline copy-caption" data-copy-caption>⧉ Copiar legenda + hashtags</button>
@@ -222,6 +302,29 @@ ob_start();
             <input name="alt_text" maxlength="500" value="<?= e((string) ($conteudo['alt_text'] ?? '')) ?>" placeholder="O que aparece na imagem">
             <span class="field-helper">Lida por leitores de tela e usada pelo Instagram. <span data-counter="alt_text"><?= mb_strlen((string) ($conteudo['alt_text'] ?? '')) ?></span>/<?= (int) ($limites['alt_text'] ?? 300) ?></span>
           </label>
+
+          <?php // Reescrever sem refazer a arte inteira: o texto que já está bom fica. ?>
+          <div class="rewrite-box" data-rewrite-box>
+            <div class="control-group-label">Reescrever com IA</div>
+            <p class="field-helper rewrite-note">
+              Mexe só no texto escolhido — título, data, CTA e arte continuam como estão.
+              <?php if (!$ia_configurada): ?><b>Precisa da chave de IA em Configurações.</b><?php endif; ?>
+            </p>
+            <?php // Dois envios do mesmo formulário, cada um para a rota de reescrita:
+                  // formnovalidate porque o texto atual pode estar vazio e mesmo assim
+                  // dar para reescrever a partir do que já foi salvo. ?>
+            <label class="field studio-field">Orientação (opcional)
+              <input name="rewrite_instruction" maxlength="500" placeholder="Ex.: mais curto, com urgência, sem emoji">
+            </label>
+            <div class="rewrite-actions">
+              <button class="button outline" type="submit" name="target" value="caption" formnovalidate
+                      formaction="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/reescrever')) ?>"
+                      <?= $ia_configurada ? '' : 'disabled' ?>>✎ Reescrever legenda</button>
+              <button class="button outline" type="submit" name="target" value="hashtags" formnovalidate
+                      formaction="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/reescrever')) ?>"
+                      <?= $ia_configurada ? '' : 'disabled' ?>># Reescrever só hashtags</button>
+            </div>
+          </div>
         </div>
 
         <div class="editor-tab-panel" id="tabImagem" role="tabpanel" hidden>
@@ -248,8 +351,12 @@ ob_start();
           </label>
         </div>
 
-        <button class="button primary save-creative-button" type="submit">Salvar alterações <span>✓</span></button>
-        <span class="field-helper save-note">Cada salvamento vira uma versão em “Versões salvas”.</span>
+        <?php // Fica no rodapé do painel e é fixado no rodapé da tela em telas
+              // pequenas: salvava-se só rolando até o fim da aba Arte. ?>
+        <div class="save-bar">
+          <button class="button primary save-creative-button" type="submit">Salvar alterações <span>✓</span></button>
+          <span class="field-helper save-note">Cada salvamento vira uma versão em “Versões salvas”. <kbd>Ctrl</kbd>+<kbd>S</kbd></span>
+        </div>
       </form>
     </section>
 
@@ -260,7 +367,8 @@ ob_start();
       </div>
       <form method="post" action="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/image')) ?>" id="imageGenerationForm">
         <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
-        <input type="hidden" name="image_prompt" id="imageGenerationPrompt" value="<?= e((string) $arte['image_prompt']) ?>">
+        <?php // Um único campo de prompt: antes havia dois com o mesmo `name` e o
+              // navegador enviava os dois valores (o vazio ganhava no PHP). ?>
         <label class="field studio-field">Prompt da imagem
           <textarea name="image_prompt" id="imagePromptSave" rows="3" maxlength="4000"><?= e((string) $arte['image_prompt']) ?></textarea>
           <span class="field-helper">A imagem é gerada sem tipografia para evitar letras distorcidas.</span>
@@ -277,9 +385,13 @@ ob_start();
       <form method="post" action="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/image/upload')) ?>"
             enctype="multipart/form-data" class="studio-upload-form">
         <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
-        <label class="button outline full-button">↑ Substituir imagem
-          <input type="file" name="file" hidden required accept="image/png,image/jpeg,image/webp" data-image-upload>
+        <?php // Sem `required`: o campo é escondido (`hidden`) e o navegador pode
+              // recusar enviar um obrigatório invisível (Safari/Android). A escolha
+              // do arquivo já dispara o envio; o vazio é barrado no servidor. ?>
+        <label class="button outline full-button" data-upload-label>↑ Substituir imagem
+          <input type="file" name="file" accept="image/png,image/jpeg,image/webp" data-image-upload>
         </label>
+        <p class="upload-feedback" data-upload-feedback hidden>⏳ Enviando a imagem… não feche a página.</p>
       </form>
       <small class="studio-image-note">PNG, JPG ou WEBP até 8 MB · a imagem é ajustada ao formato selecionado.</small>
     </section>

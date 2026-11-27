@@ -162,6 +162,94 @@ final class StudioGenerator
     }
 
     /**
+     * Reescreve só a legenda (com hashtags) ou só as hashtags.
+     *
+     * O conteúdo já escrito pelo usuário é a base: o pedido manda manter o que
+     * está bom e mudar apenas o alvo, no tom da marca. Quando o provedor falha,
+     * o erro sobe para a tela — não há "modo local" para reescrita, porque
+     * reescrever é exatamente o que a IA faz.
+     *
+     * @param string $alvo 'caption' (legenda + hashtags) ou 'hashtags'
+     * @param array<string,string> $atual
+     * @param array<string,string> $contexto assunto, rede, tom, formato, cliente, segmento
+     * @return array<string,string> só os campos alterados
+     * @throws StudioError
+     */
+    public function reescrever(string $alvo, array $atual, array $contexto, string $instrucao = ''): array
+    {
+        if (!$this->iaConfigurada()) {
+            throw new StudioError('A reescrita pede a IA configurada. Em Ajustes, informe a chave do provedor.');
+        }
+        $rede = (string) ($contexto['network'] ?? 'generico');
+        $infoRede = self::REDES[$rede] ?? self::REDES['generico'];
+        $limite = (int) $infoRede['limite'];
+        $tags = (int) $infoRede['tags'];
+
+        $pedido = [
+            'o_que_reescrever' => $alvo === 'hashtags' ? 'apenas as hashtags' : 'a legenda e as hashtags',
+            'como' => 'mantenha o assunto, o tom de voz da marca e o que já está correto; mude só o que foi pedido, sem inventar dados, preços, prazos ou promessas',
+            'rede_social' => $infoRede['label'],
+            'limite_da_legenda_em_caracteres' => $limite,
+            'maximo_de_hashtags' => $tags,
+            'tom_de_voz' => (string) ($contexto['tone'] ?? ''),
+            'formato' => (string) ($contexto['format'] ?? ''),
+            'assunto' => (string) ($contexto['subject'] ?? ''),
+            'cliente' => (string) ($contexto['client'] ?? ''),
+            'segmento' => (string) ($contexto['segment'] ?? ''),
+            'legenda_atual' => (string) ($atual['caption'] ?? ''),
+            'hashtags_atuais' => (string) ($atual['hashtags'] ?? ''),
+            'pedido_do_usuario' => Layout::textoCurto($instrucao, 500),
+            'responda' => $alvo === 'hashtags'
+                ? '{"hashtags":["#tag", "..."]}'
+                : '{"caption":"...", "hashtags":["#tag", "..."]}',
+        ];
+
+        $corpo = json_encode(self::corpoDoTexto($this->modelo, [
+            ['role' => 'system', 'content' => self::instrucoes()],
+            ['role' => 'user', 'content' => json_encode($pedido, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
+        ]), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $resposta = $this->postJson($this->textoEndpoint, $corpo, $this->timeoutSegundos, 'texto');
+        $texto = $resposta['choices'][0]['message']['content'] ?? null;
+        $decodificado = is_string($texto) ? json_decode($texto, true) : null;
+        if (!is_array($decodificado)) {
+            throw new StudioError('A resposta do provedor veio em formato inválido. Tente novamente.');
+        }
+
+        $saida = [];
+        if ($alvo === 'caption') {
+            $nova = Layout::textoCurto($decodificado['caption'] ?? '', 5000);
+            if ($nova === '') {
+                throw new StudioError('A IA não devolveu a legenda. Tente novamente.');
+            }
+            $saida['caption'] = mb_substr($nova, 0, $limite);
+        }
+
+        $brutas = $decodificado['hashtags'] ?? [];
+        $lista = [];
+        foreach ((is_array($brutas) ? $brutas : preg_split('/\s+/', (string) $brutas)) as $tag) {
+            $tag = trim((string) $tag);
+            if ($tag === '') {
+                continue;
+            }
+            $tag = preg_replace('/[^\p{L}\p{N}_#]/u', '', $tag) ?? '';
+            if ($tag === '' || $tag === '#') {
+                continue;
+            }
+            $lista[$tag[0] === '#' ? $tag : '#' . $tag] = true;
+        }
+        $lista = array_slice(array_keys($lista), 0, $tags);
+        if ($alvo === 'hashtags' && $lista === []) {
+            throw new StudioError('A IA não devolveu hashtags. Tente novamente.');
+        }
+        if ($lista !== []) {
+            $saida['hashtags'] = implode(' ', $lista);
+        }
+
+        return $saida;
+    }
+
+    /**
      * Gera a imagem de fundo e devolve os bytes PNG.
      *
      * O provedor devolve base64; os bytes são conferidos pela assinatura PNG

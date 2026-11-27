@@ -188,6 +188,21 @@ const servidor = createServer((req, res) => {
     }
 
     const pedido = JSON.parse(dados.messages?.[1]?.content ?? '{}');
+    // Reescrita do estúdio ("só a legenda" / "só as hashtags"): responde no
+    // mesmo contrato que o gerador espera, sem mexer no resto do conteúdo.
+    if (pedido.o_que_reescrever) {
+      const corpoReescrita = String(pedido.o_que_reescrever) === 'apenas as hashtags'
+        ? { hashtags: ['#novatag', '#teste'] }
+        : { caption: 'Legenda reescrita pela IA, mais curta e direta.', hashtags: ['#nova', '#legenda'] };
+      responder(200, {
+        id: 'chatcmpl-reescrita',
+        object: 'chat.completion',
+        model: dados.model,
+        choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(corpoReescrita) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 200, completion_tokens: 80, total_tokens: 280 },
+      });
+      return;
+    }
     const conteudo = pedido.planejamento
       ? { posts: gerarPosts(pedido.planejamento) }
       : {
