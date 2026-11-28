@@ -366,6 +366,11 @@ final class Application
         $this->router->post('/studio/posts/{id}/reescrever', $studio->rewrite(...));
         // "Desfazer este salvamento" depois de ?ok=saved.
         $this->router->post('/studio/posts/{id}/desfazer-salvamento', $studio->undoLastSave(...));
+        $this->router->post('/studio/lote', $studio->bulk(...));
+        // Rascunho do editor na sessão: o texto digitado não se perde ao sair.
+        $this->router->post('/studio/posts/{id}/rascunho', $studio->draft(...));
+        $this->router->get('/studio/posts/{id}/rascunho/preview', $studio->preview(...));
+        $this->router->post('/studio/posts/{id}/rascunho/descartar', $studio->descartarDraft(...));
 
         // --- Feed ------------------------------------------------------
         $this->router->get('/feed', $feed->index(...));

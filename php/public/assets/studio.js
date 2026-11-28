@@ -823,6 +823,97 @@ document.addEventListener('DOMContentLoaded', () => {
     window.setTimeout(() => { botao.textContent = original; }, 2200);
   });
 
+  /* ---------- rascunho na sessão (v1.23) ---------- */
+
+  // O texto digitado vivia só na aba do navegador: fechar a tela perdia a
+  // alteração. Agora, depois de uma pausa na digitação, o editor manda os
+  // campos para a sessão do servidor e, ao voltar, oferece recuperar — sem
+  // nunca sobrescrever sozinho o que está salvo no banco.
+  const bannerRascunho = document.querySelector('[data-draft-banner]');
+  const canvasArte = document.getElementById('studioCanvas');
+  const csrfArte = canvasArte?.dataset?.csrf || formulario?.querySelector('input[name="csrf_token"]')?.value || '';
+  const urlRascunho = canvasArte?.dataset?.draftUrl || '';
+  const camposRascunho = ['title', 'subtitle', 'cta', 'caption', 'hashtags', 'alt_text'];
+  let timerRascunho = null;
+  let ultimoEnvio = '';
+
+  function valoresDoRascunho() {
+    const dados = {};
+    camposRascunho.forEach((nome) => {
+      const campo = nome === 'caption' ? document.getElementById('captionField')
+        : nome === 'hashtags' ? document.getElementById('hashtagsField')
+        : nome === 'alt_text' ? formulario?.querySelector('input[name="alt_text"]')
+        : campos.find((input) => input.dataset.layoutText === nome);
+      dados[nome] = campo?.value ?? '';
+    });
+    return dados;
+  }
+
+  function enviarRascunho() {
+    if (!editavel || !urlRascunho) return;
+    const dados = valoresDoRascunho();
+    const assinatura = JSON.stringify(dados);
+    if (assinatura === ultimoEnvio) return; // nada mudou desde o último envio
+    ultimoEnvio = assinatura;
+    const corpo = new FormData();
+    corpo.append('csrf_token', csrfArte);
+    Object.entries(dados).forEach(([nome, valor]) => corpo.append(nome, valor));
+    fetch(urlRascunho, { method: 'POST', body: corpo, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+      .catch(() => { ultimoEnvio = ''; }); // rede caiu: tenta de novo na próxima pausa
+  }
+
+  function agendarRascunho() {
+    if (!formulario) return;
+    window.clearTimeout(timerRascunho);
+    timerRascunho = window.setTimeout(enviarRascunho, 1200);
+  }
+
+  if (urlRascunho && editavel) {
+    campos.forEach((input) => input.addEventListener('input', agendarRascunho));
+    ['captionField', 'hashtagsField'].forEach((id) => document.getElementById(id)?.addEventListener('input', agendarRascunho));
+    formulario?.querySelector('input[name="alt_text"]')?.addEventListener('input', agendarRascunho);
+    // Fechar/recarregar com o timer pendente: o keepalive garante o envio.
+    window.addEventListener('pagehide', () => {
+      if (timerRascunho === null) return;
+      window.clearTimeout(timerRascunho);
+      const dados = valoresDoRascunho();
+      if (JSON.stringify(dados) === ultimoEnvio) return;
+      const corpo = new FormData();
+      corpo.append('csrf_token', csrfArte);
+      Object.entries(dados).forEach(([nome, valor]) => corpo.append(nome, valor));
+      try {
+        navigator.sendBeacon?.(urlRascunho, corpo);
+      } catch { /* sem beacon: o próximo acesso ao editor mostra o que ficou no banco */ }
+    });
+  }
+
+  document.querySelector('[data-draft-restore]')?.addEventListener('click', () => {
+    // Recuperar = buscar o rascunho do servidor e preencher os campos. O
+    // salvamento continua sendo um clique consciente em "Salvar".
+    const urlPreview = canvasArte?.dataset?.draftPreview || '';
+    if (!urlPreview) return;
+    fetch(urlPreview, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+      .then((resposta) => (resposta.ok ? resposta.json() : null))
+      .then((dados) => {
+        const guardado = dados?.campos || {};
+        Object.entries(guardado).forEach(([nome, valor]) => {
+          const campo = nome === 'caption' ? document.getElementById('captionField')
+            : nome === 'hashtags' ? document.getElementById('hashtagsField')
+            : nome === 'alt_text' ? formulario?.querySelector('input[name="alt_text"]')
+            : campos.find((input) => input.dataset.layoutText === nome);
+          if (!campo) return;
+          campo.value = valor;
+          // Avisa o resto do editor (canvas, contadores e histórico) como se a
+          // pessoa tivesse digitado.
+          campo.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        bannerRascunho?.remove();
+        document.querySelector('[data-save-status]')?.setAttribute('data-state', 'dirty');
+        if (textoEstado) textoEstado.textContent = 'Alterações recuperadas — salve para gravar';
+      })
+      .catch(() => { /* sem rede: o banner continua lá para tentar de novo */ });
+  });
+
   /* ---------- abas ---------- */
 
   document.querySelectorAll('[data-tab]').forEach((botao) => botao.addEventListener('click', () => {

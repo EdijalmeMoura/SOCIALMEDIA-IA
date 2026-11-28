@@ -7,8 +7,8 @@ Núcleo incremental do SaaS para agências de social media. As **Etapas 01 a 07*
 O produto também existe como **PHP 8.0+ puro** — sobe os arquivos numa hospedagem
 compartilhada e funciona, sem Composer, Node, Passenger ou processo extra.
 
-- **Última versão: [`php-v1.22`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.22)** (módulo Meta incluso, IA com modelos atuais, instalador completo, editor de arte revisado e arte ligada ao calendário).
-- Pacote pronto: [`php/downloads/SOCIALMEDIA-IA-php-v1.22.zip`](php/downloads/SOCIALMEDIA-IA-php-v1.22.zip)
+- **Última versão: [`php-v1.23`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.23)** (módulo Meta incluso, IA com modelos atuais, instalador completo, editor de arte revisado, arte ligada ao calendário e **Estúdio com busca, lote e rascunho**).
+- Pacote pronto: [`php/downloads/SOCIALMEDIA-IA-php-v1.23.zip`](php/downloads/SOCIALMEDIA-IA-php-v1.23.zip)
 - Documentação: [`php/README.md`](php/README.md) · guia do módulo Meta: [`php/docs/meta.md`](php/docs/meta.md)
 - Todas as versões: <https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases>
 - Integridade dos pacotes: [`php/downloads/SHA256SUMS.txt`](php/downloads/SHA256SUMS.txt)

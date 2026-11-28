@@ -1983,7 +1983,10 @@ check('formulário tem etapas numeradas', substr_count($galeria->body, 'create-s
 check('pré-visualização da arte', str_contains($galeria->body, 'create-preview'));
 check('escolha de gerar imagem agora', str_contains($galeria->body, 'name="with_image" value="agora"'));
 check('carrega o JS da criação', str_contains($galeria->body, 'studio-create.js'));
-check('galeria tem filtro por status', str_contains($galeria->body, 'name="status"'));
+// Desde a v1.23 o status é um filtro em abas (link com o status na query),
+// não um <select>: a verificação antiga olhava a marcação, esta olha o efeito.
+check('galeria tem filtro por status', str_contains($galeria->body, 'status-tabs')
+    && str_contains($galeria->body, 'status-tab'));
 
 $logar($app, $idUsuario);
 $filtrada = $app->handle(requisicao('GET', '/studio', [], ['formato' => 'story']));
@@ -4827,6 +4830,236 @@ assertSame('post inexistente responde 404', 404, $appPub->handle(requisicao('POS
 assertSame('vínculo em post inexistente responde 404', 404, $appPub->handle(requisicao('POST', '/planner/posts/99999/arte/vincular', [
     'csrf_token' => $csrfDonaPub, 'creative_id' => '1',
 ]))->status);
+
+echo "\n[90] Estúdio v1.23: busca, ordem, lote, rascunho e preferências na legenda\n";
+// Uma instância só para este bloco: o estúdio é da empresa 1 e o login é o da
+// dona da agência de teste (o mesmo usuário dos blocos de estúdio anteriores).
+$logar($app, $idUsuario);
+$csrfE = $app->session->csrfToken();
+
+// --- hashtags e assinatura padrão entram na legenda -------------------
+$app->db->run('DELETE FROM app_settings WHERE key IN (?, ?)', [
+    'company:1:studio.default_hashtags', 'company:1:studio.default_signature',
+]);
+$app->db->run('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['company:1:studio.default_hashtags', 'promo, #agenda']);
+$app->db->run('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['company:1:studio.default_signature', 'Fale com a gente no direct.']);
+$clienteDoEstudio = (int) $app->db->scalar("SELECT id FROM clients WHERE company_id = 1 AND status = 'active' ORDER BY id ASC LIMIT 1");
+$antesEstudio = (int) $app->db->scalar('SELECT COUNT(*) FROM creative_posts WHERE company_id = 1');
+$criadaPref = $app->handle(requisicao('POST', '/studio/generate', [
+    'csrf_token' => $csrfE,
+    'client_id' => (string) $clienteDoEstudio,
+    'subject' => 'Ensaio de fim de ano com preferências',
+    'format_key' => 'square',
+    'network' => 'instagram',
+    'tone' => 'marca',
+]));
+assertSame('criação com preferências redireciona para o editor', 302, $criadaPref->status);
+assertSame('a arte foi criada', $antesEstudio + 1, (int) $app->db->scalar('SELECT COUNT(*) FROM creative_posts WHERE company_id = 1'));
+$artePref = $app->db->one("SELECT * FROM creative_posts WHERE subject = 'Ensaio de fim de ano com preferências' ORDER BY id DESC LIMIT 1");
+$conteudoPref = json_decode((string) $artePref['content_json'], true) ?: [];
+check('hashtags padrão da agência entram na legenda', str_contains((string) ($conteudoPref['hashtags'] ?? ''), '#promo')
+    && str_contains((string) ($conteudoPref['hashtags'] ?? ''), '#agenda'));
+check('assinatura da agência fecha a legenda', str_ends_with(trim((string) ($conteudoPref['caption'] ?? '')), 'Fale com a gente no direct.'));
+// Sem padrão cadastrado, nada é inventado.
+$app->db->run('DELETE FROM app_settings WHERE key IN (?, ?)', [
+    'company:1:studio.default_hashtags', 'company:1:studio.default_signature',
+]);
+$app->handle(requisicao('POST', '/studio/generate', [
+    'csrf_token' => $app->session->csrfToken(),
+    'client_id' => (string) $clienteDoEstudio,
+    'subject' => 'Ensaio sem preferências cadastradas',
+    'format_key' => 'square',
+]));
+$arteSemPref = $app->db->one("SELECT * FROM creative_posts WHERE subject = 'Ensaio sem preferências cadastradas' ORDER BY id DESC LIMIT 1");
+$conteudoSemPref = json_decode((string) $arteSemPref['content_json'], true) ?: [];
+check('sem hashtags cadastradas a legenda não inventa tags', (string) ($conteudoSemPref['hashtags'] ?? '') === '');
+check('sem assinatura cadastrada a legenda fica como veio', !str_contains((string) ($conteudoSemPref['caption'] ?? ''), 'Fale com a gente'));
+
+// --- galeria: busca, abas, ordenação e paginação ----------------------
+$app->db->run("UPDATE creative_posts SET subject = 'Busca impossível zzz' WHERE id = ?", [(int) $arteSemPref['id']]);
+$busca = $app->handle(requisicao('GET', '/studio', [], ['q' => 'zzz']));
+assertSame('busca por texto responde 200', 200, $busca->status);
+check('busca filtra pelo assunto', str_contains($busca->body, 'Busca impossível zzz')
+    && !str_contains($busca->body, 'Ensaio de fim de ano com preferências'));
+$buscaVazia = $app->handle(requisicao('GET', '/studio', [], ['q' => 'nada-com-isto-999']));
+assertSame('busca sem resultado responde 200', 200, $buscaVazia->status);
+check('busca sem resultado não mente sobre o total', str_contains($buscaVazia->body, 'Nenhuma arte neste filtro')
+    && str_contains($buscaVazia->body, 'nada-com-isto-999'));
+check('busca limpa volta para a galeria inteira', str_contains($buscaVazia->body, 'Limpar filtros'));
+$porCliente = $app->handle(requisicao('GET', '/studio', [], ['q' => 'zzz', 'ordenar' => 'antigas']));
+check('ordem antigas é aceita junto com a busca', str_contains($porCliente->body, 'value="antigas" selected'));
+$paginaRuim = $app->handle(requisicao('GET', '/studio', [], ['pagina' => '0']));
+assertSame('página inválida cai na primeira', 200, $paginaRuim->status);
+$paginaTexto = $app->handle(requisicao('GET', '/studio', [], ['pagina' => 'x']));
+assertSame('página não numérica não quebra a tela', 200, $paginaTexto->status);
+check('galeria mostra contagem por status nas abas', str_contains($paginaTexto->body, 'data-gallery-count'));
+$sóExportadas = $app->handle(requisicao('GET', '/studio', [], ['status' => 'exported']));
+assertSame('aba de exportadas responde 200', 200, $sóExportadas->status);
+check('aba de exportadas mantém o formulário de busca', str_contains($sóExportadas->body, 'data-gallery-search'));
+
+// Paginação: 25 artes passam a ter duas páginas; página fora do intervalo
+// não pode mostrar uma galeria vazia (parece perda de dados).
+$layoutVazio = '{"elements":[]}';
+for ($i = 1; $i <= 25; $i++) {
+    $app->db->run(
+        "INSERT INTO creative_posts (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height,
+            content_json, layout_json, background_color, image_prompt)
+         VALUES (1, ?, ?, ?, 'square', 1080, 1080, '{}', ?, '#222222', '')",
+        [$clienteDoEstudio, $idUsuario, 'Página arte ' . $i, $layoutVazio]
+    );
+}
+$primeiraPagina = $app->handle(requisicao('GET', '/studio'));
+assertSame('galeria com 25 artes responde 200', 200, $primeiraPagina->status);
+check('galeria pagina a lista', str_contains($primeiraPagina->body, 'gallery-pager')
+    && str_contains($primeiraPagina->body, 'rel="next"'));
+check('a primeira página informa o intervalo', str_contains($primeiraPagina->body, '1–24 de'));
+$segundaPagina = $app->handle(requisicao('GET', '/studio', [], ['pagina' => '2']));
+check('a segunda página traz o resto', str_contains($segundaPagina->body, 'rel="prev"')
+    && !str_contains($segundaPagina->body, 'rel="next"'));
+$paginaForaDoIntervalo = $app->handle(requisicao('GET', '/studio', [], ['pagina' => '99']));
+assertSame('página fora do intervalo responde 200', 200, $paginaForaDoIntervalo->status);
+check('página fora do intervalo mostra a última página, não uma galeria vazia',
+    str_contains($paginaForaDoIntervalo->body, 'rel="prev"')
+    && !str_contains($paginaForaDoIntervalo->body, 'Nenhuma arte'));
+
+// --- ações em lote ----------------------------------------------------
+$idA = (int) $artePref['id'];
+$idB = (int) $arteSemPref['id'];
+$loteStatus = $app->handle(requisicao('POST', '/studio/lote', [
+    'csrf_token' => $app->session->csrfToken(), 'acao' => 'exportar', 'ids' => [(string) $idA, (string) $idB],
+]));
+assertSame('lote de status redireciona', 302, $loteStatus->status);
+check('lote de status leva a mensagem em chave conhecida', str_contains((string) ($loteStatus->headers['Location'] ?? ''), 'ok=lote&acao=exportar&n=2'));
+assertSame('as duas artes ficaram exportadas', 2, (int) $app->db->scalar(
+    'SELECT COUNT(*) FROM creative_posts WHERE id IN (?, ?) AND status = ?', [$idA, $idB, 'exported']
+));
+$loteVolta = $app->handle(requisicao('POST', '/studio/lote', [
+    'csrf_token' => $app->session->csrfToken(), 'acao' => 'rascunho', 'ids' => [(string) $idA],
+]));
+assertSame('lote de volta para rascunho', 302, $loteVolta->status);
+assertSame('a arte escolhida voltou para rascunho', 'draft', (string) $app->db->scalar(
+    'SELECT status FROM creative_posts WHERE id = ?', [$idA]
+));
+$semIds = $app->handle(requisicao('POST', '/studio/lote', [
+    'csrf_token' => $app->session->csrfToken(), 'acao' => 'excluir', 'ids' => [],
+]));
+assertSame('lote sem seleção redireciona', 302, $semIds->status);
+check('lote sem seleção pede para escolher', str_contains((string) ($semIds->headers['Location'] ?? ''), 'erro='));
+$acaoRuim = $app->handle(requisicao('POST', '/studio/lote', [
+    'csrf_token' => $app->session->csrfToken(), 'acao' => 'apagar-tudo', 'ids' => [(string) $idA],
+]));
+check('ação desconhecida é recusada', str_contains((string) ($acaoRuim->headers['Location'] ?? ''), 'erro='));
+$semCsrfLote = $app->handle(requisicao('POST', '/studio/lote', [
+    'csrf_token' => 'errado', 'acao' => 'excluir', 'ids' => [(string) $idA],
+]));
+check('lote sem CSRF não exclui nada', str_contains((string) ($semCsrfLote->headers['Location'] ?? ''), 'erro=')
+    && (int) $app->db->scalar('SELECT COUNT(*) FROM creative_posts WHERE id = ?', [$idA]) === 1);
+// Arte de outra empresa na lista não é tocada.
+$app->db->run("INSERT INTO clients (company_id, company_name, status) VALUES (2, 'Cliente de fora v1.23', 'active')");
+$clienteFora = (int) $app->db->scalar("SELECT id FROM clients WHERE company_name = 'Cliente de fora v1.23'");
+$app->db->run(
+    "INSERT INTO creative_posts (company_id, client_id, created_by, subject, format_key, canvas_width, canvas_height,
+        content_json, layout_json, background_color, image_prompt)
+     VALUES (2, ?, ?, 'Arte de outra empresa', 'square', 1080, 1080, '{}', '{\"elements\":[]}', '#111111', '')",
+    [$clienteFora, $idUsuario]
+);
+$arteDeFora = (int) $app->db->scalar('SELECT id FROM creative_posts ORDER BY id DESC LIMIT 1');
+$loteMisto = $app->handle(requisicao('POST', '/studio/lote', [
+    'csrf_token' => $app->session->csrfToken(), 'acao' => 'excluir', 'ids' => [(string) $arteDeFora],
+]));
+assertSame('lote com arte de outra empresa não exclui', 1, (int) $app->db->scalar(
+    'SELECT COUNT(*) FROM creative_posts WHERE id = ?', [$arteDeFora]
+));
+check('lote que não altera nada avisa a pessoa', str_contains((string) ($loteMisto->headers['Location'] ?? ''), 'n=0'));
+
+// --- rascunho do editor na sessão -------------------------------------
+$app->session->put('studio_rascunhos', []);
+$rascunhoPost = $app->handle(requisicao('POST', '/studio/posts/' . $idA . '/rascunho', [
+    'csrf_token' => $app->session->csrfToken(),
+    'title' => 'Título que ficou pela metade',
+    'caption' => 'Legenda não salva',
+    'hashtags' => '#rascunho',
+]));
+assertSame('rascunho responde 200', 200, $rascunhoPost->status);
+check('rascunho responde em JSON', str_contains((string) ($rascunhoPost->headers['Content-Type'] ?? ''), 'application/json'));
+$guardados = $app->session->get('studio_rascunhos');
+check('rascunho fica guardado na sessão com os campos', is_array($guardados)
+    && (($guardados[$idA]['campos']['title'] ?? '') === 'Título que ficou pela metade'));
+$previaRascunho = $app->handle(requisicao('GET', '/studio/posts/' . $idA . '/rascunho/preview'));
+assertSame('prévia do rascunho responde 200', 200, $previaRascunho->status);
+check('prévia devolve o texto guardado', str_contains($previaRascunho->body, 'Título que ficou pela metade'));
+$telaEditor = $app->handle(requisicao('GET', '/studio/posts/' . $idA));
+check('editor avisa que há alterações não salvas', str_contains($telaEditor->body, 'data-draft-banner')
+    && str_contains($telaEditor->body, 'alterações não salvas'));
+check('editor oferece recuperar o texto', str_contains($telaEditor->body, 'data-draft-restore'));
+check('o canvas aponta para as rotas do rascunho', str_contains($telaEditor->body, 'data-draft-url=')
+    && str_contains($telaEditor->body, 'data-draft-preview='));
+// Salvar limpa o rascunho: não faz sentido avisar de alteração já gravada.
+$app->handle(requisicao('POST', '/studio/posts/' . $idA . '/save', [
+    'csrf_token' => $app->session->csrfToken(),
+    'title' => 'Título salvo de verdade',
+    'subtitle' => 'Chamada',
+    'cta' => 'Saiba mais',
+    'caption' => str_repeat('Legenda salva. ', 5),
+    'hashtags' => '#salvo',
+    'visual_brief' => 'Fundo escuro com foto do time.',
+    'image_suggestion' => 'Foto do time no balcão.',
+    'layout_json' => (string) $app->db->scalar('SELECT layout_json FROM creative_posts WHERE id = ?', [$idA]),
+]));
+$depoisDeSalvar = $app->session->get('studio_rascunhos');
+check('salvar descarta o rascunho da arte', !isset($depoisDeSalvar[$idA]));
+$descartado = $app->handle(requisicao('POST', '/studio/posts/' . $idA . '/rascunho/descartar', [
+    'csrf_token' => $app->session->csrfToken(),
+]));
+assertSame('descartar rascunho redireciona', 302, $descartado->status);
+$app->session->put('studio_rascunhos', []);
+$semRascunho = $app->handle(requisicao('GET', '/studio/posts/' . $idA . '/rascunho/preview'));
+assertSame('prévia sem rascunho responde 404', 404, $semRascunho->status);
+// Rascunho de arte inexistente não vaza existência: quem é da empresa recebe 404.
+assertSame('rascunho em arte inexistente responde 404', 404, $app->handle(requisicao('POST', '/studio/posts/99999/rascunho', [
+    'csrf_token' => $app->session->csrfToken(), 'title' => 'x',
+]))->status);
+
+// --- lote e rascunho exigem permissão de edição -----------------------
+$app->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (1, 'Leitor v123', 'leitor.v123@example.com', ?, 'viewer', 0, 1)",
+    [password_hash('LeitorV123Forte', PASSWORD_DEFAULT)]
+);
+$app->handle(requisicao('POST', '/logout', ['csrf_token' => $app->session->csrfToken()]));
+$app->handle(requisicao('GET', '/login'));
+$app->handle(requisicao('POST', '/login', [
+    'csrf_token' => $app->session->csrfToken(), 'email' => 'leitor.v123@example.com', 'password' => 'LeitorV123Forte',
+]));
+$csrfLeitorV123 = $app->session->csrfToken();
+assertSame('leitor não usa ações em lote', 403, $app->handle(requisicao('POST', '/studio/lote', [
+    'csrf_token' => $csrfLeitorV123, 'acao' => 'excluir', 'ids' => [(string) $idA],
+]))->status);
+assertSame('leitor não grava rascunho', 403, $app->handle(requisicao('POST', '/studio/posts/' . $idA . '/rascunho', [
+    'csrf_token' => $csrfLeitorV123, 'title' => 'tentativa',
+]))->status);
+$galeriaLeitor = $app->handle(requisicao('GET', '/studio'));
+check('leitor vê a galeria sem barra de lote', !str_contains($galeriaLeitor->body, 'data-bulk-bar'));
+$app->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfLeitorV123]));
+$app->handle(requisicao('GET', '/login'));
+$app->handle(requisicao('POST', '/login', [
+    'csrf_token' => $app->session->csrfToken(), 'email' => 'ana@pasta.example', 'password' => 'SenhaForte2026',
+]));
+
+// --- CSS e JS publicados com par no modo escuro ------------------------
+$cssEstudio = (string) file_get_contents(__DIR__ . '/../public/assets/studio.css');
+$jsCriacao = (string) file_get_contents(__DIR__ . '/../public/assets/studio-create.js');
+$jsEstudio33 = (string) file_get_contents(__DIR__ . '/../public/assets/studio.js');
+check('CSS do lote tem par no modo escuro', str_contains($cssEstudio, 'html[data-theme="escuro"] .bulk-bar'));
+check('CSS das abas tem par no modo escuro', str_contains($cssEstudio, 'html[data-theme="escuro"] .status-tab'));
+check('CSS da busca tem par no modo escuro', str_contains($cssEstudio, 'html[data-theme="escuro"] .gallery-search input'));
+check('JS da galeria tem busca com espera', str_contains($jsCriacao, 'data-gallery-search')
+    && str_contains($jsCriacao, 'requestSubmit'));
+check('JS da galeria atualiza a barra de lote', str_contains($jsCriacao, 'data-bulk-item')
+    && str_contains($jsCriacao, 'data-bulk-count'));
+check('JS do editor envia o rascunho', str_contains($jsEstudio33, 'data-draft-url') === false
+    && str_contains($jsEstudio33, 'draftUrl'));
+check('JS do editor usa keepalive ao sair', str_contains($jsEstudio33, 'sendBeacon'));
 
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];

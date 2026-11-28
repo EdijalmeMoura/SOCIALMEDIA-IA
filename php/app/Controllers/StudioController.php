@@ -85,11 +85,25 @@ final class StudioController
             'client_id' => (int) ($req->input('cliente') ?? 0),
             'format_key' => (string) ($req->input('formato') ?? ''),
             'status' => (string) ($req->input('status') ?? ''),
+            'q' => trim((string) ($req->input('q') ?? '')),
+            'ordenar' => (string) ($req->input('ordenar') ?? 'recentes'),
         ];
+        $porPagina = 24;
+        $total = $this->repo->contarArtesFiltradas($empresa, $filtros);
+        // Página fora do intervalo cai na última existente: /studio?pagina=99
+        // mostrando "nenhuma arte" faria a pessoa achar que perdeu tudo.
+        $paginas = max(1, (int) ceil($total / $porPagina));
+        $pagina = min($paginas, max(1, (int) ($req->input('pagina') ?? 1)));
 
         return $this->render('studio/index', $req, $this->dadosCriacao($usuario, $filtros) + [
-            'artes' => $this->repo->artes($empresa, 40, $filtros),
+            'artes' => $this->repo->artes($empresa, $porPagina, $filtros + ['pagina' => $pagina]),
+            'total_artes' => $total,
+            'contagens' => $this->repo->contarPorStatus($empresa),
+            'pagina' => $pagina,
+            'paginas' => $paginas,
+            'por_pagina' => $porPagina,
             'form' => $this->formComPreferencias($empresa),
+            // O que foi digitado volta na tela de erro em vez de sumir.
             'erro' => $req->input('erro'),
             'aviso' => $this->avisoDaQuery($req),
         ]);
@@ -115,10 +129,11 @@ final class StudioController
             'ia_configurada' => $this->gerador->iaConfigurada(),
             'modelo_imagem' => $this->gerador->modeloImagem(),
             'pode_editar' => $this->podeEditar($usuario),
-            'filtros' => $filtros + ['client_id' => 0, 'format_key' => '', 'status' => ''],
+            'filtros' => $filtros + ['client_id' => 0, 'format_key' => '', 'status' => '', 'q' => '', 'ordenar' => 'recentes'],
             'filtros_ativos' => (int) ($filtros['client_id'] ?? 0) > 0
                 || (string) ($filtros['format_key'] ?? '') !== ''
-                || (string) ($filtros['status'] ?? '') !== '',
+                || (string) ($filtros['status'] ?? '') !== ''
+                || trim((string) ($filtros['q'] ?? '')) !== '',
         ];
     }
 
@@ -178,6 +193,10 @@ final class StudioController
         } catch (StudioError $erro) {
             return $this->telaErro($req, $erro->getMessage(), $req->post, $this->gerador->iaConfigurada() ? 502 : 503);
         }
+
+        // Hashtags/assinatura da agência entram antes do layout: a arte já
+        // nasce com o texto completo (o saving usa o content_json).
+        $resultado['content'] = $this->completarLegenda($resultado['content'], $empresa);
 
         $medida = Layout::formato($formato);
         $marca = trim((string) ($cliente['trade_name'] ?? '')) ?: (string) $cliente['company_name'];
@@ -248,6 +267,61 @@ final class StudioController
             'network' => $prefs['rede'],
             'tone' => $prefs['tom'],
         ];
+    }
+
+    /**
+     * Hashtags e assinatura que a agência configurou (Configurações →
+     * Preferências).
+     *
+     * Ficaram guardadas desde a v1.17 e nunca chegavam à arte: a tela prometia
+     * "entram na legenda das artes novas" e o texto era gravado sem elas.
+     *
+     * @return array{tags:string,assinatura:string}
+     */
+    private function padroesDeLegenda(int $companyId): array
+    {
+        if ($this->ajustes === null || $companyId <= 0) {
+            return ['tags' => '', 'assinatura' => ''];
+        }
+        $prefs = $this->ajustes->preferencias($companyId, StudioGenerator::REDES, StudioGenerator::TONS);
+
+        return ['tags' => (string) $prefs['tags'], 'assinatura' => (string) $prefs['assinatura']];
+    }
+
+    /**
+     * Acrescenta hashtags e assinatura padrão ao texto gerado.
+     *
+     * Não sobrescreve o que a IA (ou o rascunho local) já escreveu: só completa
+     * o que está vazio e evita repetir a mesma tag. O que a agência cadastrou
+     * é a "letra miúda" dela — e agora aparece.
+     *
+     * @param array<string,string> $conteudo
+     * @return array<string,string>
+     */
+    private function completarLegenda(array $conteudo, int $companyId): array
+    {
+        $padroes = $this->padroesDeLegenda($companyId);
+
+        if ($padroes['tags'] !== '' && trim((string) ($conteudo['hashtags'] ?? '')) === '') {
+            $tags = [];
+            foreach (preg_split('/[\s,]+/', $padroes['tags']) ?: [] as $tag) {
+                $tag = trim($tag);
+                if ($tag === '') {
+                    continue;
+                }
+                $tags[] = $tag[0] === '#' ? $tag : '#' . $tag;
+            }
+            $conteudo['hashtags'] = implode(' ', array_slice(array_unique($tags), 0, 12));
+        }
+
+        if ($padroes['assinatura'] !== '') {
+            $legenda = (string) ($conteudo['caption'] ?? '');
+            if (!str_contains($legenda, $padroes['assinatura'])) {
+                $conteudo['caption'] = Layout::textoCurto($legenda . "\n\n" . $padroes['assinatura'], 5000);
+            }
+        }
+
+        return $conteudo;
     }
 
     /**
@@ -412,6 +486,14 @@ final class StudioController
             'export_path' => null,
             'status' => 'draft',
         ], 'Edição manual');
+
+        // Salvou: o rascunho da sessão já cumpriu o papel e não deve mais
+        // aparecer como "alterações não salvas" na próxima abertura.
+        $rascunhos = $this->session->get('studio_rascunhos');
+        if (is_array($rascunhos) && isset($rascunhos[(int) $arte['id']])) {
+            unset($rascunhos[(int) $arte['id']]);
+            $this->session->put('studio_rascunhos', $rascunhos);
+        }
 
         return Response::redirect($this->config->url('/studio/posts/' . $arte['id'] . '?ok=saved'));
     }
@@ -831,6 +913,97 @@ final class StudioController
         return Response::redirect($this->config->url('/studio/posts/' . $arte['id'] . '?ok=archived'));
     }
 
+    /**
+     * Guarda o rascunho do editor na sessão (chamado pelo JS ao digitar).
+     *
+     * Sair da tela, trocar de aba ou o navegador fechar deixava o texto
+     * digitado só na memória da página. O banco continua sendo a verdade: isto
+     * é um bilhete de "onde você parou", por usuário e por arte.
+     */
+    public function draft(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario)) {
+            return $this->semPermissao($req);
+        }
+        $arte = $this->arteDoUsuario($req, $usuario, $params);
+        if ($arte instanceof Response) {
+            return $arte;
+        }
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return Response::json(['ok' => false, 'erro' => 'Sessão expirada.'], 419);
+        }
+
+        $campos = [];
+        foreach (['title', 'subtitle', 'cta', 'caption', 'hashtags', 'alt_text'] as $campo) {
+            $campos[$campo] = Layout::textoCurto($req->input($campo) ?? '', 5000);
+        }
+        $rascunhos = $this->session->get('studio_rascunhos');
+        $rascunhos = is_array($rascunhos) ? $rascunhos : [];
+        $rascunhos[(int) $arte['id']] = ['em' => gmdate('Y-m-d H:i:s'), 'campos' => $campos];
+        // Só os cinco mais recentes: a sessão não é banco de dados.
+        if (count($rascunhos) > 5) {
+            $rascunhos = array_slice($rascunhos, -5, null, true);
+        }
+        $this->session->put('studio_rascunhos', $rascunhos);
+
+        return Response::json(['ok' => true]);
+    }
+
+    /** Descarta o rascunho (ao salvar ou quando o usuário recusa recuperá-lo). */
+    public function descartarDraft(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        $arte = $this->arteDoUsuario($req, $usuario, $params);
+        if ($arte instanceof Response) {
+            return $arte;
+        }
+        if ($this->session->csrfValid($req->input('csrf_token'))) {
+            $rascunhos = $this->session->get('studio_rascunhos');
+            if (is_array($rascunhos)) {
+                unset($rascunhos[(int) $arte['id']]);
+                $this->session->put('studio_rascunhos', $rascunhos);
+            }
+        }
+
+        return Response::redirect($this->config->url('/studio/posts/' . $arte['id'] . '?rascunho=descartado'));
+    }
+
+    /**
+     * Devolve o rascunho guardado para o botão "Recuperar texto".
+     *
+     * 404 quando não há rascunho para esta arte (foi salvo, descartado ou a
+     * sessão é outra): o editor então não tem o que recuperar.
+     */
+    public function preview(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        $arte = $this->arteDoUsuario($req, $usuario, $params);
+        if ($arte instanceof Response) {
+            return $arte;
+        }
+        $rascunhos = $this->session->get('studio_rascunhos');
+        $rascunho = is_array($rascunhos) ? ($rascunhos[(int) $arte['id']] ?? null) : null;
+        if (!is_array($rascunho)) {
+            return Response::json(['ok' => false], 404);
+        }
+
+        return Response::json([
+            'ok' => true,
+            'em' => (string) ($rascunho['em'] ?? ''),
+            'campos' => (array) ($rascunho['campos'] ?? []),
+        ]);
+    }
+
     public function restore(Request $req, array $params): Response
     {
         $usuario = $this->precisaLogin();
@@ -882,6 +1055,75 @@ final class StudioController
 
         // O editor abre na cópia; voltar à galeria fica a um clique.
         return Response::redirect($this->config->url('/studio/posts/' . $novo . '?ok=duplicated'));
+    }
+
+    /**
+     * Ações em lote na galeria (v1.23).
+     *
+     * Arquiva/desarquiva e exclui várias artes de uma vez, sempre restritas à
+     * empresa do usuário. Uma arte de outro workspace na lista é ignorada — não
+     * derruba as outras e não revela que existe.
+     */
+    public function bulk(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario)) {
+            return $this->semPermissao($req);
+        }
+        $empresa = (int) $usuario['company_id'];
+        $voltar = $this->config->url('/studio');
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return Response::redirect($voltar . '?erro=' . rawurlencode('Sessão expirada. Selecione as artes de novo.'));
+        }
+
+        $acao = (string) ($req->input('acao') ?? '');
+        if (!in_array($acao, ['exportar', 'rascunho', 'excluir'], true)) {
+            return Response::redirect($voltar . '?erro=' . rawurlencode('Escolha o que fazer com as artes selecionadas.'));
+        }
+        $ids = array_values(array_unique(array_filter(
+            array_map('intval', (array) ($req->post['ids'] ?? [])),
+            static fn (int $id): bool => $id > 0
+        )));
+        if ($ids === []) {
+            return Response::redirect($voltar . '?erro=' . rawurlencode('Selecione pelo menos uma arte.'));
+        }
+
+        $feitas = 0;
+        $arquivos = [];
+        foreach ($ids as $id) {
+            $arte = $this->repo->arte($id, $empresa);
+            if ($arte === null) {
+                continue;
+            }
+            if ($acao === 'excluir') {
+                $arquivos = array_merge($arquivos, $this->repo->arquivos($id, $empresa));
+                $this->repo->remover($id, $empresa);
+            } else {
+                $this->repo->atualizar($id, $empresa, (int) $usuario['id'], [
+                    'status' => $acao === 'exportar' ? 'exported' : 'draft',
+                ], $acao === 'exportar' ? 'Marcada como publicada' : 'Voltou para rascunho');
+            }
+            $feitas++;
+        }
+
+        foreach ($arquivos as $arquivo) {
+            $this->upload->delete($arquivo);
+        }
+        if ($feitas > 0) {
+            $rotulo = match ($acao) {
+                'excluir' => 'Artes excluídas',
+                'exportar' => 'Artes marcadas como publicadas',
+                default => 'Artes devolvidas para rascunho',
+            };
+            $this->repo->auditoria($empresa, (int) $usuario['id'], 'studio.bulk_' . $acao, $rotulo . ': ' . $feitas . ' (' . implode(', ', $ids) . ')');
+        }
+
+        // A mensagem é montada a partir de chaves conhecidas (nunca de texto
+        // na URL): o aviso da tela não vira eco de parâmetro.
+        return Response::redirect($voltar . '?ok=lote&acao=' . $acao . '&n=' . $feitas);
     }
 
     public function delete(Request $req, array $params): Response
@@ -944,7 +1186,23 @@ final class StudioController
             'aprovacao_pendente' => $this->aprovacaoPendente((int) $arte['id'], (int) $empresa),
             // "Desfazer este salvamento": só depois de salvar e só do próprio autor.
             'salvamento_recente' => $this->repo->ultimoSalvamento((int) $arte['id'], (int) $empresa, (int) $usuario['id']) !== null,
+            // Rascunho guardado na sessão (v1.23): o editor oferece recuperar
+            // em vez de aplicar sozinho — o banco continua sendo a verdade.
+            'rascunho' => $this->rascunhoDaArte((int) $arte['id']),
         ];
+    }
+
+    /**
+     * Rascunho de edição desta arte para este usuário, se houver.
+     *
+     * @return array{em:string,campos:array<string,string>}|null
+     */
+    private function rascunhoDaArte(int $creativeId): ?array
+    {
+        $rascunhos = $this->session->get('studio_rascunhos');
+        $rascunho = is_array($rascunhos) ? ($rascunhos[$creativeId] ?? null) : null;
+
+        return is_array($rascunho) ? $rascunho : null;
     }
 
     /** Quantos acessos ativos ao portal este cliente tem (0 = ninguém vê). */
@@ -1052,7 +1310,21 @@ final class StudioController
 
     private function avisoDaQuery(Request $req): ?string
     {
-        return match ((string) ($req->input('ok') ?? '')) {
+        $ok = (string) ($req->input('ok') ?? '');
+        if ($ok === 'lote') {
+            $n = (int) ($req->input('n') ?? 0);
+            if ($n <= 0) {
+                return 'Nenhuma arte foi alterada — confira a seleção.';
+            }
+
+            return match ((string) ($req->input('acao') ?? '')) {
+                'excluir' => $n . ' ' . ($n === 1 ? 'arte excluída' : 'artes excluídas') . '.',
+                'exportar' => $n . ' ' . ($n === 1 ? 'arte marcada como publicada' : 'artes marcadas como publicadas') . '.',
+                default => $n . ' ' . ($n === 1 ? 'arte devolvida para rascunho' : 'artes devolvidas para rascunho') . '.',
+            };
+        }
+
+        return match ($ok) {
             'saved' => 'Edição salva como uma nova versão.',
             'image' => 'Imagem de fundo atualizada.',
             'upload' => 'Imagem enviada e ajustada ao formato.',
@@ -1105,8 +1377,19 @@ final class StudioController
         $usuario = $this->auth->user();
         $empresa = (int) ($usuario['company_id'] ?? 0);
 
-        return $this->render('studio/index', $req, $this->dadosCriacao($usuario ?? [], []) + [
-            'artes' => $this->repo->artes($empresa),
+        // A tela de erro é a mesma galeria, com o formulário preenchido: ela
+        // também precisa das contagens e da paginação, senão o topo da galeria
+        // aparece sem números.
+        $total = $this->repo->contarArtesFiltradas($empresa);
+        $contagens = $this->repo->contarPorStatus($empresa);
+
+        return $this->render('studio/index', $req, $this->dadosCriacao($usuario ?? []) + [
+            'artes' => $this->repo->artes($empresa, 24),
+            'total_artes' => $total,
+            'contagens' => $contagens,
+            'pagina' => 1,
+            'paginas' => max(1, (int) ceil($total / 24)),
+            'por_pagina' => 24,
             'form' => $form,
             'erro' => $mensagem,
             'aviso' => null,

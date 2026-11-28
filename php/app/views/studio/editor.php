@@ -25,6 +25,7 @@
  * @var int $portal_ativo
  * @var array{id:int,enviado_em:string}|null $aprovacao_pendente
  * @var bool $pode_desfazer
+ * @var array{em:string,campos:array<string,string>}|null $rascunho
  */
 $formato = $formatos[(string) $arte['format_key']] ?? ['label' => $arte['format_key'], 'width' => $arte['canvas_width'], 'height' => $arte['canvas_height']];
 $erroQuery = $config->url('/studio/posts/' . (int) $arte['id']);
@@ -36,6 +37,33 @@ $legendaAtual = (string) ($conteudo['caption'] ?? '');
 $tagsAtuais = (string) ($conteudo['hashtags'] ?? '');
 ob_start();
 ?>
+<?php if (!empty($rascunho) && $pode_editar): ?>
+  <?php
+  $rascunhoCampos = (array) ($rascunho['campos'] ?? []);
+  $diferencas = [];
+  foreach (['title' => 'título', 'subtitle' => 'chamada', 'cta' => 'botão', 'caption' => 'legenda', 'hashtags' => 'hashtags'] as $campo => $rotulo) {
+      $atual = (string) ($conteudo[$campo] ?? '');
+      $guardado = (string) ($rascunhoCampos[$campo] ?? '');
+      if ($guardado !== '' && trim($guardado) !== trim($atual)) {
+          $diferencas[] = $rotulo;
+      }
+  }
+  ?>
+  <?php if ($diferencas !== []): ?>
+    <div class="alert info-alert draft-alert" data-draft-banner>
+      <b>Você tem alterações não salvas</b> em <?= e(implode(', ', $diferencas)) ?>,
+      de <?= e(substr((string) ($rascunho['em'] ?? ''), 0, 16)) ?>.
+      <div class="draft-alert-actions">
+        <button class="button outline small-button" type="button" data-draft-restore>Recuperar texto</button>
+        <form method="post" action="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/rascunho/descartar')) ?>">
+          <input type="hidden" name="csrf_token" value="<?= e($csrf) ?>">
+          <button class="button ghost small-button" type="submit">Descartar</button>
+        </form>
+      </div>
+    </div>
+  <?php endif; ?>
+<?php endif; ?>
+
 <div class="studio-head">
   <div>
     <a class="back-link" href="<?= e($config->url('/studio')) ?>">← <span>Voltar ao estúdio</span></a>
@@ -147,6 +175,8 @@ ob_start();
                 data-logo-url="<?= e((string) ($logo_url ?? '')) ?>"
                 data-export-url="<?= e($config->url('/studio/posts/' . (int) $arte['id'] . '/export')) ?>"
                 data-csrf="<?= e($csrf) ?>"
+                data-draft-url="<?= $pode_editar ? e($config->url('/studio/posts/' . (int) $arte['id'] . '/rascunho')) : '' ?>"
+                data-draft-preview="<?= $pode_editar ? e($config->url('/studio/posts/' . (int) $arte['id'] . '/rascunho/preview')) : '' ?>"
                 data-marca="<?= e(trim((string) ($arte['trade_name'] ?? '')) ?: (string) $arte['company_name']) ?>"
                 data-editable="<?= $pode_editar ? '1' : '0' ?>"
                 role="img"

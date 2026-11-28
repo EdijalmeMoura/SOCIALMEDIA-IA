@@ -40,10 +40,65 @@ final class StudioRepository
      * Os filtros são opcionais e vêm da própria galeria: sem eles, quem tem
      * trinta artes rola a lista inteira para achar a de um cliente.
      *
-     * @param array{client_id?:int,format_key?:string,status?:string} $filtros
+     * @param array{client_id?:int,format_key?:string,status?:string,q?:string,ordenar?:string,pagina?:int} $filtros
      * @return array<int,array<string,mixed>>
      */
     public function artes(int $companyId, int $limite = 40, array $filtros = []): array
+    {
+        $condicoes = ['cp.company_id = ?'];
+        $valores = [$companyId];
+        // Busca: assunto, nome do cliente e o título que aparece na arte. O
+        // JSON do conteúdo é texto no banco, então LIKE nele funciona sem
+        // tabela de índice — a galeria tem dezenas de artes, não milhões.
+        $busca = trim((string) ($filtros['q'] ?? ''));
+        if ($busca !== '') {
+            $condicoes[] = '(cp.subject LIKE ? OR c.company_name LIKE ? OR c.trade_name LIKE ? OR cp.content_json LIKE ?)';
+            $termo = '%' . str_replace(['%', '_'], ['\%', '\_'], mb_substr($busca, 0, 120)) . '%';
+            array_push($valores, $termo, $termo, $termo, $termo);
+        }
+        if ((int) ($filtros['client_id'] ?? 0) > 0) {
+            $condicoes[] = 'cp.client_id = ?';
+            $valores[] = (int) $filtros['client_id'];
+        }
+        if ((string) ($filtros['format_key'] ?? '') !== '') {
+            $condicoes[] = 'cp.format_key = ?';
+            $valores[] = (string) $filtros['format_key'];
+        }
+        if (in_array((string) ($filtros['status'] ?? ''), ['draft', 'exported'], true)) {
+            $condicoes[] = 'cp.status = ?';
+            $valores[] = (string) $filtros['status'];
+        }
+        $pagina = max(1, (int) ($filtros['pagina'] ?? 1));
+        $valores[] = $limite;
+        $valores[] = ($pagina - 1) * $limite;
+        // Ordem explícita: sem ela, a galeria só sabia mostrar "mais nova
+        // primeiro" e achar uma arte antiga dependia de rolar tudo até o fim.
+        $ordem = match ((string) ($filtros['ordenar'] ?? '')) {
+            'antigas' => 'cp.created_at ASC, cp.id ASC',
+            'titulo' => 'cp.subject COLLATE NOCASE ASC, cp.id DESC',
+            'editadas' => 'cp.updated_at DESC, cp.id DESC',
+            default => 'cp.created_at DESC, cp.id DESC',
+        };
+
+        return $this->db->all(
+            'SELECT cp.*, c.company_name, c.trade_name,
+                    (SELECT COUNT(*) FROM post_versions pv WHERE pv.creative_id = cp.id) AS version_count,
+                    (SELECT p.id FROM posts p WHERE p.creative_id = cp.id LIMIT 1) AS post_id
+             FROM creative_posts cp
+             JOIN clients c ON c.id = cp.client_id AND c.company_id = cp.company_id
+             WHERE ' . implode(' AND ', $condicoes) . '
+             ORDER BY ' . $ordem . '
+             LIMIT ? OFFSET ?',
+            $valores
+        );
+    }
+
+    /**
+     * Quantas artes existem com os filtros — para a galeria paginar.
+     *
+     * @param array<string,mixed> $filtros
+     */
+    public function contarArtesFiltradas(int $companyId, array $filtros = []): int
     {
         $condicoes = ['cp.company_id = ?'];
         $valores = [$companyId];
@@ -59,17 +114,50 @@ final class StudioRepository
             $condicoes[] = 'cp.status = ?';
             $valores[] = (string) $filtros['status'];
         }
-        $valores[] = $limite;
+        $busca = trim((string) ($filtros['q'] ?? ''));
+        if ($busca !== '') {
+            $condicoes[] = '(cp.subject LIKE ? OR c.company_name LIKE ? OR c.trade_name LIKE ? OR cp.content_json LIKE ?)';
+            $termo = '%' . str_replace(['%', '_'], ['\%', '\_'], mb_substr($busca, 0, 120)) . '%';
+            array_push($valores, $termo, $termo, $termo, $termo);
+        }
 
-        return $this->db->all(
-            'SELECT cp.*, c.company_name, c.trade_name,
-                    (SELECT COUNT(*) FROM post_versions pv WHERE pv.creative_id = cp.id) AS version_count
-             FROM creative_posts cp
+        return (int) ($this->db->scalar(
+            'SELECT COUNT(*) FROM creative_posts cp
              JOIN clients c ON c.id = cp.client_id AND c.company_id = cp.company_id
-             WHERE ' . implode(' AND ', $condicoes) . '
-             ORDER BY cp.created_at DESC, cp.id DESC
-             LIMIT ?',
+             WHERE ' . implode(' AND ', $condicoes),
             $valores
+        ) ?? 0);
+    }
+
+    /**
+     * Contagem por status para as abas da galeria ("Rascunho · 7").
+     *
+     * @return array<string,int>
+     */
+    public function contarPorStatus(int $companyId): array
+    {
+        $contagens = ['draft' => 0, 'exported' => 0];
+        foreach ($this->db->all(
+            'SELECT status, COUNT(*) AS total FROM creative_posts WHERE company_id = ? GROUP BY status',
+            [$companyId]
+        ) as $linha) {
+            $contagens[(string) $linha['status']] = (int) $linha['total'];
+        }
+
+        return $contagens;
+    }
+
+    /**
+     * Post do calendário ligado a esta arte (para o selo "planejamento").
+     *
+     * @return array<string,mixed>|null
+     */
+    public function postDaArte(int $creativeId, int $companyId): ?array
+    {
+        return $this->db->one(
+            'SELECT p.id, p.publication_date, p.network, p.calendar_id
+             FROM posts p WHERE p.creative_id = ? AND p.company_id = ? LIMIT 1',
+            [$creativeId, $companyId]
         );
     }
 

@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.22`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.22)** — todos os módulos,
+**Última versão: [`php-v1.23`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.23)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,6 +27,7 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
+| **v1.23** | **Estúdio 3.0**: galeria com **busca** (título, cliente e legenda), **abas de status com contagem**, **ordenação** e **paginação**; **ações em lote** (publicada, rascunho, excluir) e **rascunho do editor na sessão** — o texto digitado não se perde mais ao sair. E as **hashtags/assinatura da agência** finalmente entram na legenda | [php-v1.23](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.23) | [`SOCIALMEDIA-IA-php-v1.23.zip`](downloads/SOCIALMEDIA-IA-php-v1.23.zip) |
 | **v1.22** | **Publicação do calendário 2.0**: a tela mostra a **arte da publicação** (criar a partir do texto, vincular uma existente e abrir no Estúdio), **contador com o limite da rede** e **prévia** de como o texto aparece no feed | [php-v1.22](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.22) | [`SOCIALMEDIA-IA-php-v1.22.zip`](downloads/SOCIALMEDIA-IA-php-v1.22.zip) |
 | **v1.21** | **Editor de arte 3.0**: avisa o que não foi salvo, desfaz e refaz de verdade, edita o texto na própria prancheta, miniatura na aba Legenda, **reescrever só a legenda/hashtags**, **enviar para aprovação** de dentro do editor, grade de alinhamento e barra de salvar fixa no celular | [php-v1.21](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.21) | [`SOCIALMEDIA-IA-php-v1.21.zip`](downloads/SOCIALMEDIA-IA-php-v1.21.zip) |
 | **v1.20** | **Modo escuro** com botão no topo, **aba Sistema só para o dono** e **análise do perfil social** no cadastro de cliente (a IA preenche os campos e você revisa) | [php-v1.20](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.20) | [`SOCIALMEDIA-IA-php-v1.20.zip`](downloads/SOCIALMEDIA-IA-php-v1.20.zip) |
@@ -80,6 +81,24 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.23 — O Estúdio virou uma galeria de trabalho.**
+  Com poucas artes, a lista dava conta; com trinta, achar uma era rolar até
+  encontrar. A galeria agora tem:
+  **busca por texto** (título da arte, nome do cliente e legenda — o JSON do
+  conteúdo é pesquisado no servidor, sem inventar índice), **abas de status com
+  contagem** (Todas · Rascunhos · Exportadas), **ordenação** (mais recentes,
+  mais antigas, editadas por último, assunto A–Z) e **paginação de 24 em 24**
+  com o intervalo dito por extenso. Página fora do intervalo cai na última:
+  `/studio?pagina=99` mostrando galeria vazia parecia perda de dados.
+  **Ações em lote**: marcar como publicada, voltar para rascunho e excluir
+  várias artes de uma vez — com confirmação, CSRF e restrito à empresa (arte de
+  outro workspace na lista é simplesmente ignorada). **Rascunho do editor**: o
+  que foi digitado vai para a sessão depois de uma pausa na digitação e, ao
+  voltar, o editor oferece **Recuperar texto** em vez de aplicar sozinho — o
+  banco continua sendo a verdade. E um erro antigo foi corrigido: as
+  **hashtags padrão e a assinatura** configuradas em Configurações →
+  Preferências eram prometidas na tela e nunca chegavam à legenda; agora entram
+  na criação (o que a IA escreveu não é sobrescrito).
 - **v1.22 — A publicação do calendário passou a ter arte.**
   Antes, o texto do planejamento e a arte do Estúdio eram dois mundos: criar a
   arte a partir do calendário gerava um texto parecido e nenhum vínculo, e não
