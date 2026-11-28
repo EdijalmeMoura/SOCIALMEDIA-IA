@@ -81,10 +81,29 @@ final class ScheduleRepository
     /**
      * Fila da agência: ativos primeiro, depois o histórico.
      *
+     * O filtro de cliente antes só recortava a lista de aprovados: escolher
+     * "Padaria" no topo e continuar vendo a fila dos outros clientes parecia
+     * bug. Agora ele recorta a fila também.
+     *
+     * @param array{client_id?:int,status?:string} $filtros
      * @return array<int,array<string,mixed>>
      */
-    public function lista(int $companyId, int $limite = 100): array
+    public function lista(int $companyId, int $limite = 100, array $filtros = []): array
     {
+        $condicoes = ['sp.company_id = ?'];
+        $valores = [$companyId];
+        if ((int) ($filtros['client_id'] ?? 0) > 0) {
+            $condicoes[] = 'sp.client_id = ?';
+            $valores[] = (int) $filtros['client_id'];
+        }
+        // 'ativos' = ainda na fila; 'historico' = cancelados.
+        if ((string) ($filtros['status'] ?? '') === 'ativos') {
+            $condicoes[] = "sp.status = 'scheduled'";
+        } elseif ((string) ($filtros['status'] ?? '') === 'historico') {
+            $condicoes[] = "sp.status = 'cancelled'";
+        }
+        $valores[] = $limite;
+
         $sql = "SELECT sp.*, a.title AS approval_title, a.source_type, a.snapshot_json, a.status AS approval_status,
                        COALESCE(NULLIF(c.trade_name, ''), c.company_name) AS cliente,
                        ma.id AS meta_attempt_id, ma.status AS meta_status, ma.remote_publication_id AS meta_remote_id,
@@ -102,10 +121,10 @@ final class ScheduleRepository
                 LEFT JOIN meta_publication_reconciliations mr ON mr.attempt_id = ma.id AND mr.company_id = sp.company_id
                 LEFT JOIN users ru ON ru.id = mr.reconciled_by
                 LEFT JOIN meta_page_connections mc ON mc.id = ma.connection_id AND mc.company_id = ma.company_id
-                WHERE sp.company_id = ?
+                WHERE " . implode(' AND ', $condicoes) . "
                 ORDER BY CASE sp.status WHEN 'scheduled' THEN 0 ELSE 1 END, sp.scheduled_at_utc, sp.id DESC
                 LIMIT ?";
-        $linhas = $this->db->all($sql, [$companyId, $limite]);
+        $linhas = $this->db->all($sql, $valores);
 
         $agora = time();
         foreach ($linhas as $indice => $linha) {
@@ -114,6 +133,10 @@ final class ScheduleRepository
             $linhas[$indice]['local_label'] = self::rotuloLocal((string) $linha['scheduled_at_utc'], (string) $linha['timezone']);
             $linhas[$indice]['local_input'] = self::entradaLocal((string) $linha['scheduled_at_utc'], (string) $linha['timezone']);
             $linhas[$indice]['is_due'] = (int) strtotime((string) $linha['scheduled_at_utc'] . ' UTC') <= $agora;
+            // Dois rótulos: o dia no fuso escolhido (o que a pessoa vê) e o
+            // "Hoje/Amanhã" que encurta a leitura na fila.
+            $linhas[$indice]['dia'] = self::diaLocal((string) $linha['scheduled_at_utc'], (string) $linha['timezone']);
+            $linhas[$indice]['dia_relativo'] = self::diaRelativo((string) $linha['scheduled_at_utc'], (string) $linha['timezone']);
             $linhas[$indice]['has_export'] = trim((string) ($fotografia['export_path'] ?? '')) !== '';
             $linhas[$indice]['meta_published'] = ($linha['meta_status'] ?? null) === 'published';
             $linhas[$indice]['meta_busy'] = in_array($linha['meta_status'] ?? null, ['publishing', 'published', 'unknown'], true);
@@ -128,6 +151,97 @@ final class ScheduleRepository
         }
 
         return $linhas;
+    }
+
+    /**
+     * Quantos horários em cada estado — para as abas da agenda.
+     *
+     * `atrasados` são os ativos cujo horário já passou e ainda não foram
+     * publicados: é o número que exige decisão humana agora.
+     *
+     * @return array{ativos:int,atrasados:int,publicados:int,cancelados:int,total:int}
+     */
+    public function resumo(int $companyId, int $clientId = 0): array
+    {
+        $condicoes = ['sp.company_id = ?'];
+        $valores = [$companyId];
+        if ($clientId > 0) {
+            $condicoes[] = 'sp.client_id = ?';
+            $valores[] = $clientId;
+        }
+        $onde = implode(' AND ', $condicoes);
+        $contagem = ['ativos' => 0, 'atrasados' => 0, 'publicados' => 0, 'cancelados' => 0];
+        foreach ($this->db->all(
+            "SELECT sp.status,
+                    CASE WHEN EXISTS (
+                        SELECT 1 FROM meta_publication_attempts ma
+                        WHERE ma.schedule_id = sp.id AND ma.company_id = sp.company_id AND ma.status = 'published'
+                    ) OR EXISTS (
+                        SELECT 1 FROM meta_publication_reconciliations mr
+                        JOIN meta_publication_attempts ma2 ON ma2.id = mr.attempt_id AND ma2.company_id = mr.company_id
+                        WHERE ma2.schedule_id = sp.id AND mr.company_id = sp.company_id AND mr.outcome = 'confirmed_published'
+                    ) THEN 1 ELSE 0 END AS publicado,
+                    CASE WHEN sp.scheduled_at_utc <= ? THEN 1 ELSE 0 END AS vencido
+             FROM scheduled_publications sp
+             WHERE " . $onde,
+            array_merge([gmdate('Y-m-d\\TH:i:s')], $valores)
+        ) as $linha) {
+            $publicado = (int) $linha['publicado'] === 1;
+            if ((string) $linha['status'] === 'cancelled') {
+                $contagem['cancelados']++;
+                continue;
+            }
+            if ($publicado) {
+                $contagem['publicados']++;
+            } else {
+                $contagem['ativos']++;
+                if ((int) $linha['vencido'] === 1) {
+                    $contagem['atrasados']++;
+                }
+            }
+        }
+        $contagem['total'] = $contagem['ativos'] + $contagem['publicados'] + $contagem['cancelados'];
+
+        return $contagem;
+    }
+
+    /** Dia no fuso escolhido, para agrupar a fila ("Hoje · 12/03"). */
+    public static function diaLocal(string $utc, string $fuso): string
+    {
+        try {
+            $data = new \DateTimeImmutable($utc, new \DateTimeZone('UTC'));
+
+            return $data->setTimezone(new \DateTimeZone($fuso))->format('Y-m-d');
+        } catch (\Exception) {
+            return substr($utc, 0, 10);
+        }
+    }
+
+    /**
+     * "Hoje", "Amanhã", "Ontem" ou a data — no fuso escolhido.
+     *
+     * A fila é lida de relance; "Hoje" responde mais rápido que "12/03/2026".
+     */
+    public static function diaRelativo(string $utc, string $fuso): string
+    {
+        try {
+            $zona = new \DateTimeZone($fuso);
+            $dia = (new \DateTimeImmutable($utc, new \DateTimeZone('UTC')))->setTimezone($zona)->format('Y-m-d');
+            $hoje = new \DateTimeImmutable('now', $zona);
+            if ($dia === $hoje->format('Y-m-d')) {
+                return 'Hoje';
+            }
+            if ($dia === $hoje->modify('+1 day')->format('Y-m-d')) {
+                return 'Amanhã';
+            }
+            if ($dia === $hoje->modify('-1 day')->format('Y-m-d')) {
+                return 'Ontem';
+            }
+
+            return (new \DateTimeImmutable($dia, $zona))->format('d/m');
+        } catch (\Exception) {
+            return substr($utc, 0, 10);
+        }
     }
 
     public function ativo(int $scheduleId, int $companyId): ?array

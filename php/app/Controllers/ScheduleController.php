@@ -46,17 +46,25 @@ final class ScheduleController
         $empresa = (int) $usuario['company_id'];
 
         $clientes = $this->repo->clientes($empresa);
-        $selecionadoId = (int) ($req->input('client_id') ?? 0);
-        if ($selecionadoId <= 0 && $clientes !== []) {
-            $selecionadoId = (int) $clientes[0]['id'];
-        }
+        // Sem filtro a agenda mostra a agência inteira: antes ela abria presa
+        // no primeiro cliente da lista alfabética, e quem tinha duas marcas
+        // via a fila da "A" sem ter pedido.
+        $selecionadoId = max(0, (int) ($req->input('client_id') ?? 0));
         $selecionado = $selecionadoId > 0 ? $this->repo->cliente($selecionadoId, $empresa) : null;
+        if ($selecionadoId > 0 && $selecionado === null) {
+            return $this->naoEncontrado($req);
+        }
+        $status = (string) ($req->input('status') ?? '');
+        if (!in_array($status, ['', 'ativos', 'historico'], true)) {
+            $status = '';
+        }
+        $filtros = ['client_id' => $selecionadoId, 'status' => $status];
 
         // Tentativa que ficou "publicando" e nunca voltou é marcada como
         // incerta toda vez que a agenda é aberta — antes de qualquer clique.
         $this->meta->resolverTentativasParadas($empresa, '/schedule');
 
-        $agenda = $this->repo->lista($empresa);
+        $agenda = $this->repo->lista($empresa, 100, $filtros);
         $conexoes = $this->meta->conexoes($empresa);
         [$settings, $erroConfig] = MetaSettings::tentar($this->config);
         [, $erroMidia] = \Smia\Meta\MediaUrl::tentar($this->config);
@@ -73,6 +81,10 @@ final class ScheduleController
         return $this->render('schedule/index', $req, [
             'clientes' => $clientes,
             'selecionado' => $selecionado,
+            'resumo' => $this->repo->resumo($empresa, $selecionadoId),
+            'filtros' => $filtros,
+            // Por dia, na ordem em que a fila já vem (ativos primeiro).
+            'por_dia' => $this->agruparPorDia($agenda),
             'aprovados' => $this->repo->aprovados($empresa, $selecionado !== null ? (int) $selecionado['id'] : null),
             'agenda' => $agenda,
             'ativas' => $ativas,
@@ -296,12 +308,44 @@ final class ScheduleController
             'pode_editar' => false,
             'aviso' => null,
             'erro' => 'Seu papel atual é somente leitura. Peça a um administrador ou editor para organizar horários.',
+            // A view desenha o resumo mesmo na tela de 403; sem estas chaves
+            // ela emitia "Undefined variable" e o 403 virava 500.
+            'resumo' => ['ativos' => 0, 'atrasados' => 0, 'publicados' => 0, 'cancelados' => 0, 'total' => 0],
+            'filtros' => ['client_id' => 0, 'status' => ''],
+            'por_dia' => [],
         ];
     }
 
     private function voltarErro(Request $req, string $mensagem): Response
     {
         return Response::redirect($this->config->url('/schedule?erro=' . rawurlencode($mensagem)));
+    }
+
+    /**
+     * Agrupa a fila por dia (no fuso de cada horário) mantendo a ordem.
+     *
+     * A tela mostrava uma lista corrida: com dez horários, "quando é o
+     * próximo?" exigia comparar datas linha a linha.
+     *
+     * @param array<int,array<string,mixed>> $agenda
+     * @return array<int,array{dia:string,rotulo:string,itens:array<int,array<string,mixed>>}>
+     */
+    private function agruparPorDia(array $agenda): array
+    {
+        $dias = [];
+        foreach ($agenda as $linha) {
+            $chave = (string) ($linha['dia'] ?? substr((string) $linha['scheduled_at_utc'], 0, 10));
+            if (!isset($dias[$chave])) {
+                $dias[$chave] = [
+                    'dia' => $chave,
+                    'rotulo' => (string) ($linha['dia_relativo'] ?? $chave),
+                    'itens' => [],
+                ];
+            }
+            $dias[$chave]['itens'][] = $linha;
+        }
+
+        return array_values($dias);
     }
 
     private function avisoDeQuery(Request $req): ?string
@@ -324,7 +368,9 @@ final class ScheduleController
             'csrf' => $this->session->csrfToken(),
             'flashes' => $this->session->takeFlashes(),
             'modules' => Modules::all(),
-            'active' => 'meta',
+            // A agenda ganhou item próprio no menu (v1.24); antes ela existia
+            // sem link nenhum e o CSS/realce do menu iam para "Conexões Meta".
+            'active' => 'schedule',
             'current_path' => $req->path,
         ], $status)->withSecurityHeaders();
     }

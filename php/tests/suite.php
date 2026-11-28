@@ -5061,6 +5061,114 @@ check('JS do editor envia o rascunho', str_contains($jsEstudio33, 'data-draft-ur
     && str_contains($jsEstudio33, 'draftUrl'));
 check('JS do editor usa keepalive ao sair', str_contains($jsEstudio33, 'sendBeacon'));
 
+echo "\n[91] Agenda v1.24: item no menu, filtros na fila, agrupamento por dia e vencidos\n";
+$logar($app, $idUsuario);
+$csrfAg = $app->session->csrfToken();
+$clienteDaAgenda = (int) $horario['client_id'];
+
+// --- a agenda agora está no menu e realça o item certo -----------------
+$telaMenu = $app->handle(requisicao('GET', '/schedule'));
+assertSame('agenda responde 200', 200, $telaMenu->status);
+check('agenda tem item próprio no menu', str_contains($telaMenu->body, $app->config->url('/schedule') . '"')
+    && str_contains($telaMenu->body, $app->config->url('/schedule') . '">')
+    && str_contains($telaMenu->body, 'Agenda'));
+check('o item do menu fica ativo na agenda (não em Conexões Meta)',
+    (bool) preg_match('/class="nav-link active"\s+href="[^"]*\/schedule"/', $telaMenu->body),
+    'trecho: ' . (str_contains($telaMenu->body, 'nav-link active') ? 'tem ativo' : 'sem ativo'));
+$modulosAgenda = \Smia\Support\Modules::all();
+$slugAgenda = array_values(array_filter($modulosAgenda, static fn (array $m): bool => $m['path'] === '/schedule'));
+check('o módulo Agenda está declarado em Modules', count($slugAgenda) === 1 && $slugAgenda[0]['slug'] === 'schedule');
+
+// --- resumo, abas e agrupamento ---------------------------------------
+check('agenda mostra abas de filtro', str_contains($telaMenu->body, 'schedule-tabs')
+    && str_contains($telaMenu->body, 'Na fila') && str_contains($telaMenu->body, 'Histórico'));
+check('agenda mostra o resumo (publicadas e vencidos)', str_contains($telaMenu->body, 'schedule-fact')
+    && str_contains($telaMenu->body, 'com horário vencido'));
+check('a fila é agrupada por dia', str_contains($telaMenu->body, 'schedule-day'));
+
+// --- filtro por cliente e por status valem para a fila ----------------
+$app->db->run("INSERT INTO clients (company_id, company_name, status) VALUES (1, 'Zulu Agenda', 'active')");
+$clienteZulu = (int) $app->db->scalar("SELECT id FROM clients WHERE company_name = 'Zulu Agenda'");
+$outraAprovacao = (int) $app->db->scalar(
+    "SELECT id FROM approvals WHERE company_id = ? AND status = 'approved' AND client_id = ? ORDER BY id LIMIT 1",
+    [$empresaTeste, $clienteDaAgenda]
+);
+if ($outraAprovacao === 0) {
+    // Sem segundo ciclo aprovado, cria um aprovado para o mesmo cliente com outro id.
+    $app->db->run(
+        "INSERT INTO approvals (company_id, client_id, title, source_type, source_id, snapshot_json, status, requested_by, resolved_at)
+         VALUES (?, ?, 'Ciclo extra da agenda', 'planned', 0, '{\"network\":\"Facebook\",\"type\":\"planned\"}', 'approved', ?, CURRENT_TIMESTAMP)",
+        [$empresaTeste, $clienteDaAgenda, $idUsuario]
+    );
+    $outraAprovacao = (int) $app->db->scalar("SELECT id FROM approvals WHERE title = 'Ciclo extra da agenda'");
+}
+$logar($app, $idUsuario);
+// O filtro precisa funcionar mesmo quando o cliente já tem histórico: cria um
+// horário para o Zulu e confere que o filtro do outro cliente não o mostra.
+
+$clienteSemFila = (int) $app->db->scalar(
+    'SELECT id FROM clients WHERE company_id = 1 AND id NOT IN (SELECT client_id FROM scheduled_publications) ORDER BY id LIMIT 1'
+);
+check('existe cliente sem fila para o teste do filtro', $clienteSemFila > 0, 'clientes: ' . $clienteSemFila);
+$agendaZulu = $app->handle(requisicao('GET', '/schedule', [], ['client_id' => (string) $clienteSemFila]));
+assertSame('filtro por cliente responde 200', 200, $agendaZulu->status);
+check('cliente sem horário não vê a fila dos outros', str_contains($agendaZulu->body, 'Nenhum horário organizado ainda')
+    && !str_contains($agendaZulu->body, 'ciclo aprovado registrado'));
+$agendaCliente = $app->handle(requisicao('GET', '/schedule', [], ['client_id' => (string) $clienteDaAgenda]));
+check('cliente com horário vê o próprio', str_contains($agendaCliente->body, 'Bravo'));
+check('o seletor de cliente não prende a agenda em um cliente só', !str_contains($telaMenu->body, 'value="' . $clienteDaAgenda . '" selected'));
+$clienteInexistente = $app->handle(requisicao('GET', '/schedule', [], ['client_id' => '99999']));
+assertSame('cliente de outro workspace na agenda responde 404', 404, $clienteInexistente->status);
+
+// Cancelar um horário e conferir o filtro de histórico.
+$horarioCancelar = (int) $app->db->scalar(
+    "SELECT id FROM scheduled_publications WHERE company_id = 1 AND status = 'scheduled' ORDER BY id DESC LIMIT 1"
+);
+$app->handle(requisicao('POST', '/schedule/' . $horarioCancelar . '/cancel', ['csrf_token' => $app->session->csrfToken()]));
+$logar($app, $idUsuario);
+$soHistórico = $app->handle(requisicao('GET', '/schedule', [], ['status' => 'historico']));
+assertSame('aba histórico responde 200', 200, $soHistórico->status);
+check('histórico mostra o cancelado', str_contains($soHistórico->body, 'Cancelado'));
+$soAtivos = $app->handle(requisicao('GET', '/schedule', [], ['status' => 'ativos']));
+check('aba "na fila" não mostra cancelado', !str_contains($soAtivos->body, 'schedule-status is-cancelled'));
+$statusInvalido = $app->handle(requisicao('GET', '/schedule', [], ['status' => 'qualquer']));
+assertSame('status desconhecido não quebra a tela', 200, $statusInvalido->status);
+check('status desconhecido cai em "Tudo"', str_contains($statusInvalido->body, 'schedule-tab is-active')
+    && !str_contains($statusInvalido->body, 'status=qualquer'));
+
+// --- horário vencido aparece como decisão pendente --------------------
+$app->db->run(
+    "INSERT INTO scheduled_publications (company_id, client_id, approval_id, scheduled_by, network, scheduled_at_utc, timezone)
+     VALUES (?, ?, ?, ?, 'Facebook', ?, 'America/Recife')",
+    [$empresaTeste, $clienteDaAgenda, $outraAprovacao, $idUsuario, gmdate('Y-m-d\TH:i:s', time() - 3600)]
+);
+$logar($app, $idUsuario);
+$comVencido = $app->handle(requisicao('GET', '/schedule'));
+check('horário vencido é marcado na fila', str_contains($comVencido->body, 'horário vencido'));
+check('topo avisa quantos vencidos esperam decisão', str_contains($comVencido->body, 'schedule-late-alert'));
+
+// --- dia relativo no fuso escolhido ----------------------------------
+$hojeUtc = gmdate('Y-m-d\TH:i:s');
+assertSame('dia relativo de hoje', 'Hoje', \Smia\Meta\ScheduleRepository::diaRelativo($hojeUtc, 'UTC'));
+assertSame('dia relativo de amanhã', 'Amanhã', \Smia\Meta\ScheduleRepository::diaRelativo(gmdate('Y-m-d\TH:i:s', time() + 86400), 'UTC'));
+assertSame('dia relativo de ontem', 'Ontem', \Smia\Meta\ScheduleRepository::diaRelativo(gmdate('Y-m-d\TH:i:s', time() - 86400), 'UTC'));
+check('dia relativo de data distante volta como dd/mm',
+    (bool) preg_match('/^\d{2}\/\d{2}$/', \Smia\Meta\ScheduleRepository::diaRelativo(gmdate('Y-m-d\TH:i:s', time() + 86400 * 40), 'UTC')));
+assertSame('dia local respeita o fuso', '23:30', (new \DateTimeImmutable(\Smia\Meta\ScheduleRepository::entradaLocal('2026-03-10T02:30:00', 'America/Recife')))->format('H:i'));
+
+// --- resumo do repositório -------------------------------------------
+$resumoRepo = (new \Smia\Meta\ScheduleRepository($app->db))->resumo($empresaTeste);
+check('resumo soma o total', $resumoRepo['total'] === $resumoRepo['ativos'] + $resumoRepo['publicados'] + $resumoRepo['cancelados']);
+check('resumo conta o vencido', $resumoRepo['atrasados'] >= 1);
+check('resumo por cliente é menor ou igual ao da agência',
+    (new \Smia\Meta\ScheduleRepository($app->db))->resumo($empresaTeste, $clienteZulu)['total'] <= $resumoRepo['total']);
+
+// --- CSS com par no modo escuro --------------------------------------
+$cssAgenda = (string) file_get_contents(__DIR__ . '/../public/assets/meta.css');
+check('CSS das abas da agenda tem par no escuro', str_contains($cssAgenda, 'html[data-theme="escuro"] .schedule-tab'));
+check('CSS do aviso de vencido tem par no escuro', str_contains($cssAgenda, 'html[data-theme="escuro"] .schedule-late-alert'));
+check('CSS do agrupamento por dia tem par no escuro', str_contains($cssAgenda, 'html[data-theme="escuro"] .schedule-day'));
+
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];
 $iterador = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . '/../app', FilesystemIterator::SKIP_DOTS));

@@ -159,3 +159,57 @@
   .schedule-actions{flex-direction:column;align-items:stretch}
   .meta-publish-form select{max-width:none;width:100%}
 }
+
+/* ---------- v1.24: agenda com abas, resumo e agrupamento por dia ---------- */
+.schedule-summary {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 12px; padding: 12px 14px; margin-bottom: 12px;
+}
+.schedule-tabs { display: flex; gap: 4px; background: #f4f5fa; border: 1px solid #e9ebf3; border-radius: 9px; padding: 3px; }
+.schedule-tab {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 7px;
+  font-size: 11.5px; font-weight: 700; color: #5d6478; text-decoration: none;
+}
+.schedule-tab b { font-size: 10px; font-weight: 800; background: #fff; border: 1px solid #e3e6f0; border-radius: 999px; padding: 1px 6px; color: #4a5164; }
+.schedule-tab:hover { color: #2c3a8c; }
+.schedule-tab.is-active { background: #fff; color: #2b3f9e; box-shadow: 0 1px 3px rgba(25,32,60,.1); }
+.schedule-tab.is-active b { background: #eef1ff; border-color: #d8ddfa; color: #2b3f9e; }
+.schedule-facts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: #6b7183; }
+.schedule-fact b { font-size: 12.5px; color: #333a4d; }
+.schedule-fact.is-ok b { color: #12805a; }
+.schedule-fact.is-late b { color: #b4472f; }
+.schedule-late-alert {
+  display: block; margin: 0 0 12px; padding: 11px 14px; border-radius: 9px;
+  background: #fff6ec; border: 1px solid #f6dcbc; color: #7a4a1d; font-size: 11.5px; line-height: 1.6;
+}
+.schedule-late-alert b { display: block; color: #8f4413; font-size: 12px; margin-bottom: 2px; }
+.schedule-late-alert .text-link { display: inline-block; margin-top: 4px; }
+.schedule-day {
+  display: flex; align-items: baseline; gap: 8px; margin: 16px 0 8px; padding-bottom: 6px;
+  border-bottom: 1px solid #eef0f5; font: 700 11.5px 'DM Sans', sans-serif; color: #3d4459;
+  text-transform: uppercase; letter-spacing: .8px;
+}
+.schedule-day:first-child { margin-top: 4px; }
+.schedule-day small { font-size: 10.5px; font-weight: 600; letter-spacing: 0; text-transform: none; color: #8a90a2; }
+.schedule-due { color: #b4472f; font-weight: 700; }
+.schedule-tab:focus-visible { outline: 2px solid #8e9ce8; outline-offset: 2px; }
+@media (max-width: 760px) {
+  .schedule-summary { align-items: stretch; }
+  .schedule-tabs { overflow-x: auto; }
+}
+
+/* Modo escuro: cada superfície nova ganha par (texto ≥ 4.5:1). */
+html[data-theme="escuro"] .schedule-tabs { background: #1c2233; border-color: #2c3450; }
+html[data-theme="escuro"] .schedule-tab { color: #c3c9e0; }
+html[data-theme="escuro"] .schedule-tab b { background: #262e46; border-color: #39425f; color: #d7dcf5; }
+html[data-theme="escuro"] .schedule-tab.is-active { background: #2c3550; color: #e7ecff; box-shadow: none; }
+html[data-theme="escuro"] .schedule-tab.is-active b { background: #3a4467; border-color: #4a5580; color: #f2f5ff; }
+html[data-theme="escuro"] .schedule-facts { color: #b9c0d8; }
+html[data-theme="escuro"] .schedule-fact b { color: #eef1fb; }
+html[data-theme="escuro"] .schedule-fact.is-ok b { color: #7fe3b8; }
+html[data-theme="escuro"] .schedule-fact.is-late b { color: #ffb59f; }
+html[data-theme="escuro"] .schedule-late-alert { background: #33261a; border-color: #5d4326; color: #f0d9c2; }
+html[data-theme="escuro"] .schedule-late-alert b { color: #ffd0ab; }
+html[data-theme="escuro"] .schedule-day { border-bottom-color: #2c3450; color: #dbe1f5; }
+html[data-theme="escuro"] .schedule-day small { color: #a9b1c9; }
+html[data-theme="escuro"] .schedule-due { color: #ffb59f; }

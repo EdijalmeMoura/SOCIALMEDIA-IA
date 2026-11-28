@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.23`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.23)** — todos os módulos,
+**Última versão: [`php-v1.24`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.24)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,6 +27,7 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
+| **v1.24** | **Agenda 2.0**: a agenda existia pronta e **sem link nenhum no produto** — agora tem item no menu, **abas** (Tudo · Na fila · Histórico) com contagem, **filtro de cliente que vale para a fila**, **fila agrupada por dia** ("Hoje", "Amanhã") e aviso de **horários vencidos** esperando decisão | [php-v1.24](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.24) | [`SOCIALMEDIA-IA-php-v1.24.zip`](downloads/SOCIALMEDIA-IA-php-v1.24.zip) |
 | **v1.23** | **Estúdio 3.0**: galeria com **busca** (título, cliente e legenda), **abas de status com contagem**, **ordenação** e **paginação**; **ações em lote** (publicada, rascunho, excluir) e **rascunho do editor na sessão** — o texto digitado não se perde mais ao sair. E as **hashtags/assinatura da agência** finalmente entram na legenda | [php-v1.23](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.23) | [`SOCIALMEDIA-IA-php-v1.23.zip`](downloads/SOCIALMEDIA-IA-php-v1.23.zip) |
 | **v1.22** | **Publicação do calendário 2.0**: a tela mostra a **arte da publicação** (criar a partir do texto, vincular uma existente e abrir no Estúdio), **contador com o limite da rede** e **prévia** de como o texto aparece no feed | [php-v1.22](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.22) | [`SOCIALMEDIA-IA-php-v1.22.zip`](downloads/SOCIALMEDIA-IA-php-v1.22.zip) |
 | **v1.21** | **Editor de arte 3.0**: avisa o que não foi salvo, desfaz e refaz de verdade, edita o texto na própria prancheta, miniatura na aba Legenda, **reescrever só a legenda/hashtags**, **enviar para aprovação** de dentro do editor, grade de alinhamento e barra de salvar fixa no celular | [php-v1.21](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.21) | [`SOCIALMEDIA-IA-php-v1.21.zip`](downloads/SOCIALMEDIA-IA-php-v1.21.zip) |
@@ -81,6 +82,22 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.24 — A Agenda saiu do esconderijo.**
+  O módulo estava inteiro (fila, reagendar, cancelar, publicar via Meta,
+  conciliação de tentativa incerta e auditoria) e **não aparecia em lugar
+  nenhum**: sem item no menu, sem link em tela alguma. Só chegava lá quem
+  digitasse `/schedule` na barra de endereço. Agora:
+  **item "Agenda" no menu**, com o realce indo para ele (antes ia para
+  "Conexões Meta", que também usa o mesmo CSS);
+  **abas Tudo · Na fila · Histórico com contagem**, e um resumo no topo com
+  quantas já foram publicadas e **quantos horários venceram sem decisão**;
+  **filtro de cliente aplicado à fila** — antes ele recortava só a lista de
+  aprovados, então escolher "Padaria" e continuar vendo os horários dos outros
+  clientes parecia defeito; cliente de outra agência na URL dá 404;
+  **fila agrupada por dia** no fuso de cada horário ("Hoje", "Amanhã",
+  "Ontem", depois `dd/mm`), com o rótulo "horário vencido" na linha;
+  e um aviso no topo lembrando, em texto, que **a agenda não publica sozinha**:
+  no horário, alguém da equipe decide enviar à Meta ou cancelar/reagendar.
 - **v1.23 — O Estúdio virou uma galeria de trabalho.**
   Com poucas artes, a lista dava conta; com trinta, achar uma era rolar até
   encontrar. A galeria agora tem:

@@ -41,7 +41,8 @@ final class Modules
             ['slug' => 'approvals', 'name' => 'Aprovações', 'hint' => 'Portal do cliente e revisões', 'path' => '/approvals', 'icon' => '◷', 'ready' => true],
             ['slug' => 'feed', 'name' => 'Feed', 'hint' => 'Prévia do perfil e grade', 'path' => '/feed', 'icon' => '▦', 'ready' => true],
             ['slug' => 'reports', 'name' => 'Relatórios', 'hint' => 'Entregas registradas e exportação', 'path' => '/reports', 'icon' => '◑', 'ready' => true],
-            ['slug' => 'meta', 'name' => 'Conexões Meta', 'hint' => 'Agenda, Páginas e publicação', 'path' => '/meta', 'icon' => '◎', 'ready' => true],
+            ['slug' => 'meta', 'name' => 'Conexões Meta', 'hint' => 'Páginas, perfis e tokens', 'path' => '/meta', 'icon' => '◎', 'ready' => true],
+            ['slug' => 'schedule', 'name' => 'Agenda', 'hint' => 'Fila de horários e envio à Meta', 'path' => '/schedule', 'icon' => '◷', 'ready' => true],
             ['slug' => 'users', 'name' => 'Usuários', 'hint' => 'Equipe da agência e permissões', 'path' => '/settings?aba=ia', 'icon' => '☺', 'ready' => true],
             ['slug' => 'settings', 'name' => 'Configurações', 'hint' => 'IA, agência, preferências e sistema', 'path' => '/settings', 'icon' => '⚙', 'ready' => true],
             // Só aparece para quem é dono da instalação; o layout filtra.

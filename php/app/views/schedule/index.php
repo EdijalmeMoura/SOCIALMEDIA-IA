@@ -23,6 +23,9 @@
  * @var bool $pode_editar
  * @var string|null $aviso
  * @var string|null $erro
+ * @var array{ativos:int,atrasados:int,publicados:int,cancelados:int,total:int} $resumo
+ * @var array{client_id:int,status:string} $filtros
+ * @var array<int,array{dia:string,rotulo:string,itens:array<int,array<string,mixed>>}> $por_dia
  */
 $nomeCliente = static fn (array $linha): string => trim((string) ($linha['trade_name'] ?? '')) ?: (string) $linha['company_name'];
 $rotuloEvento = [
@@ -52,6 +55,9 @@ ob_start();
   <?php if ($clientes !== []): ?>
     <div class="page-actions">
       <form method="get" action="<?= e($config->url('/schedule')) ?>" class="schedule-client-select">
+        <?php if (($filtros['status'] ?? '') !== ''): ?>
+          <input type="hidden" name="status" value="<?= e($filtros['status']) ?>">
+        <?php endif; ?>
         <label for="scheduleClient">Cliente</label>
         <select name="client_id" id="scheduleClient" onchange="this.form.submit()">
           <option value="">Todos os clientes</option>
@@ -79,6 +85,40 @@ ob_start();
 <?php endif; ?>
 <?php if (!empty($erro)): ?>
   <div class="alert error-alert"><?= e($erro) ?></div>
+<?php endif; ?>
+
+<?php
+$urlDaAgenda = static function (array $troca = []) use ($config, $filtros): string {
+    $final = array_filter(array_merge($filtros, $troca), static fn ($v) => $v !== 0 && $v !== '' && $v !== null);
+    return $config->url('/schedule') . ($final === [] ? '' : '?' . http_build_query($final));
+};
+$abaAtual = (string) ($filtros['status'] ?? '');
+?>
+<section class="panel schedule-summary" aria-label="Resumo da agenda">
+  <nav class="schedule-tabs" role="tablist" aria-label="Filtrar a fila">
+    <a class="schedule-tab <?= $abaAtual === '' ? 'is-active' : '' ?>" href="<?= e($urlDaAgenda(['status' => null])) ?>"
+       <?= $abaAtual === '' ? 'aria-current="page"' : '' ?>>Tudo <b><?= (int) $resumo['total'] ?></b></a>
+    <a class="schedule-tab <?= $abaAtual === 'ativos' ? 'is-active' : '' ?>" href="<?= e($urlDaAgenda(['status' => 'ativos'])) ?>"
+       <?= $abaAtual === 'ativos' ? 'aria-current="page"' : '' ?>>Na fila <b><?= (int) $resumo['ativos'] ?></b></a>
+    <a class="schedule-tab <?= $abaAtual === 'historico' ? 'is-active' : '' ?>" href="<?= e($urlDaAgenda(['status' => 'historico'])) ?>"
+       <?= $abaAtual === 'historico' ? 'aria-current="page"' : '' ?>>Histórico <b><?= (int) $resumo['cancelados'] ?></b></a>
+  </nav>
+  <div class="schedule-facts">
+    <span class="schedule-fact <?= $resumo['publicados'] > 0 ? 'is-ok' : '' ?>">
+      <b><?= (int) $resumo['publicados'] ?></b> publicadas
+    </span>
+    <span class="schedule-fact <?= $resumo['atrasados'] > 0 ? 'is-late' : '' ?>">
+      <b><?= (int) $resumo['atrasados'] ?></b> com horário vencido
+    </span>
+  </div>
+</section>
+
+<?php if ($resumo['atrasados'] > 0 && $pode_editar): ?>
+  <div class="alert schedule-late-alert" role="status">
+    <b><?= (int) $resumo['atrasados'] ?> <?= $resumo['atrasados'] === 1 ? 'horário vencido espera' : 'horários vencidos esperam' ?> uma decisão.</b>
+    A agenda não publica sozinha: no horário, alguém da equipe escolhe enviar à Meta — ou cancelar e reagendar.
+    <a class="text-link" href="<?= e($urlDaAgenda(['status' => 'ativos'])) ?>">Ver só a fila ativa <span>→</span></a>
+  </div>
 <?php endif; ?>
 
 <div class="schedule-layout">
@@ -175,7 +215,13 @@ ob_start();
       <h3>Fila de horários</h3>
       <p>Ativos primeiro; cancelados ficam no histórico.</p>
     </div>
-    <span class="schedule-chip"><?= (int) $ativas ?> ativos · <?= count($agenda) ?> registro(s)</span>
+    <span class="schedule-chip">
+      <?php if (($filtros['status'] ?? '') !== '' || (int) ($filtros['client_id'] ?? 0) > 0): ?>
+        <?= count($agenda) ?> no filtro · <?= (int) $resumo['ativos'] ?> na fila no total
+      <?php else: ?>
+        <?= (int) $resumo['ativos'] ?> na fila · <?= count($agenda) ?> registro(s)
+      <?php endif; ?>
+    </span>
   </div>
 
   <?php if ($agenda === []): ?>
@@ -186,7 +232,12 @@ ob_start();
     </div>
   <?php else: ?>
     <div class="schedule-list">
-      <?php foreach ($agenda as $linha): ?>
+      <?php foreach ($por_dia as $grupo): ?>
+        <h4 class="schedule-day">
+          <span><?= e((string) $grupo['rotulo']) ?></span>
+          <small><?= count($grupo['itens']) ?> <?= count($grupo['itens']) === 1 ? 'horário' : 'horários' ?></small>
+        </h4>
+      <?php foreach ($grupo['itens'] as $linha): ?>
         <?php
         $cancelado = (string) $linha['status'] === 'cancelled';
         $incerto = ($linha['meta_status'] ?? null) === 'unknown';
@@ -211,7 +262,16 @@ ob_start();
               <span><?= e((string) $linha['timezone']) ?></span>
             </div>
             <b><?= e((string) $linha['approval_title']) ?></b>
-            <small><?= e((string) $linha['local_label']) ?> · ciclo aprovado registrado</small>
+            <small>
+              <?= e((string) $linha['local_label']) ?>
+              <?php if (($linha['dia_relativo'] ?? '') !== '' && !in_array((string) $linha['dia_relativo'], ['Hoje', 'Amanhã', 'Ontem'], true)): ?>
+                · <?= e((string) $linha['dia_relativo']) ?>
+              <?php endif; ?>
+              <?php if (!empty($linha['is_due']) && (string) $linha['status'] === 'scheduled' && empty($linha['meta_busy'])): ?>
+                · <b class="schedule-due">horário vencido</b>
+              <?php endif; ?>
+              · ciclo aprovado registrado
+            </small>
             <div class="schedule-audit">
               <?php foreach ($linha['events'] as $evento): ?>
                 <span><?= e($rotuloEvento[(string) $evento['event_type']] ?? (string) $evento['event_type']) ?> ·
@@ -311,6 +371,7 @@ ob_start();
             <?php endif; ?>
           <?php endif; ?>
         </article>
+      <?php endforeach; ?>
       <?php endforeach; ?>
     </div>
   <?php endif; ?>
