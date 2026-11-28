@@ -23,6 +23,7 @@ use Smia\Http\Request;
 use Smia\Http\Response;
 use Smia\Support\Config;
 use Smia\Support\EnvFile;
+use Smia\Studio\Layout;
 use Smia\Support\Session;
 
 $total = 0;
@@ -4648,6 +4649,184 @@ foreach ($paresEscuros as $classe) {
     }
 }
 check('todo componente novo da v1.21 tem par no modo escuro', $semPar === [], implode(', ', $semPar));
+
+echo "\n[89] Publicação do calendário: arte, limite da rede e prévia\n";
+[$appPub, $configPub] = appNova([]);
+$appPub->installer->install([
+    'agency_name' => 'Agência Pub', 'admin_name' => 'Dona Pub', 'admin_email' => 'dona@pub.example',
+    'password_hash' => password_hash('PubForte2026', PASSWORD_DEFAULT),
+    'public_origin' => 'https://projetoredesnordeste.com.br/edijalmemoura/socialai',
+]);
+$appPub->handle(requisicao('GET', '/login'));
+$appPub->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appPub->session->csrfToken(), 'email' => 'dona@pub.example', 'password' => 'PubForte2026',
+]));
+$csrfPub = $appPub->session->csrfToken();
+
+// Dois clientes: o segundo serve para provar que arte não atravessa cliente.
+foreach ([['Café Publicado', 'Cafeteria'], ['Loja Alheia', 'Moda']] as $indice => $cliente) {
+    $appPub->handle(requisicao('POST', '/clients/new', [
+        'csrf_token' => $csrfPub, 'company_name' => $cliente[0], 'segment' => $cliente[1],
+    ]));
+}
+$clientePub = (int) $appPub->db->scalar('SELECT id FROM clients ORDER BY id ASC LIMIT 1');
+$clienteAlheio = (int) $appPub->db->scalar('SELECT id FROM clients ORDER BY id DESC LIMIT 1');
+// A cor mora na identidade visual (client_branding), não no cadastro.
+$appPub->db->run('UPDATE client_branding SET primary_color = ? WHERE client_id = ?', ['#7a2f8f', $clientePub]);
+
+$planoPub = $appPub->handle(requisicao('POST', '/planner/generate', [
+    'csrf_token' => $csrfPub, 'client_id' => (string) $clientePub, 'period_days' => '7',
+    'target_posts' => '3', 'start_date' => '2026-12-01', 'networks' => ['Instagram', 'LinkedIn'],
+    'objective' => 'Divulgar o ensaio de fim de ano',
+]));
+assertSame('planejamento criado', 302, $planoPub->status);
+$planoPubId = (int) $appPub->db->scalar('SELECT id FROM content_calendar ORDER BY id DESC LIMIT 1');
+$postPub = $appPub->db->one('SELECT * FROM posts WHERE company_id = 1 ORDER BY id ASC LIMIT 1');
+
+$telaPost = $appPub->handle(requisicao('GET', '/planner/posts/' . (int) $postPub['id'] . '/edit'));
+assertSame('edição da publicação responde 200', 200, $telaPost->status);
+check('layout de duas colunas (texto + arte/prévia)', str_contains($telaPost->body, 'post-edit-layout'));
+check('contador da legenda traz o limite da rede', str_contains($telaPost->body, 'data-counter-limit') === false
+    && str_contains($telaPost->body, 'data-caption-limit="2200"'));
+check('o limite é escrito por extenso para o usuário', str_contains($telaPost->body, 'limite do Instagram'));
+check('contador de hashtags com o máximo da rede', str_contains($telaPost->body, 'data-counter-tags'));
+check('prévia da publicação presente', str_contains($telaPost->body, 'data-social-preview') && str_contains($telaPost->body, 'social-preview-caption'));
+check('a tela carrega o JS do planejamento', str_contains($telaPost->body, '/assets/planner.js'));
+check('sem arte ainda, oferece criar a partir do texto', str_contains($telaPost->body, 'Criar arte desta publicação'));
+check('escolha de formato na criação da arte', str_contains($telaPost->body, 'name="format_key"') && str_contains($telaPost->body, 'Post vertical'));
+check('não oferece "Abrir no Estúdio" sem arte', !str_contains($telaPost->body, 'Abrir no Estúdio'));
+
+// --- criar a arte a partir da publicação -----------------------------
+$csrfPub = $appPub->session->csrfToken();
+$semCsrfArte = $appPub->handle(requisicao('POST', '/planner/posts/' . (int) $postPub['id'] . '/arte', ['csrf_token' => 'x']));
+check('criar arte exige CSRF', str_contains((string) $semCsrfArte->header('Location'), 'expirada'));
+assertSame('nada criado sem CSRF', 0, (int) $appPub->db->scalar('SELECT COUNT(*) FROM creative_posts'));
+
+$criouArte = $appPub->handle(requisicao('POST', '/planner/posts/' . (int) $postPub['id'] . '/arte', [
+    'csrf_token' => $csrfPub, 'format_key' => 'portrait',
+]));
+assertSame('criar arte redireciona para o editor', 302, $criouArte->status);
+check('redirect vai para o estúdio com ok=created', str_contains((string) $criouArte->header('Location'), '/studio/posts/') && str_contains((string) $criouArte->header('Location'), 'ok=created'));
+$artePub = $appPub->db->one('SELECT * FROM creative_posts ORDER BY id DESC LIMIT 1');
+check('arte nasceu do cliente da publicação', (int) $artePub['client_id'] === $clientePub);
+assertSame('formato vertical respeitado', 1350, (int) $artePub['canvas_height']);
+assertSame('arte guarda o assunto do post', (string) $postPub['theme'], (string) $artePub['subject']);
+$conteudoPub = json_decode((string) $artePub['content_json'], true);
+assertSame('legenda da arte é a do calendário', (string) $postPub['caption'], $conteudoPub['caption']);
+assertSame('título da arte vem do tema', Layout::textoCurto((string) $postPub['theme'], 70), $conteudoPub['title']);
+assertSame('briefing da arte vem do post', (string) $postPub['visual_brief'], $conteudoPub['visual_brief']);
+check('prompt de imagem nasce da sugestão do post', str_contains((string) $artePub['image_prompt'], 'sem texto na imagem'));
+assertSame('cor de fundo vem da marca', '#7a2f8f', (string) $artePub['background_color']);
+assertSame('rede do post vira a rede do estúdio (Instagram)', 'instagram', (string) $artePub['network']);
+assertSame('arte e publicação ficam ligadas', (int) $artePub['id'], (int) $appPub->db->scalar(
+    'SELECT creative_id FROM posts WHERE id = ?', [(int) $postPub['id']]));
+check('criação fica auditada', (int) $appPub->db->scalar(
+    "SELECT COUNT(*) FROM audit_log WHERE action = 'planner.creative_created'") === 1);
+assertSame('arte começa com uma versão no histórico', 1, (int) $appPub->db->scalar(
+    'SELECT COUNT(*) FROM post_versions WHERE creative_id = ?', [(int) $artePub['id']]));
+
+// Segunda tentativa não cria outra arte: devolve a que já existe.
+$deNovo = $appPub->handle(requisicao('POST', '/planner/posts/' . (int) $postPub['id'] . '/arte', ['csrf_token' => $csrfPub]));
+check('sem duplicar: leva para a arte existente', str_contains((string) $deNovo->header('Location'), '/studio/posts/' . (int) $artePub['id']) && !str_contains((string) $deNovo->header('Location'), 'ok=created'));
+assertSame('continua uma arte só', 1, (int) $appPub->db->scalar('SELECT COUNT(*) FROM creative_posts'));
+
+// A tela passa a mostrar a arte e a oferecer o editor.
+$telaComArte = $appPub->handle(requisicao('GET', '/planner/posts/' . (int) $postPub['id'] . '/edit'));
+check('tela mostra o painel da arte', str_contains($telaComArte->body, 'post-art-panel') && str_contains($telaComArte->body, 'post-art-meta'));
+check('tela oferece abrir no Estúdio', str_contains($telaComArte->body, 'Abrir no Estúdio') && str_contains($telaComArte->body, '/studio/posts/' . (int) $artePub['id']));
+check('tela não oferece criar outra', !str_contains($telaComArte->body, 'Criar arte desta publicação'));
+check('estado da arte é dito (em edição)', str_contains($telaComArte->body, 'Em edição'));
+check('formato aparece por extenso', str_contains($telaComArte->body, 'Post vertical'));
+
+// --- vincular arte existente -----------------------------------------
+$csrfPub = $appPub->session->csrfToken();
+// Arte de outro cliente: recusada com mensagem, sem dizer se existe.
+$appPub->handle(requisicao('POST', '/studio/generate', [
+    'csrf_token' => $csrfPub, 'client_id' => (string) $clienteAlheio,
+    'subject' => 'Coleção alheia', 'format_key' => 'square',
+]));
+$arteAlheia = (int) $appPub->db->scalar('SELECT id FROM creative_posts ORDER BY id DESC LIMIT 1');
+$segundoPost = $appPub->db->one('SELECT * FROM posts WHERE company_id = 1 AND id <> ? ORDER BY id ASC LIMIT 1', [(int) $postPub['id']]);
+$vinculoRuim = $appPub->handle(requisicao('POST', '/planner/posts/' . (int) $segundoPost['id'] . '/arte/vincular', [
+    'csrf_token' => $csrfPub, 'creative_id' => (string) $arteAlheia,
+]));
+check('arte de outro cliente não é vinculada', str_contains((string) $vinculoRuim->header('Location'), 'deste%20cliente'));
+assertSame('vínculo inválido não grava nada', 0, (int) $appPub->db->scalar(
+    'SELECT COUNT(*) FROM posts WHERE creative_id = ?', [$arteAlheia]));
+check('mensagem de arte de outro cliente não revela existência', !str_contains(urldecode((string) $vinculoRuim->header('Location')), 'existe'));
+
+$vinculoBom = $appPub->handle(requisicao('POST', '/planner/posts/' . (int) $segundoPost['id'] . '/arte/vincular', [
+    'csrf_token' => $csrfPub, 'creative_id' => (string) $artePub['id'],
+]));
+check('arte do mesmo cliente é vinculada', str_contains((string) $vinculoBom->header('Location'), 'ok=arte-vinculada'));
+assertSame('vínculo gravado', (int) $artePub['id'], (int) $appPub->db->scalar(
+    'SELECT creative_id FROM posts WHERE id = ?', [(int) $segundoPost['id']]));
+check('vínculo fica auditado', (int) $appPub->db->scalar(
+    "SELECT COUNT(*) FROM audit_log WHERE action = 'planner.creative_linked'") === 1);
+check('aviso de vínculo aparece na tela', str_contains(
+    $appPub->handle(requisicao('GET', '/planner/posts/' . (int) $segundoPost['id'] . '/edit', [], ['ok' => 'arte-vinculada']))->body,
+    'Arte vinculada a esta publicação'));
+
+// --- migração: a coluna existe e a versão subiu ----------------------
+check('esquema chegou à v10', (int) \Smia\Database\Schema::VERSAO >= 10);
+assertSame('posts tem a coluna creative_id', 1, (int) $appPub->db->scalar(
+    "SELECT COUNT(*) FROM pragma_table_info('posts') WHERE name = 'creative_id'"));
+// Apagar a arte não deixa o post apontando para o nada.
+$appPub->db->run('PRAGMA foreign_keys = ON');
+$appPub->db->run('DELETE FROM creative_posts WHERE id = ?', [(int) $artePub['id']]);
+$restou = $appPub->db->scalar('SELECT creative_id FROM posts WHERE id = ?', [(int) $postPub['id']]);
+check('arte apagada limpa o vínculo do post', $restou === null || (int) $restou === 0 || (string) $restou === '');
+
+// --- JS e CSS da tela ------------------------------------------------
+$jsPub = (string) file_get_contents(__DIR__ . '/../public/assets/planner.js');
+check('JS conta caracteres contra o limite da rede', str_contains($jsPub, 'legenda.dataset.captionLimit') && str_contains($jsPub, 'caracteres acima do limite'));
+check('JS conta hashtags pelo formato #tag', str_contains($jsPub, '/#[') || str_contains($jsPub, '#[\\p{L}'));
+check('JS atualiza a prévia sem interpretar HTML', str_contains($jsPub, 'previaLegenda.textContent'));
+check('prévia também acompanha a chamada para ação', str_contains($jsPub, "document.querySelector('input[name=\"cta\"]')") && str_contains($jsPub, 'previaCta.hidden'));
+check('linha de hashtags some quando não há hashtags', str_contains($jsPub, 'previaTags.hidden'));
+$cssPub = (string) file_get_contents(__DIR__ . '/../public/assets/planner.css');
+foreach (['.post-edit-layout', '.post-art-panel', '.post-art-empty', '.social-preview', '.network-note'] as $classe) {
+    check('CSS da publicação tem ' . $classe, str_contains($cssPub, $classe));
+}
+$semParPub = [];
+foreach (['.post-art-icon', '.post-art-preview', '.post-art-meta dt', '.post-art-empty', '.social-preview', '.social-avatar', '.network-note'] as $classe) {
+    if (substr_count($cssPub, 'html[data-theme="escuro"] ' . $classe) === 0) {
+        $semParPub[] = $classe;
+    }
+}
+check('todo componente novo da v1.22 tem par no modo escuro', $semParPub === [], implode(', ', $semParPub));
+
+// --- permissões e isolamento -----------------------------------------
+$appPub->db->run(
+    "INSERT INTO users (company_id, name, email, password_hash, role, is_super, is_active)
+     VALUES (1, 'Leitor Pub', 'leitor@pub.example', ?, 'viewer', 0, 1)",
+    [password_hash('LeitorPub2026', PASSWORD_DEFAULT)]
+);
+$appPub->handle(requisicao('POST', '/logout', ['csrf_token' => $appPub->session->csrfToken()]));
+$appPub->handle(requisicao('GET', '/login'));
+$appPub->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appPub->session->csrfToken(), 'email' => 'leitor@pub.example', 'password' => 'LeitorPub2026',
+]));
+$csrfLeitorPub = $appPub->session->csrfToken();
+assertSame('leitor não cria arte pelo calendário', 403, $appPub->handle(requisicao('POST', '/planner/posts/' . (int) $postPub['id'] . '/arte', [
+    'csrf_token' => $csrfLeitorPub, 'format_key' => 'square',
+]))->status);
+assertSame('leitor não vincula arte', 403, $appPub->handle(requisicao('POST', '/planner/posts/' . (int) $postPub['id'] . '/arte/vincular', [
+    'csrf_token' => $csrfLeitorPub, 'creative_id' => (string) $arteAlheia,
+]))->status);
+// Leitor é barrado antes de olhar o post (403); quem pode editar recebe 404.
+$appPub->handle(requisicao('POST', '/logout', ['csrf_token' => $csrfLeitorPub]));
+$appPub->handle(requisicao('GET', '/login'));
+$appPub->handle(requisicao('POST', '/login', [
+    'csrf_token' => $appPub->session->csrfToken(), 'email' => 'dona@pub.example', 'password' => 'PubForte2026',
+]));
+$csrfDonaPub = $appPub->session->csrfToken();
+assertSame('post inexistente responde 404', 404, $appPub->handle(requisicao('POST', '/planner/posts/99999/arte', [
+    'csrf_token' => $csrfDonaPub, 'format_key' => 'square',
+]))->status);
+assertSame('vínculo em post inexistente responde 404', 404, $appPub->handle(requisicao('POST', '/planner/posts/99999/arte/vincular', [
+    'csrf_token' => $csrfDonaPub, 'creative_id' => '1',
+]))->status);
 
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];

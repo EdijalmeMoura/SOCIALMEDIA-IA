@@ -23,7 +23,7 @@ namespace Smia\Database;
  */
 final class Schema
 {
-    public const VERSAO = 9;
+    public const VERSAO = 10;
 
     public static function migrate(Database $db): void
     {
@@ -505,6 +505,15 @@ SQL);
         self::addColumn($db, 'creative_posts', 'objective', "TEXT NOT NULL DEFAULT ''");
         self::addColumn($db, 'creative_posts', 'tone', "TEXT NOT NULL DEFAULT 'marca'");
         self::addColumn($db, 'creative_posts', 'reference', "TEXT NOT NULL DEFAULT ''");
+
+        // --- v10: a publicação do calendário aponta para a arte ---------
+        // Antes, criar a arte a partir do calendário deixava dois textos
+        // parecidos e nenhum vínculo: editar um não mexia no outro. A coluna
+        // guarda qual arte é a "oficial" daquele post.
+        self::addColumn($db, 'posts', 'creative_id', 'INTEGER REFERENCES creative_posts(id) ON DELETE SET NULL');
+        // Índice por execução (e não no SQL inicial): a tabela posts já
+        // existe em quem instalou antes desta versão.
+        $db->pdo()->exec('CREATE INDEX IF NOT EXISTS idx_posts_creative ON posts(creative_id)');
 
         // --- v9: configurações da agência ------------------------------
         // Dados que a agência assina embaixo (razão social, CNPJ, contato) e

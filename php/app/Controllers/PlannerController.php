@@ -10,6 +10,10 @@ use Smia\Http\Response;
 use Smia\Planner\PlanGenerator;
 use Smia\Planner\PlannerError;
 use Smia\Planner\PlannerRepository;
+use Smia\Studio\Layout;
+use Smia\Studio\StudioError;
+use Smia\Studio\StudioGenerator;
+use Smia\Studio\StudioRepository;
 use Smia\Support\Config;
 use Smia\Support\Modules;
 use Smia\Support\Session;
@@ -33,6 +37,9 @@ final class PlannerController
         private readonly Authenticator $auth,
         private readonly Session $session,
         private readonly View $view,
+        // Estúdio: criar a arte a partir da publicação e abrir a que já existe.
+        // Opcional para um teste do calendário não precisar montá-lo.
+        private readonly ?StudioRepository $estudio = null,
     ) {
     }
 
@@ -177,11 +184,204 @@ final class PlannerController
             return $this->salvarPost($req, $post, $plano);
         }
 
-        return $this->render('planner/post_edit', $req, [
-            'post' => $post,
-            'plano' => $plano,
+        return $this->render('planner/post_edit', $req, $this->dadosDaPublicacao($post, $plano, $req) + [
             'erro' => null,
         ]);
+    }
+
+    /**
+     * Dados extras da edição da publicação.
+     *
+     * A arte vinculada vem junto porque o formulário mostra a prévia dela e o
+     * botão para abrir o editor — sem isso, o usuário produz a arte em outro
+     * lugar e não tem como voltar.
+     *
+     * @param array<string,mixed> $post
+     * @param array<string,mixed> $plano
+     * @return array<string,mixed>
+     */
+    private function dadosDaPublicacao(array $post, array $plano, Request $req): array
+    {
+        $empresa = (int) $plano['company_id'];
+        $comArte = $this->repo->postComArte((int) $post['id'], $empresa) ?? $post;
+        $arte = null;
+        if (!empty($comArte['creative_id']) && $this->estudio !== null) {
+            $arte = $this->estudio->arte((int) $comArte['creative_id'], $empresa);
+        }
+        $aviso = match ((string) ($req->input('ok') ?? '')) {
+            'arte-criada' => 'Arte criada a partir desta publicação. O texto da legenda foi o que você escreveu aqui.',
+            'arte-vinculada' => 'Arte vinculada a esta publicação.',
+            default => null,
+        };
+
+        return [
+            'post' => $comArte,
+            'plano' => $plano,
+            'arte' => $arte !== null && (int) $arte['client_id'] === (int) $post['client_id'] ? $arte : null,
+            'artes_do_cliente' => $this->estudio !== null
+                ? $this->estudio->artes($empresa, 40, ['client_id' => (int) $post['client_id']])
+                : [],
+            'aviso' => $aviso,
+            'pode_criar_arte' => $this->estudio !== null,
+            // Limite por rede e formatos: a tela do calendário agora avisa o
+            // mesmo número que o estúdio, em vez de descobrir no fim.
+            'redes' => StudioGenerator::REDES,
+            'formatos' => Layout::FORMATOS,
+            'tons' => StudioGenerator::TONS,
+        ];
+    }
+
+    /**
+     * Cria a arte a partir da publicação e deixa as duas ligadas.
+     *
+     * O texto da publicação é a fonte: tema no título, legenda na legenda,
+     * briefing e sugestão de imagem no painel Imagem. Assim a arte nasce com o
+     * que já foi aprovado no calendário, e o vínculo impede que os dois textos
+     * divirjam sem ninguém perceber.
+     */
+    public function criarArte(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario)) {
+            return $this->semPermissao($req);
+        }
+        $empresa = (int) $usuario['company_id'];
+        $post = $this->repo->post((int) ($params['id'] ?? 0), $empresa);
+        if ($post === null) {
+            return $this->naoEncontrado($req);
+        }
+        $plano = $this->repo->plano((int) $post['calendar_id'], $empresa);
+        if ($plano === null || $this->estudio === null) {
+            return $this->naoEncontrado($req);
+        }
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return Response::redirect($this->config->url('/planner/posts/' . $post['id'] . '/edit?erro=' . rawurlencode('Sessão expirada. Recarregue a página e tente novamente.')));
+        }
+        // Uma arte por publicação: criar de novo deixaria duas versões sem
+        // dono e o botão "Abrir a arte" apontaria para a antiga.
+        if (!empty($post['creative_id'])) {
+            return Response::redirect($this->config->url('/studio/posts/' . (int) $post['creative_id']));
+        }
+
+        $formato = (string) ($req->input('format_key') ?? 'square');
+        if (!isset(Layout::FORMATOS[$formato])) {
+            $formato = 'square';
+        }
+        $medida = Layout::FORMATOS[$formato];
+        $conteudo = [
+            'title' => Layout::textoCurto((string) $post['theme'], 70),
+            'subtitle' => Layout::textoCurto((string) $post['strategic_objective'], 90),
+            'caption' => Layout::textoCurto((string) $post['caption'], 5000),
+            'hashtags' => Layout::textoCurto((string) $post['hashtags'], 1000),
+            'cta' => Layout::textoCurto((string) $post['cta'] !== '' ? (string) $post['cta'] : 'Saiba mais', 80),
+            'visual_brief' => Layout::textoCurto((string) $post['visual_brief'], 5000),
+            'image_suggestion' => Layout::textoCurto((string) $post['image_suggestion'], 5000),
+            'composition' => '',
+            'alt_text' => '',
+        ];
+        // Marca e cor vêm da identidade do cliente: a arte nasce parecida com a
+        // do estúdio, não com um retângulo azul genérico.
+        $cliente = null;
+        foreach ($this->estudio->clientesAtivos($empresa) as $candidato) {
+            if ((int) $candidato['id'] === (int) $post['client_id']) {
+                $cliente = $candidato;
+                break;
+            }
+        }
+        $cor = Layout::corValida((string) ($cliente['primary_color'] ?? '')) ? strtolower((string) $cliente['primary_color']) : '#3158d8';
+        $marca = trim((string) ($cliente['trade_name'] ?? '')) ?: (string) ($cliente['company_name'] ?? 'Marca');
+        $layout = Layout::padrao($conteudo, (int) $medida['width'], (int) $medida['height'], $cor, $marca);
+        $rede = self::redeDoEstudio((string) $post['network']);
+
+        try {
+            $id = $this->estudio->criar(
+                $empresa,
+                (int) $post['client_id'],
+                (int) $usuario['id'],
+                (string) $post['theme'],
+                $formato,
+                (int) $medida['width'],
+                (int) $medida['height'],
+                $conteudo,
+                $layout,
+                $cor,
+                $this->promptDoPost($post, $conteudo),
+                'local-draft',
+                0,
+                0,
+                'Arte criada a partir do planejamento',
+                [
+                    'network' => $rede,
+                    'objective' => (string) $post['strategic_objective'],
+                    'tone' => 'marca',
+                    'reference' => '',
+                ],
+            );
+        } catch (StudioError $erro) {
+            return Response::redirect($this->config->url('/planner/posts/' . $post['id'] . '/edit?erro=' . rawurlencode($erro->getMessage())));
+        }
+
+        $this->repo->vincularArte((int) $post['id'], $id, $empresa);
+        $this->repo->auditoria($empresa, (int) $usuario['id'], 'planner.creative_created', 'post:' . $post['id'] . ' -> creative:' . $id);
+
+        return Response::redirect($this->config->url('/studio/posts/' . $id . '?ok=created'));
+    }
+
+    /** Vincula uma arte que já existe a esta publicação. */
+    public function vincularArte(Request $req, array $params): Response
+    {
+        $usuario = $this->precisaLogin();
+        if ($usuario instanceof Response) {
+            return $usuario;
+        }
+        if (!$this->podeEditar($usuario)) {
+            return $this->semPermissao($req);
+        }
+        $empresa = (int) $usuario['company_id'];
+        $post = $this->repo->post((int) ($params['id'] ?? 0), $empresa);
+        if ($post === null) {
+            return $this->naoEncontrado($req);
+        }
+        $voltar = '/planner/posts/' . $post['id'] . '/edit';
+        if (!$this->session->csrfValid($req->input('csrf_token'))) {
+            return Response::redirect($this->config->url($voltar . '?erro=' . rawurlencode('Sessão expirada. Recarregue a página e tente novamente.')));
+        }
+        $id = (int) ($req->input('creative_id') ?? 0);
+        if ($id <= 0 || !$this->repo->vincularArte((int) $post['id'], $id, $empresa)) {
+            // Arte de outro cliente/agência cai aqui: a mensagem não diz se
+            // existe, só que não pode ser vinculada.
+            return Response::redirect($this->config->url($voltar . '?erro=' . rawurlencode('Escolha uma arte deste cliente.')));
+        }
+        $this->repo->auditoria($empresa, (int) $usuario['id'], 'planner.creative_linked', 'post:' . $post['id'] . ' -> creative:' . $id);
+
+        return Response::redirect($this->config->url($voltar . '?ok=arte-vinculada'));
+    }
+
+    /** Rede do planejamento para a chave que o estúdio entende. */
+    private static function redeDoEstudio(string $rede): string
+    {
+        return match (mb_strtolower(trim($rede))) {
+            'instagram' => 'instagram',
+            'facebook' => 'facebook',
+            'tiktok' => 'tiktok',
+            'linkedin' => 'linkedin',
+            default => 'generico',
+        };
+    }
+
+    /** Prompt de imagem inicial: sugestão do post + o que não pode faltar. */
+    private function promptDoPost(array $post, array $conteudo): string
+    {
+        $partes = array_filter([
+            trim((string) ($conteudo['image_suggestion'] ?? '')),
+            trim((string) ($conteudo['visual_brief'] ?? '')),
+            'sem texto na imagem, área de respiro para o título',
+        ], static fn (string $p): bool => $p !== '');
+
+        return Layout::textoCurto(implode('. ', $partes) . '.', 4000);
     }
 
     public function deletePost(Request $req, array $params): Response
@@ -337,9 +537,7 @@ final class PlannerController
     private function salvarPost(Request $req, array $post, array $plano): Response
     {
         if (!$this->session->csrfValid($req->input('csrf_token'))) {
-            return $this->render('planner/post_edit', $req, [
-                'post' => $post,
-                'plano' => $plano,
+            return $this->render('planner/post_edit', $req, $this->dadosDaPublicacao($post, $plano, $req) + [
                 'erro' => 'Sessão expirada. Revise os dados e envie novamente.',
             ], 400);
         }
@@ -373,9 +571,8 @@ final class PlannerController
         }
 
         if ($erros !== []) {
-            return $this->render('planner/post_edit', $req, [
-                'post' => array_merge($post, $dados),
-                'plano' => $plano,
+            return $this->render('planner/post_edit', $req, $this->dadosDaPublicacao($post, $plano, $req) + [
+                'post' => array_merge($this->repo->postComArte((int) $post['id'], (int) $post['company_id']) ?? $post, $dados),
                 'erro' => implode(' ', array_unique($erros)),
             ], 422);
         }

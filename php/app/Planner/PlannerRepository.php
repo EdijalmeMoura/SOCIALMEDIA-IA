@@ -82,6 +82,48 @@ final class PlannerRepository
     }
 
     /**
+     * Publicação com a arte que foi criada a partir dela (se houver).
+     *
+     * @return array<string,mixed>|null
+     */
+    public function postComArte(int $id, int $companyId): ?array
+    {
+        return $this->db->one(
+            'SELECT p.*, cp.subject AS arte_assunto, cp.status AS arte_status,
+                    cp.export_path AS arte_export_path, cp.format_key AS arte_formato
+             FROM posts p
+             LEFT JOIN creative_posts cp ON cp.id = p.creative_id AND cp.company_id = p.company_id
+             WHERE p.id = ? AND p.company_id = ?',
+            [$id, $companyId]
+        );
+    }
+
+    /**
+     * Liga a publicação à arte.
+     *
+     * A checagem de dono é da própria arte (mesma empresa e mesmo cliente):
+     * um id de outra agência não pode virar vínculo nem por acidente.
+     */
+    public function vincularArte(int $postId, int $creativeId, int $companyId): bool
+    {
+        $arte = $this->db->one(
+            'SELECT cp.id FROM creative_posts cp
+             JOIN posts p ON p.id = ? AND p.company_id = cp.company_id AND p.client_id = cp.client_id
+             WHERE cp.id = ? AND cp.company_id = ?',
+            [$postId, $creativeId, $companyId]
+        );
+        if ($arte === null) {
+            return false;
+        }
+        $this->db->run(
+            "UPDATE posts SET creative_id = ?, updated_at = datetime('now') WHERE id = ? AND company_id = ?",
+            [$creativeId, $postId, $companyId]
+        );
+
+        return true;
+    }
+
+    /**
      * Grava plano + publicações + registro de consumo numa transação.
      *
      * @param list<array<string,string>> $posts

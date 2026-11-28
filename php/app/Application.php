@@ -147,6 +147,8 @@ final class Application
             $auth,
             $this->session,
             $this->view(),
+            // O calendário cria a arte da publicação e volta para ela.
+            new StudioRepository($this->db),
         );
         $aprovacoes = new ApprovalController(
             $this->config,
@@ -336,6 +338,10 @@ final class Application
         $this->router->get('/planner/posts/{id}/edit', $planner->editPost(...));
         $this->router->post('/planner/posts/{id}/edit', $planner->editPost(...));
         $this->router->post('/planner/posts/{id}/delete', $planner->deletePost(...));
+        // Arte da publicação: criar do zero (com o texto do calendário) ou
+        // apontar para uma que já existe.
+        $this->router->post('/planner/posts/{id}/arte', $planner->criarArte(...));
+        $this->router->post('/planner/posts/{id}/arte/vincular', $planner->vincularArte(...));
         $this->router->post('/planner/posts/{id}/duplicate', $planner->duplicatePost(...));
         $this->router->get('/planner/{id}', $planner->show(...));
         $this->router->post('/planner/{id}/production', $planner->production(...));

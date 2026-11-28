@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.21`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.21)** — todos os módulos,
+**Última versão: [`php-v1.22`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.22)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,6 +27,7 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
+| **v1.22** | **Publicação do calendário 2.0**: a tela mostra a **arte da publicação** (criar a partir do texto, vincular uma existente e abrir no Estúdio), **contador com o limite da rede** e **prévia** de como o texto aparece no feed | [php-v1.22](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.22) | [`SOCIALMEDIA-IA-php-v1.22.zip`](downloads/SOCIALMEDIA-IA-php-v1.22.zip) |
 | **v1.21** | **Editor de arte 3.0**: avisa o que não foi salvo, desfaz e refaz de verdade, edita o texto na própria prancheta, miniatura na aba Legenda, **reescrever só a legenda/hashtags**, **enviar para aprovação** de dentro do editor, grade de alinhamento e barra de salvar fixa no celular | [php-v1.21](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.21) | [`SOCIALMEDIA-IA-php-v1.21.zip`](downloads/SOCIALMEDIA-IA-php-v1.21.zip) |
 | **v1.20** | **Modo escuro** com botão no topo, **aba Sistema só para o dono** e **análise do perfil social** no cadastro de cliente (a IA preenche os campos e você revisa) | [php-v1.20](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.20) | [`SOCIALMEDIA-IA-php-v1.20.zip`](downloads/SOCIALMEDIA-IA-php-v1.20.zip) |
 | v1.19 | **Menu lateral**: cartão da agência virou troca de agência de verdade (só o dono alterna), avatar abre menu com **Sair da conta** e o menu rola/fecha certo no celular | [php-v1.19](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.19) | [`SOCIALMEDIA-IA-php-v1.19.zip`](downloads/SOCIALMEDIA-IA-php-v1.19.zip) |
@@ -78,6 +79,29 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 ```
 
 ### Descrição de cada módulo
+
+- **v1.22 — A publicação do calendário passou a ter arte.**
+  Antes, o texto do planejamento e a arte do Estúdio eram dois mundos: criar a
+  arte a partir do calendário gerava um texto parecido e nenhum vínculo, e não
+  havia como voltar para ela depois. Agora a tela de edição tem uma coluna com
+  a **arte da publicação**:
+  **Criar arte desta publicação** usa o que já está escrito — tema no título,
+  legenda, hashtags e CTA no texto, briefing e sugestão de imagem no painel
+  Imagem, cor e marca da identidade do cliente, e a rede do post vira o limite
+  de caracteres da arte. Nasce ligada ao post, e a ligação impede criar duas.
+  **Vincular uma arte que já existe** (só do mesmo cliente: arte de outro
+  cliente ou de outra agência é recusada sem revelar se existe) e **Abrir no
+  Estúdio** para editar. Editar a arte não mexe no texto do calendário, e a tela
+  diz isso — são coisas separadas de propósito.
+  **Contador com o limite da rede**: a legenda mostra `1234/2200 · limite do
+  Instagram` e, ao passar, quantos caracteres sobram para cortar; as hashtags
+  contam pelo formato `#tag` contra o máximo daquela rede. Antes o limite só
+  aparecia no fim do fluxo.
+  **Prévia da publicação** ao lado do formulário, atualizada enquanto se digita
+  — legenda, hashtags e chamada para ação como o cliente vai ler. Sem
+  JavaScript, a prévia mostra o que está salvo.
+  Migração: coluna `posts.creative_id` (esquema v10), com `ON DELETE SET NULL`
+  para o post não apontar para uma arte apagada.
 
 - **v1.21 — O editor de arte passou a avisar o que faz.**
   Treze correções que só aparecem quando se usa a prancheta de verdade.
