@@ -15,7 +15,7 @@ Port do produto para **PHP 8.0+ puro**, pensado para hospedagem compartilhada
 
 ## Baixar o pacote pronto
 
-**Última versão: [`php-v1.24`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.24)** — todos os módulos,
+**Última versão: [`php-v1.25`](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.25)** — todos os módulos,
 incluindo Meta (conexões e publicação real) e IA com os modelos atuais da OpenAI.
 
 > **O pacote não está anexado como asset das releases** (o upload de binário
@@ -27,6 +27,7 @@ incluindo Meta (conexões e publicação real) e IA com os modelos atuais da Ope
 
 | Versão | O que entrou | Release | Pacote |
 |---|---|---|---|
+| **v1.25** | **Visão geral 2.0**: o dashboard deixou de ser a ficha técnica da instalação e passou a mostrar o **trabalho** — posts à frente, revisões com o cliente (e as paradas há mais de 3 dias), fila da agenda com vencidos e rascunhos — com bloco **"Pede atenção agora"**, as próximas publicações, a fila e os atalhos com número | [php-v1.25](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.25) | [`SOCIALMEDIA-IA-php-v1.25.zip`](downloads/SOCIALMEDIA-IA-php-v1.25.zip) |
 | **v1.24** | **Agenda 2.0**: a agenda existia pronta e **sem link nenhum no produto** — agora tem item no menu, **abas** (Tudo · Na fila · Histórico) com contagem, **filtro de cliente que vale para a fila**, **fila agrupada por dia** ("Hoje", "Amanhã") e aviso de **horários vencidos** esperando decisão | [php-v1.24](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.24) | [`SOCIALMEDIA-IA-php-v1.24.zip`](downloads/SOCIALMEDIA-IA-php-v1.24.zip) |
 | **v1.23** | **Estúdio 3.0**: galeria com **busca** (título, cliente e legenda), **abas de status com contagem**, **ordenação** e **paginação**; **ações em lote** (publicada, rascunho, excluir) e **rascunho do editor na sessão** — o texto digitado não se perde mais ao sair. E as **hashtags/assinatura da agência** finalmente entram na legenda | [php-v1.23](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.23) | [`SOCIALMEDIA-IA-php-v1.23.zip`](downloads/SOCIALMEDIA-IA-php-v1.23.zip) |
 | **v1.22** | **Publicação do calendário 2.0**: a tela mostra a **arte da publicação** (criar a partir do texto, vincular uma existente e abrir no Estúdio), **contador com o limite da rede** e **prévia** de como o texto aparece no feed | [php-v1.22](https://github.com/EdijalmeMoura/SOCIALMEDIA-IA/releases/tag/php-v1.22) | [`SOCIALMEDIA-IA-php-v1.22.zip`](downloads/SOCIALMEDIA-IA-php-v1.22.zip) |
@@ -82,6 +83,25 @@ git archive --format=zip -o socialai-php.zip HEAD:php
 
 ### Descrição de cada módulo
 
+- **v1.25 — A visão geral passou a mostrar o trabalho.**
+  A primeira tela depois do login mostrava a ficha da instância: versão do PHP,
+  data de instalação, quantos módulos estavam prontos. Numa agência com seis
+  posts planejados, três revisões e um horário na agenda, os cartões diziam
+  **"0"** — nada sobre o que precisava ser feito. Agora:
+  **quatro cartões de trabalho** (posts à frente no planejamento, revisões com
+  o cliente, horários na agenda, rascunhos no estúdio), cada um levando ao
+  módulo;
+  **"Pede atenção agora"** com só o que está travado — horário vencido, revisão
+  parada há mais de 3 dias, nenhuma marca cadastrada — e o bloco desaparece
+  quando não há nada travado;
+  **três listas**: próximas publicações do calendário (com selo "com arte"),
+  fila da agenda na ordem em que vai acontecer (dia relativo e hora, vencido em
+  destaque) e revisões esperando o cliente, das mais antigas para as mais novas,
+  com os dias de espera;
+  **atalhos com número** e um ponto de alerta nos módulos que precisam de ação.
+  A ficha técnica não sumiu: virou a linha "Ficha da instância" no rodapé.
+  Se o cliente aprovou e ninguém marcou horário, a agenda vazia agora diz
+  **quantos aprovados estão sem horário** — antes só dizia "nenhum horário".
 - **v1.24 — A Agenda saiu do esconderijo.**
   O módulo estava inteiro (fila, reagendar, cancelar, publicar via Meta,
   conciliação de tentativa incerta e auditoria) e **não aparecia em lugar

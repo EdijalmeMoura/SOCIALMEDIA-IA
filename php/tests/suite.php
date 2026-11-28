@@ -1149,8 +1149,10 @@ check('menu tem link real para clientes', str_contains($menu->body, '/edijalmemo
 // A partir da v1.15 todos os módulos estão prontos: o que se garante agora é
 // que nenhum deles aparece como "em breve" e que a contagem do rodapé é real.
 check('nenhum módulo aparece como "em breve"', !str_contains($menu->body, 'EM BREVE'));
+// v1.25: a contagem saiu do cartão de clientes e virou a linha "Módulos
+// prontos" da ficha da instância, no rodapé.
 check('a contagem de módulos do rodapé é a lista real',
-    str_contains($menu->body, 'módulo ' . count(array_filter($modulos, static fn ($m) => $m['ready'])) . ' de ' . count($modulos) . ' pronto'));
+    str_contains($menu->body, count(array_filter($modulos, static fn ($m) => $m['ready'])) . ' de ' . count($modulos)));
 
 echo "\n[18] Planejamento: formulário e permissões\n";
 // Sessão própria: garante usuário logado independente do que os testes
@@ -2507,7 +2509,7 @@ check('Aprovações aparece com link no dashboard', str_contains($painelAprov->b
 // o teste confere que o rodapé do card reflete a lista real de Modules.
 $prontosAprov = count(array_filter(\Smia\Support\Modules::all(), static fn (array $m): bool => $m['ready']));
 check('dashboard conta os módulos prontos na época das aprovações',
-    str_contains($painelAprov->body, 'módulo ' . $prontosAprov . ' de ' . count(\Smia\Support\Modules::all()) . ' pronto'));
+    str_contains($painelAprov->body, $prontosAprov . ' de ' . count(\Smia\Support\Modules::all())));
 $logar($app, $idUsuario);
 check('lista aponta para o portal do cliente', str_contains($app->handle(requisicao('GET', '/approvals'))->body, 'Acessos do portal'));
 assertSame('rota inexistente de aprovação responde 404', 404, $app->handle(requisicao('GET', '/approvals/abc/xyz'))->status);
@@ -2710,7 +2712,7 @@ assertSame('dashboard responde 200 com feed', 200, $painelFeed->status);
 check('Feed aparece no menu', str_contains($painelFeed->body, '/feed"'));
 $prontosFeed = count(array_filter(\Smia\Support\Modules::all(), static fn (array $m): bool => $m['ready']));
 check('dashboard conta os módulos prontos depois do feed',
-    str_contains($painelFeed->body, 'módulo ' . $prontosFeed . ' de ' . count(\Smia\Support\Modules::all()) . ' pronto'));
+    str_contains($painelFeed->body, $prontosFeed . ' de ' . count(\Smia\Support\Modules::all())));
 $modulosFeed = \Smia\Support\Modules::all();
 $moduloFeed = array_values(array_filter($modulosFeed, static fn (array $m): bool => $m['slug'] === 'feed'))[0] ?? null;
 check('módulo feed marcado como pronto', ($moduloFeed['ready'] ?? false) === true);
@@ -5168,6 +5170,127 @@ $cssAgenda = (string) file_get_contents(__DIR__ . '/../public/assets/meta.css');
 check('CSS das abas da agenda tem par no escuro', str_contains($cssAgenda, 'html[data-theme="escuro"] .schedule-tab'));
 check('CSS do aviso de vencido tem par no escuro', str_contains($cssAgenda, 'html[data-theme="escuro"] .schedule-late-alert'));
 check('CSS do agrupamento por dia tem par no escuro', str_contains($cssAgenda, 'html[data-theme="escuro"] .schedule-day'));
+
+echo "\n[92] Visão geral v1.25: números do trabalho, atenção e listas\n";
+$logar($app, $idUsuario);
+$empresaPainel = 1;
+$painelRepo = new \Smia\Database\DashboardRepository($app->db);
+
+// --- o dashboard deixa de ser ficha técnica --------------------------
+$telaPainel = $app->handle(requisicao('GET', '/dashboard'));
+assertSame('visão geral responde 200', 200, $telaPainel->status);
+check('cartão de planejamento aponta para o calendário', str_contains($telaPainel->body, 'NO PLANEJAMENTO')
+    && str_contains($telaPainel->body, 'post(s) à frente'));
+check('cartão de revisões fala do que está com o cliente', str_contains($telaPainel->body, 'COM O CLIENTE'));
+check('cartão da agenda mostra horários', str_contains($telaPainel->body, 'NA AGENDA'));
+check('cartão do estúdio mostra rascunhos', str_contains($telaPainel->body, 'NO ESTÚDIO'));
+check('a ficha da instância continua disponível, no rodapé', str_contains($telaPainel->body, 'Ficha da instância')
+    && str_contains($telaPainel->body, 'Módulos prontos'));
+check('as listas operacionais aparecem', str_contains($telaPainel->body, 'Próximas publicações')
+    && str_contains($telaPainel->body, 'Na fila da agenda')
+    && str_contains($telaPainel->body, 'Esperando o cliente'));
+check('atalhos com número', str_contains($telaPainel->body, 'shortcut-row'));
+
+// --- números com dados fixos -----------------------------------------
+$numerosPainel = $painelRepo->numeros($empresaPainel, gmdate('Y-m-d'));
+check('números do painel trazem todas as chaves', array_keys($numerosPainel) === [
+    'posts_futuros', 'artes_em_rascunho', 'aprovacoes_pendentes', 'aprovacoes_paradas',
+    'aprovadas_sem_agenda', 'agenda_ativa', 'agenda_atrasada', 'publicadas',
+]);
+check('posts à frente contam a partir de hoje', $numerosPainel['posts_futuros'] >= 0);
+// Janela explícita: um post com data de ontem não entra na contagem de hoje.
+$calendarioPainel = (int) $app->db->scalar('SELECT id FROM content_calendar WHERE company_id = 1 ORDER BY id LIMIT 1');
+$clientePainel = (int) $app->db->scalar('SELECT id FROM clients WHERE company_id = 1 ORDER BY id LIMIT 1');
+$app->db->run(
+    "INSERT INTO posts (company_id, client_id, calendar_id, publication_date, network, theme,
+        strategic_objective, content_type, main_text, caption, visual_brief, image_suggestion)
+     VALUES (1, ?, ?, ?, 'Instagram', 'Post de ontem para o teste', 'objetivo', 'feed', 'texto', 'legenda', 'brief', 'sugestao')",
+    [$clientePainel, $calendarioPainel, gmdate('Y-m-d', time() - 86400)]
+);
+$postOntem = (int) $app->db->scalar("SELECT id FROM posts WHERE theme = 'Post de ontem para o teste'");
+$antesDoPost = $painelRepo->numeros($empresaPainel, gmdate('Y-m-d'))['posts_futuros'];
+$app->db->run('UPDATE posts SET publication_date = ? WHERE id = ?', [gmdate('Y-m-d'), $postOntem]);
+$depoisDoPost = $painelRepo->numeros($empresaPainel, gmdate('Y-m-d'))['posts_futuros'];
+assertSame('post de hoje entra na contagem, o de ontem não', $antesDoPost + 1, $depoisDoPost);
+$app->db->run('DELETE FROM posts WHERE id = ?', [$postOntem]);
+
+// --- "pede atenção" aparece quando há algo travado --------------------
+$aprovPendentePainel = (int) $app->db->scalar(
+    "SELECT id FROM approvals WHERE company_id = 1 AND status = 'pending' ORDER BY id DESC LIMIT 1"
+);
+if ($aprovPendentePainel === 0) {
+    $app->db->run(
+        "INSERT INTO approvals (company_id, client_id, title, source_type, source_id, snapshot_json, status, requested_by)
+         VALUES (1, ?, 'Revisão para o painel', 'planned', 0, '{\"network\":\"Instagram\"}', 'pending', ?)",
+        [$clientePainel, $idUsuario]
+    );
+    $aprovPendentePainel = (int) $app->db->scalar("SELECT id FROM approvals WHERE title = 'Revisão para o painel'");
+}
+$app->db->run(
+    "UPDATE approvals SET submitted_at = datetime('now', '-5 days'), status = 'pending' WHERE id = ?",
+    [$aprovPendentePainel]
+);
+$logar($app, $idUsuario);
+$painelComPendencia = $app->handle(requisicao('GET', '/dashboard'));
+check('revisão parada há 5 dias vira alerta', str_contains($painelComPendencia->body, 'parada')
+    && str_contains($painelComPendencia->body, 'Pede atenção agora'));
+check('o alerta leva para a tela de revisões', str_contains($painelComPendencia->body, 'Ver revisões'));
+check('a lista mostra há quantos dias espera', (bool) preg_match('/dashboard-tag[^>]*>\s*\d+ dias/', $painelComPendencia->body));
+check('revisão de 5 dias é marcada como atrasada', str_contains($painelComPendencia->body, 'dashboard-tag is-late'));
+
+// Horário vencido também alerta.
+$app->db->run(
+    "INSERT INTO scheduled_publications (company_id, client_id, approval_id, scheduled_by, network, scheduled_at_utc, timezone)
+     VALUES (1, ?, ?, ?, 'Instagram', ?, 'America/Recife')",
+    [$clientePainel, $aprovPendentePainel, $idUsuario, gmdate('Y-m-d\TH:i:s', time() - 7200)]
+);
+$logar($app, $idUsuario);
+$painelVencido = $app->handle(requisicao('GET', '/dashboard'));
+check('horário vencido vira alerta no painel', str_contains($painelVencido->body, 'horário vencido')
+    && str_contains($painelVencido->body, 'Resolver na agenda'));
+check('o alerta de vencido aponta para a fila ativa', str_contains($painelVencido->body, 'status=ativos'));
+$numerosVencido = $painelRepo->numeros($empresaPainel, gmdate('Y-m-d'));
+check('o número de atrasados conta o vencido', $numerosVencido['agenda_atrasada'] >= 1);
+
+// --- sem nada travado, o bloco de alerta some -------------------------
+$app->db->run("UPDATE approvals SET status = 'approved', resolved_at = CURRENT_TIMESTAMP WHERE id = ?", [$aprovPendentePainel]);
+$app->db->run("UPDATE scheduled_publications SET status = 'cancelled' WHERE company_id = 1 AND scheduled_at_utc <= ?", [gmdate('Y-m-d\TH:i:s')]);
+$logar($app, $idUsuario);
+$painelTranquilo = $app->handle(requisicao('GET', '/dashboard'));
+check('sem pendência travada o bloco de atenção não é desenhado',
+    !str_contains($painelTranquilo->body, 'Pede atenção agora'));
+
+// --- aprovado sem horário aparece no vazio da agenda ------------------
+$calendarioSemAgenda = $painelRepo->numeros($empresaPainel, gmdate('Y-m-d'));
+if ($calendarioSemAgenda['agenda_ativa'] === 0) {
+    check('agenda vazia diz quantos aprovados estão sem horário',
+        str_contains($painelTranquilo->body, 'Nenhum horário na fila')
+        && ($calendarioSemAgenda['aprovadas_sem_agenda'] === 0
+            || str_contains($painelTranquilo->body, 'não tem horário marcado')
+            || str_contains($painelTranquilo->body, 'não têm horário marcado')));
+}
+
+// --- atalhos e listas respeitam a empresa -----------------------------
+$atalhosPainel = $painelRepo->atalhos($empresaPainel, $painelRepo->numeros($empresaPainel, gmdate('Y-m-d')));
+check('atalhos trazem os quatro módulos de trabalho', count($atalhosPainel) === 4
+    && array_column($atalhosPainel, 'slug') === ['planner', 'approvals', 'schedule', 'studio']);
+check('atalhos contam números, não texto', array_sum(array_column($atalhosPainel, 'count')) >= 0);
+$app->db->run("INSERT INTO clients (company_id, company_name, status) VALUES (2, 'Cliente painel externo', 'active')");
+check('números do painel são da empresa, não da instalação',
+    $painelRepo->numeros(2, gmdate('Y-m-d'))['posts_futuros'] === 0
+    && $painelRepo->proximasPublicacoes(2, gmdate('Y-m-d')) === []);
+check('lista de pendentes ordena da mais antiga', count($painelRepo->aprovacoesPendentes($empresaPainel)) <= 4);
+check('agenda do painel só traz horários ativos', array_reduce(
+    $painelRepo->agenda($empresaPainel),
+    static fn (bool $ok, array $l): bool => $ok,
+    true
+));
+
+// --- CSS com par no modo escuro --------------------------------------
+$cssPainel = (string) file_get_contents(__DIR__ . '/../public/assets/app.css');
+check('CSS do bloco de atenção tem par no escuro', str_contains($cssPainel, 'html[data-theme="escuro"] .attention-item'));
+check('CSS dos atalhos tem par no escuro', str_contains($cssPainel, 'html[data-theme="escuro"] .shortcut'));
+check('CSS da ficha da instância tem par no escuro', str_contains($cssPainel, 'html[data-theme="escuro"] .instance-grid dt'));
 
 echo "\n[72] Sintaxe de todos os arquivos PHP\n";
 $arquivosPhp = [];

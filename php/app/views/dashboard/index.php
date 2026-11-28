@@ -13,6 +13,11 @@
  * @var string $csrf
  * @var array<int,array{type:string,message:string}> $flashes
  * @var \Smia\Support\Config $config
+ * @var array{posts_futuros:int, artes_em_rascunho:int, aprovacoes_pendentes:int, aprovacoes_paradas:int, aprovadas_sem_agenda:int, agenda_ativa:int, agenda_atrasada:int, publicadas:int} $numeros
+ * @var array<int,array<string,mixed>> $proximas
+ * @var array<int,array<string,mixed>> $pendentes
+ * @var array<int,array<string,mixed>> $agenda
+ * @var array<int,array{slug:string,name:string,path:string,icon:string,count:int,alerta:bool}> $atalhos
  */
 // A área do dono só existe para quem é dono: o card de módulos não pode
 // anunciar uma porta que a conta não abre. A trava real é no controller.
@@ -32,26 +37,195 @@ ob_start();
 </div>
 
 <div class="stats-grid" style="margin-top:24px">
-  <article class="stat-card">
-    <div class="stat-head"><span class="stat-icon indigo">◧</span><span class="stat-caption">AGÊNCIA</span></div>
-    <div class="stat-value"><?= e((string) $user['company_name']) ?></div>
-    <div class="stat-bottom"><span class="stat-note">proprietário: <?= e((string) $user['email']) ?></span></div>
-  </article>
-  <article class="stat-card">
-    <div class="stat-head"><span class="stat-icon mint">◔</span><span class="stat-caption">EQUIPE</span></div>
-    <div class="stat-value"><?= (int) $team_count ?> <small>usuário(s)</small></div>
-    <div class="stat-bottom"><span class="stat-note">convites entram no módulo de configurações</span></div>
-  </article>
-  <article class="stat-card">
-    <div class="stat-head"><span class="stat-icon amber">⌂</span><span class="stat-caption">INSTALADA EM</span></div>
-    <div class="stat-value" style="font-size:15px"><?= e((string) ($installation['installed_at'] ?? '—')) ?></div>
-    <div class="stat-bottom"><span class="stat-note">UTC · instalador fechado (410)</span></div>
-  </article>
-  <article class="stat-card">
-    <div class="stat-head"><span class="stat-icon coral">◆</span><span class="stat-caption">CLIENTES</span></div>
-    <div class="stat-value"><a href="<?= e($config->url('/clients')) ?>" style="color:inherit;text-decoration:none"><?= (int) $client_total ?><small> marcas</small></a></div>
-    <div class="stat-bottom"><span class="stat-note"><?= (int) $client_summary['ativos'] ?> ativo(s) · módulo <?= $prontos ?> de <?= count($modulosVisiveis) ?> pronto</span></div>
-  </article>
+  <a class="stat-card stat-link" href="<?= e($config->url('/planner')) ?>">
+    <div class="stat-head"><span class="stat-icon indigo">▤</span><span class="stat-caption">NO PLANEJAMENTO</span></div>
+    <div class="stat-value"><?= (int) $numeros['posts_futuros'] ?> <small>post(s) à frente</small></div>
+    <div class="stat-bottom"><span class="stat-note">publicações com data de hoje em diante</span></div>
+  </a>
+  <a class="stat-card stat-link" href="<?= e($config->url('/approvals')) ?>">
+    <div class="stat-head"><span class="stat-icon <?= $numeros['aprovacoes_paradas'] > 0 ? 'coral' : 'mint' ?>">◷</span><span class="stat-caption">COM O CLIENTE</span></div>
+    <div class="stat-value"><?= (int) $numeros['aprovacoes_pendentes'] ?> <small>revisão(ões)</small></div>
+    <div class="stat-bottom">
+      <?php if ($numeros['aprovacoes_paradas'] > 0): ?>
+        <span class="stat-note is-late"><?= (int) $numeros['aprovacoes_paradas'] ?> parada(s) há mais de 3 dias</span>
+      <?php else: ?>
+        <span class="stat-note">nenhuma parada há mais de 3 dias</span>
+      <?php endif; ?>
+    </div>
+  </a>
+  <a class="stat-card stat-link" href="<?= e($config->url('/schedule')) ?>">
+    <div class="stat-head"><span class="stat-icon <?= $numeros['agenda_atrasada'] > 0 ? 'coral' : 'amber' ?>">◔</span><span class="stat-caption">NA AGENDA</span></div>
+    <div class="stat-value"><?= (int) $numeros['agenda_ativa'] ?> <small>horário(s)</small></div>
+    <div class="stat-bottom">
+      <?php if ($numeros['agenda_atrasada'] > 0): ?>
+        <span class="stat-note is-late"><?= (int) $numeros['agenda_atrasada'] ?> com horário vencido</span>
+      <?php else: ?>
+        <span class="stat-note"><?= (int) $numeros['publicadas'] ?> publicada(s) via Meta</span>
+      <?php endif; ?>
+    </div>
+  </a>
+  <a class="stat-card stat-link" href="<?= e($config->url('/studio')) ?>">
+    <div class="stat-head"><span class="stat-icon mint">✦</span><span class="stat-caption">NO ESTÚDIO</span></div>
+    <div class="stat-value"><?= (int) $numeros['artes_em_rascunho'] ?> <small>arte(s)</small></div>
+    <div class="stat-bottom"><span class="stat-note">rascunhos ainda não publicados</span></div>
+  </a>
+</div>
+
+<?php
+// "O que pede atenção": só entra o que está de fato travado. Sem nada
+// travado, o bloco inteiro desaparece — dashboard não é mural de zeros.
+$alertas = [];
+if ($numeros['agenda_atrasada'] > 0) {
+    $alertas[] = [
+        'titulo' => $numeros['agenda_atrasada'] . ' ' . ($numeros['agenda_atrasada'] === 1 ? 'horário vencido' : 'horários vencidos') . ' na agenda',
+        'texto' => 'O horário passou e ninguém decidiu. Publicar via Meta ou cancelar e reagendar.',
+        'url' => $config->url('/schedule?status=ativos'),
+        'acao' => 'Resolver na agenda',
+    ];
+}
+if ($numeros['aprovacoes_paradas'] > 0) {
+    $alertas[] = [
+        'titulo' => $numeros['aprovacoes_paradas'] . ' ' . ($numeros['aprovacoes_paradas'] === 1 ? 'revisão parada' : 'revisões paradas') . ' com o cliente',
+        'texto' => 'Enviada há mais de 3 dias sem resposta. Vale um lembrete antes de virar atraso.',
+        'url' => $config->url('/approvals'),
+        'acao' => 'Ver revisões',
+    ];
+}
+if ($client_total === 0) {
+    $alertas[] = [
+        'titulo' => 'Nenhuma marca cadastrada',
+        'texto' => 'O produto começa pela identidade do cliente: sem ela, a IA não escreve no tom certo.',
+        'url' => $config->url('/clients/new'),
+        'acao' => 'Cadastrar cliente',
+    ];
+}
+?>
+<?php if ($alertas !== []): ?>
+  <section class="panel attention-panel">
+    <div class="panel-heading">
+      <div><h3>Pede atenção agora</h3><p>Só o que está travado — o resto da operação segue.</p></div>
+    </div>
+    <ul class="attention-list">
+      <?php foreach ($alertas as $alerta): ?>
+        <li class="attention-item">
+          <span class="attention-dot" aria-hidden="true">!</span>
+          <div>
+            <b><?= e((string) $alerta['titulo']) ?></b>
+            <small><?= e((string) $alerta['texto']) ?></small>
+          </div>
+          <a class="button outline small-button" href="<?= e((string) $alerta['url']) ?>"><?= e((string) $alerta['acao']) ?></a>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </section>
+<?php endif; ?>
+
+<div class="dashboard-grid">
+  <section class="panel">
+    <div class="panel-heading">
+      <div><h3>Próximas publicações</h3><p>O que o planejamento tem pela frente.</p></div>
+      <a class="text-link" href="<?= e($config->url('/planner')) ?>">Abrir calendário <span>→</span></a>
+    </div>
+    <?php if ($proximas === []): ?>
+      <div class="empty-state small-empty">
+        <div class="empty-icon">▤</div>
+        <b>Nada planejado à frente</b>
+        <p>Gere um planejamento a partir do objetivo do cliente.</p>
+      </div>
+    <?php else: ?>
+      <ul class="dashboard-list">
+        <?php foreach ($proximas as $post): ?>
+          <li>
+            <div class="dashboard-list-main">
+              <b><a href="<?= e($config->url('/planner/posts/' . (int) $post['id'] . '/edit')) ?>"><?= e((string) $post['theme']) ?></a></b>
+              <small><?= e((string) $post['cliente']) ?> · <?= e((string) $post['network']) ?></small>
+            </div>
+            <?php if ((int) ($post['creative_id'] ?? 0) > 0): ?>
+              <span class="dashboard-tag">com arte</span>
+            <?php endif; ?>
+            <time datetime="<?= e((string) $post['publication_date']) ?>"><?= e(date('d/m', strtotime((string) $post['publication_date']))) ?></time>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+    <?php endif; ?>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div><h3>Na fila da agenda</h3><p>Na ordem em que vai acontecer.</p></div>
+      <a class="text-link" href="<?= e($config->url('/schedule')) ?>">Abrir agenda <span>→</span></a>
+    </div>
+    <?php if ($agenda === []): ?>
+      <div class="empty-state small-empty">
+        <div class="empty-icon">◔</div>
+        <b>Nenhum horário na fila</b>
+        <p>
+          <?php $prontosParaAgendar = (int) $numeros['aprovadas_sem_agenda']; ?>
+          <?php if ($prontosParaAgendar > 0): ?>
+            <?= $prontosParaAgendar ?> <?= $prontosParaAgendar === 1 ? 'conteúdo aprovado ainda não tem' : 'conteúdos aprovados ainda não têm' ?> horário marcado.
+          <?php else: ?>
+            Depois da aprovação do cliente, o conteúdo entra na agenda.
+          <?php endif; ?>
+        </p>
+      </div>
+    <?php else: ?>
+      <ul class="dashboard-list">
+        <?php foreach ($agenda as $linha): ?>
+          <li>
+            <div class="dashboard-list-main">
+              <b><?= e((string) $linha['title']) ?></b>
+              <small><?= e((string) $linha['cliente']) ?> · <?= e((string) $linha['network']) ?></small>
+            </div>
+            <span class="dashboard-tag <?= $linha['vencido'] ? 'is-late' : '' ?>">
+              <?= e((string) $linha['dia']) ?> · <?= e(substr((string) $linha['quando'], -5)) ?>
+            </span>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+    <?php endif; ?>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <div><h3>Esperando o cliente</h3><p>As mais antigas primeiro.</p></div>
+      <a class="text-link" href="<?= e($config->url('/approvals')) ?>">Ver todas <span>→</span></a>
+    </div>
+    <?php if ($pendentes === []): ?>
+      <div class="empty-state small-empty">
+        <div class="empty-icon">✓</div>
+        <b>Nada esperando resposta</b>
+        <p>Nenhuma revisão pendente neste workspace.</p>
+      </div>
+    <?php else: ?>
+      <ul class="dashboard-list">
+        <?php foreach ($pendentes as $revisao): ?>
+          <li>
+            <div class="dashboard-list-main">
+              <b><a href="<?= e($config->url('/approvals/' . (int) $revisao['id'])) ?>"><?= e((string) $revisao['title']) ?></a></b>
+              <small><?= e((string) $revisao['cliente']) ?><?= (string) $revisao['status'] === 'changes_requested' ? ' · pediu alteração' : '' ?></small>
+            </div>
+            <span class="dashboard-tag <?= (int) $revisao['dias'] >= 3 ? 'is-late' : '' ?>">
+              <?= (int) $revisao['dias'] ?> <?= (int) $revisao['dias'] === 1 ? 'dia' : 'dias' ?>
+            </span>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+    <?php endif; ?>
+  </section>
+</div>
+
+<div class="shortcut-row">
+  <?php foreach ($atalhos as $atalho): ?>
+    <a class="shortcut <?= $atalho['alerta'] ? 'has-alert' : '' ?>" href="<?= e($config->url($atalho['path'])) ?>">
+      <span class="shortcut-icon"><?= e($atalho['icon']) ?></span>
+      <span><?= e($atalho['name']) ?></span>
+      <?php if ($atalho['alerta']): ?><i class="shortcut-dot" title="Precisa de atenção"></i><?php endif; ?>
+      <b><?= (int) $atalho['count'] ?></b>
+    </a>
+  <?php endforeach; ?>
+  <a class="shortcut" href="<?= e($config->url('/reports')) ?>">
+    <span class="shortcut-icon">◑</span><span>Relatórios</span><b>CSV</b>
+  </a>
 </div>
 
 <div class="lower-grid">
@@ -110,6 +284,19 @@ ob_start();
     <?php endif; ?>
   </section>
 </div>
+<section class="panel instance-panel">
+  <div class="panel-heading">
+    <div><h3>Ficha da instância</h3><p>Para quando alguém precisa conferir o servidor, não para o dia a dia.</p></div>
+  </div>
+  <dl class="instance-grid">
+    <div><dt>Agência</dt><dd><?= e((string) $user['company_name']) ?></dd></div>
+    <div><dt>Proprietário</dt><dd><?= e((string) $user['email']) ?></dd></div>
+    <div><dt>Equipe</dt><dd><?= (int) $team_count ?> usuário(s)</dd></div>
+    <div><dt>PHP</dt><dd><?= e(PHP_VERSION) ?></dd></div>
+    <div><dt>Instalada em</dt><dd><?= e((string) ($installation['installed_at'] ?? '—')) ?> UTC</dd></div>
+    <div><dt>Módulos prontos</dt><dd><?= $prontos ?> de <?= count($modulosVisiveis) ?></dd></div>
+  </dl>
+</section>
 <?php
 $content = ob_get_clean();
 $title = 'Visão geral';
